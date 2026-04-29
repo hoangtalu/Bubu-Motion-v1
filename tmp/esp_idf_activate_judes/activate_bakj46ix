@@ -1,0 +1,23 @@
+
+export IDF_PATH="/Users/judes/Downloads/xiaozhi-main/esp/esp-idf"
+export ESP_IDF_VERSION="5.5"
+export IDF_PYTHON_ENV_PATH="/Users/judes/.espressif/python_env/idf5.4_py3.10_env"
+export OPENOCD_SCRIPTS="/Users/judes/.espressif/tools/openocd-esp32/v0.12.0-esp32-20250707/openocd-esp32/share/openocd/scripts"
+export ESP_ROM_ELF_DIR="/Users/judes/.espressif/tools/esp-rom-elfs/20241011/"
+export PATH="/Users/judes/Downloads/xiaozhi-main/esp/esp-idf/components/espcoredump:/Users/judes/Downloads/xiaozhi-main/esp/esp-idf/components/partition_table:/Users/judes/Downloads/xiaozhi-main/esp/esp-idf/components/app_update:/Users/judes/.espressif/tools/xtensa-esp-elf-gdb/16.3_20250913/xtensa-esp-elf-gdb/bin:/Users/judes/.espressif/tools/riscv32-esp-elf-gdb/16.3_20250913/riscv32-esp-elf-gdb/bin:/Users/judes/.espressif/tools/xtensa-esp-elf/esp-14.2.0_20251107/xtensa-esp-elf/bin:/Users/judes/.espressif/tools/riscv32-esp-elf/esp-14.2.0_20251107/riscv32-esp-elf/bin:/Users/judes/.espressif/tools/esp32ulp-elf/2.38_20240113/esp32ulp-elf/bin:/Users/judes/.espressif/tools/openocd-esp32/v0.12.0-esp32-20250707/openocd-esp32/bin:/Users/judes/.espressif/python_env/idf5.4_py3.10_env/bin:/Users/judes/Downloads/xiaozhi-main/esp/esp-idf/tools:$PATH"
+export IDF_DEACTIVATE_FILE_PATH="/Users/judes/Downloads/xiaozhi-main/tmp/tmpjuzgveapidf_53909"
+export IDF_TOOLS_INSTALL_CMD="/Users/judes/Downloads/xiaozhi-main/esp/esp-idf/install.sh"
+export IDF_TOOLS_EXPORT_CMD="/Users/judes/Downloads/xiaozhi-main/esp/esp-idf/export.sh"
+
+WARNING_MSG="WARNING: Failed to load shell autocompletion for zsh version: $ZSH_VERSION!"
+autoload -Uz compinit && compinit -u
+if ! eval "$(env _IDF.PY_COMPLETE=zsh_source idf.py)"
+then
+    echo "$WARNING_MSG"
+fi
+
+echo "
+Done! You can now compile ESP-IDF projects.
+Go to the project directory and run:
+
+  idf.py build"

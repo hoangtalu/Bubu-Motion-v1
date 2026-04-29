@@ -1,0 +1,23 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "build",
+      "runtimeExecutable": "pio",
+      "runtimeArgs": ["run", "-e", "bubu_s3_n16r8"],
+      "port": 0
+    },
+    {
+      "name": "serial-monitor",
+      "runtimeExecutable": "pio",
+      "runtimeArgs": ["device", "monitor", "--baud", "115200"],
+      "port": 0
+    },
+    {
+      "name": "upload-and-monitor",
+      "runtimeExecutable": "pio",
+      "runtimeArgs": ["run", "-e", "bubu_s3_n16r8", "--target", "upload", "--target", "monitor"],
+      "port": 0
+    }
+  ]
+}

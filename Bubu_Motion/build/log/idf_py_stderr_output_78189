@@ -1,0 +1,22 @@
+Command: cmake -G Ninja -DPYTHON_DEPS_CHECKED=1 -DPYTHON=/Users/judes/.espressif/python_env/idf5.5_py3.9_env/bin/python -DESP_PLATFORM=1 -DCCACHE_ENABLE=0 /Users/judes/Downloads/xiaozhi-main/xiaozhi-doremon/xiaozhi-esp32
+fatal: not a git repository (or any of the parent directories): .git
+CMake Error at /Users/judes/Downloads/xiaozhi-main/esp/esp-idf/tools/cmake/build.cmake:629 (message):
+  WARNING: 1 unexpected files and directories were found in the
+  "managed_components" directory: .DS_Store
+
+  Content of the managed components directory is managed automatically and
+  it's not recommended to place any files there manually.  To suppress this
+  warning set the environment variable:
+  IDF_COMPONENT_SUPPRESS_UNKNOWN_FILE_WARNINGS=1
+
+  ERROR: File .component_hash or CHECKSUMS.json for component
+  "espressif/esp_audio_codec" in the managed components directory does not
+  exist or cannot be parsed.  These files are used by the component manager
+  for component integrity checks.  If they exist in the component source,
+  please ask the component maintainer to remove them.
+
+Call Stack (most recent call first):
+  /Users/judes/Downloads/xiaozhi-main/esp/esp-idf/tools/cmake/project.cmake:740 (idf_build_process)
+  CMakeLists.txt:13 (project)
+
+

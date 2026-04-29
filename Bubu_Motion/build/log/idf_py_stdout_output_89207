@@ -1,0 +1,427 @@
+Command: /Users/judes/.espressif/python_env/idf5.5_py3.9_env/bin/python /Users/judes/Downloads/xiaozhi-main/esp/esp-idf/tools/idf_monitor.py -p /dev/cu.usbmodem11201 -b 115200 --toolchain-prefix xtensa-esp32s3-elf- --target esp32s3 --revision 0 /Users/judes/Downloads/xiaozhi-main/xiaozhi-doremon/xiaozhi-esp32/build/xiaozhi.elf /Users/judes/Downloads/xiaozhi-main/xiaozhi-doremon/xiaozhi-esp32/build/bootloader/bootloader.elf -m '/Users/judes/.espressif/python_env/idf5.5_py3.9_env/bin/python' '/Users/judes/Downloads/xiaozhi-main/esp/esp-idf/tools/idf.py' '-p' '/dev/cu.usbmodem11201'
+ESP-ROM:esp32s3-20210327
+Build:Mar 27 2021
+rst:0x15 (USB_UART_CHIP_RESET),boot:0x8 (SPI_FAST_FLASH_BOOT)
+Saved PC:0x40382702
+SPIWP:0xee
+mode:DIO, clock div:1
+load:0x3fce2820,len:0x584
+load:0x403c8700,len:0xbfc
+load:0x403cb700,len:0x2e50
+entry 0x403c8908
+[0;32mI (34) octal_psram: vendor id    : 0x0d (AP)[0m
+[0;32mI (34) octal_psram: dev id       : 0x02 (generation 3)[0m
+[0;32mI (35) octal_psram: density      : 0x03 (64 Mbit)[0m
+[0;32mI (35) octal_psram: good-die     : 0x01 (Pass)[0m
+[0;32mI (35) octal_psram: Latency      : 0x01 (Fixed)[0m
+[0;32mI (35) octal_psram: VCC          : 0x01 (3V)[0m
+[0;32mI (35) octal_psram: SRF          : 0x01 (Fast Refresh)[0m
+[0;32mI (36) octal_psram: BurstType    : 0x01 (Hybrid Wrap)[0m
+[0;32mI (36) octal_psram: BurstLen     : 0x01 (32 Byte)[0m
+[0;32mI (36) octal_psram: Readlatency  : 0x02 (10 cycles@Fixed)[0m
+[0;32mI (36) octal_psram: DriveStrength: 0x00 (1/1)[0m
+[0;32mI (36) MSPI Timing: Enter psram timing tuning[0m
+[0;32mI (37) esp_psram: Found 8MB PSRAM device[0m
+[0;32mI (37) esp_psram: Speed: 80MHz[0m
+[0;32mI (125) mmu_psram: Read only data copied and mapped to SPIRAM[0m
+[0;32mI (252) mmu_psram: Instructions copied and mapped to SPIRAM[0m
+[0;32mI (252) cpu_start: Multicore app[0m
+[0;32mI (261) cpu_start: Pro cpu start user code[0m
+[0;32mI (261) cpu_start: cpu freq: 240000000 Hz[0m
+[0;32mI (261) app_init: Application information:[0m
+[0;32mI (261) app_init: Project name:     xiaozhi[0m
+[0;32mI (261) app_init: App version:      2.2.4[0m
+[0;32mI (261) app_init: Compile time:     Apr 28 2026 14:05:32[0m
+[0;32mI (261) app_init: ELF file SHA256:  18b54569a...[0m
+[0;32mI (262) app_init: ESP-IDF:          HEAD-HASH-NOTFOUND[0m
+[0;32mI (262) efuse_init: Min chip rev:     v0.0[0m
+[0;32mI (262) efuse_init: Max chip rev:     v0.99 [0m
+[0;32mI (262) efuse_init: Chip rev:         v0.2[0m
+[0;32mI (262) heap_init: Initializing. RAM available for dynamic allocation:[0m
+[0;32mI (262) heap_init: At 3FCAF1D8 len 0003A538 (233 KiB): RAM[0m
+[0;32mI (262) heap_init: At 3FCE9710 len 00005724 (21 KiB): RAM[0m
+[0;32mI (263) heap_init: At 3FCF0000 len 00008000 (32 KiB): DRAM[0m
+[0;32mI (263) heap_init: At 600FE000 len 00001FD8 (7 KiB): RTCRAM[0m
+[0;32mI (263) esp_psram: Adding pool of 4736K of PSRAM memory to heap allocator[0m
+[0;32mI (263) esp_psram: Adding pool of 34K of PSRAM memory gap generated due to end address alignment of drom to the heap allocator[0m
+[0;32mI (264) spi_flash: detected chip: winbond[0m
+[0;32mI (264) spi_flash: flash io: qio[0m
+[0;32mI (264) sleep_gpio: Configure to isolate all GPIO pins in sleep state[0m
+[0;32mI (265) sleep_gpio: Enable automatic switching of GPIO sleep configuration[0m
+[0;32mI (265) main_task: Started on CPU0[0m
+[0;32mI (275) esp_psram: Reserving pool of 96K of internal memory for DMA/internal allocations[0m
+[0;32mI (275) main_task: Calling app_main()[0m
+[0;32mI (285) Board: UUID=e9d73c1f-43f8-48be-8267-82f9e603c226 SKU=esp32s3-1.28-round-i80[0m
+[0;32mI (285) Esp32S3RoundI80Board: Initializing Esp32S3RoundI80Board (V2 - Fixed I2C & IO Expander)[0m
+[0;32mI (285) button: IoT Button Version: 4.1.6[0m
+[0;32mI (285) Esp32S3RoundI80Board: Buttons initialized: POWER(WiFi/Chat), UP(Vol+), DOWN(Vol-)[0m
+[0;32mI (285) gc9a01: LCD panel create success, version: 2.0.1[0m
+[0;32mI (405) Display: Power management not supported[0m
+[0;32mI (415) LcdDisplay: Turning display on[0m
+[0;32mI (415) LcdDisplay: Initialize LVGL library[0m
+[0;32mI (415) LcdDisplay: Use 2MB of PSRAM for image cache[0m
+[0;32mI (415) LcdDisplay: Initialize LVGL port[0m
+[0;32mI (425) LcdDisplay: Adding LCD display[0m
+[0;32mI (425) LVGL: Starting LVGL task[0m
+[0;32mI (425) Qmi8658: QMI8658 found (WHO_AM_I=0x05)[0m
+[0;32mI (425) Esp32S3RoundI80Board: QMI8658 IMU ready — eye tilt tracking enabled[0m
+[0;32mI (485) Esp32S3RoundI80Board: CST816 chip ID: 0xB4 (CST816S)[0m
+[0;32mI (505) Esp32S3RoundI80Board: CST816 configured: EnChange INT enabled, long-press = 50 (~0.5 s)[0m
+[0;32mI (505) Esp32S3RoundI80Board: Touch INT GPIO 45 configured (falling-edge ISR)[0m
+[0;32mI (505) Esp32S3RoundI80Board: Touch initialized: CST816D + TCA INT + 20 ms poll[0m
+[0;32mI (505) NoAudioCodec: Duplex channels created (16-bit, TX both speakers)[0m
+[0;32mI (505) AudioCodec: Set output volume to 12[0m
+[0;32mI (505) AudioCodec: Set input gain to 3.0[0m
+[0;32mI (505) Backlight: Set brightness to 75[0m
+[0;32mI (505) StateMachine: State: unknown -> starting[0m
+[0;32mI (515) EyeAnimation: RoboEyes initialized (240x240)[0m
+[0;32mI (525) MenuSystem: Initializing menu system...[0m
+[0;32mI (625) MenuSystem: Menu system ready[0m
+[0;32mI (625) EyeDisplay: EyeDisplay UI setup complete (black background + animated eyes + menu)[0m
+[0;32mI (665) AudioCodec: Audio codec started with gain 3.0 and output volume 10[0m
+[0;32mI (665) EmotionVoiceMap: EmotionVoiceMap initialized with 21 emotions and 0 voice mappings[0m
+[0;32mI (675) LevelSystem: LevelSystem ready: level=2 xp=82/100[0m
+[0;32mI (675) CareSystem: Loaded: hunger=13 mood=34 energy=0 clean=47[0m
+[0;32mI (675) CareSystem: CareSystem ready[0m
+[0;32mI (675) MCP: Add tool: self.get_device_status[0m
+[0;32mI (675) MCP: Add tool: self.audio_speaker.set_volume[0m
+[0;32mI (675) MCP: Add tool: self.screen.set_brightness[0m
+[0;32mI (675) MCP: Add tool: self.screen.show_message[0m
+[0;32mI (675) MCP: Add tool: self.screen.set_emotion[0m
+[0;32mI (675) MCP: Add tool: self.screen.set_theme[0m
+[0;32mI (675) MCP: Add tool: self.audio_speaker.play_sound[0m
+[0;32mI (675) MCP: Add tool: self.get_system_info [user][0m
+[0;32mI (675) MCP: Add tool: self.reboot [user][0m
+[0;32mI (675) MCP: Add tool: self.upgrade_firmware [user][0m
+[0;32mI (675) MCP: Add tool: self.screen.get_info [user][0m
+[0;32mI (675) MCP: Add tool: self.screen.snapshot [user][0m
+[0;32mI (675) MCP: Add tool: self.screen.preview_image [user][0m
+[0;32mI (675) Assets: The storage free size is 24576 KB[0m
+[0;32mI (675) Assets: The partition size is 4992 KB[0m
+[0;32mI (865) Assets: The checksum calculation time is 187 ms[0m
+[0;32mI (865) MCP: Add tool: self.assets.set_download_url [user][0m
+[0;32mI (865) WifiManager: Initializing...[0m
+[0;32mI (865) pp: pp rom version: e7ae62f[0m
+[0;32mI (865) net80211: net80211 rom version: e7ae62f[0m
+[0;32mI (875) wifi:wifi driver task: 3fce74b0, prio:23, stack:6144, core=0[0m
+[0;32mI (875) wifi:wifi firmware version: ee91c8c[0m
+[0;32mI (875) wifi:wifi certification version: v7.0[0m
+[0;32mI (875) wifi:config NVS flash: disabled[0m
+[0;32mI (875) wifi:config nano formatting: enabled[0m
+[0;32mI (875) wifi:Init data frame dynamic rx buffer num: 6[0m
+[0;32mI (875) wifi:Init dynamic rx mgmt buffer num: 5[0m
+[0;32mI (875) wifi:Init management short buffer num: 32[0m
+[0;32mI (875) wifi:Init dynamic tx buffer num: 32[0m
+[0;32mI (875) wifi:Init static tx FG buffer num: 2[0m
+[0;32mI (875) wifi:Init static rx buffer size: 1600[0m
+[0;32mI (875) wifi:Init static rx buffer num: 3[0m
+[0;32mI (875) wifi:Init dynamic rx buffer num: 6[0m
+[0;32mI (875) wifi_init: rx ba win: 3[0m
+[0;32mI (875) wifi_init: accept mbox: 6[0m
+[0;32mI (875) wifi_init: tcpip mbox: 16[0m
+[0;32mI (875) wifi_init: udp mbox: 6[0m
+[0;32mI (875) wifi_init: tcp mbox: 6[0m
+[0;32mI (875) wifi_init: tcp tx win: 5760[0m
+[0;32mI (875) wifi_init: tcp rx win: 5760[0m
+[0;32mI (875) wifi_init: tcp mss: 1440[0m
+[0;32mI (875) WifiManager: Initialized[0m
+[0;32mI (875) WifiBoard: Starting WiFi connection attempt[0m
+[0;32mI (875) WifiManager: Starting station[0m
+[0;32mI (875) phy_init: phy_version 711,97bcf0a2,Aug 25 2025,19:04:10[0m
+[0;32mI (915) phy_init: Saving new calibration data due to checksum failure or outdated calibration data, mode(0)[0m
+[0;32mI (925) wifi:mode : sta (b8:f8:62:f8:90:30)[0m
+[0;32mI (925) wifi:enable tsf[0m
+[0;32mI (925) WifiBoard: WiFi scanning[0m
+[0;32mI (3335) WifiStation: Found AP: VHM-OCP-GUEST, BSSID: dc:b7:ac:02:67:80, RSSI: -92, Channel: 11, Authmode: 3[0m
+[0;32mI (3335) WifiBoard: WiFi connecting to VHM-OCP-GUEST[0m
+[0;33mW (3345) wifi:Password length matches WPA2 standards, authmode threshold changes from OPEN to WPA2[0m
+[0;32mI (3435) wifi:new:<1,0>, old:<1,0>, ap:<255,255>, sta:<1,0>, prof:1, snd_ch_cfg:0x0[0m
+[0;32mI (3435) wifi:state: init -> auth (0xb0)[0m
+[0;32mI (3435) wifi:state: auth -> assoc (0x0)[0m
+[0;32mI (4435) wifi:state: assoc -> init (0x400)[0m
+[0;32mI (4435) wifi:new:<1,0>, old:<1,0>, ap:<255,255>, sta:<1,0>, prof:1, snd_ch_cfg:0x0[0m
+[0;32mI (4435) WifiStation: WiFi disconnected, reason: 4[0m
+[0;32mI (4435) WifiStation: Reconnecting VHM-OCP-GUEST (attempt 1 / 5)[0m
+[0;32mI (6845) WifiStation: WiFi disconnected, reason: 205[0m
+[0;32mI (6845) WifiStation: Reconnecting VHM-OCP-GUEST (attempt 2 / 5)[0m
+[0;32mI (6855) wifi:new:<1,0>, old:<1,0>, ap:<255,255>, sta:<1,0>, prof:1, snd_ch_cfg:0x0[0m
+[0;32mI (6855) wifi:state: init -> auth (0xb0)[0m
+[0;32mI (6855) wifi:state: auth -> assoc (0x0)[0m
+[0;32mI (6875) wifi:state: assoc -> run (0x10)[0m
+[0;32mI (6895) wifi:connected with VHM-OCP-GUEST, aid = 2, channel 1, BW20, bssid = dc:b7:ac:02:b6:e0[0m
+[0;32mI (6895) wifi:security: WPA2-PSK, phy: bgn, rssi: -77[0m
+[0;32mI (6895) wifi:pm start, type: 1[0m
+
+[0;32mI (6895) wifi:dp: 1, bi: 102400, li: 10, scale listen interval from 1024000 us to 1024000 us[0m
+[0;32mI (6895) wifi:set rx beacon pti, rx_bcn_pti: 0, bcn_timeout: 25000, mt_pti: 0, mt_time: 10000[0m
+[0;32mI (6895) wifi:<ba-add>idx:0 (ifx:0, dc:b7:ac:02:b6:e0), tid:7, ssn:0, winSize:64[0m
+[0;32mI (6955) wifi:AP's beacon interval = 102400 us, DTIM period = 1[0m
+[0;32mI (7905) esp_netif_handlers: sta ip: 172.16.1.76, mask: 255.255.252.0, gw: 172.16.0.1[0m
+[0;32mI (7905) WifiStation: Got IP: 172.16.1.76[0m
+[0;32mI (7905) WifiBoard: Connected to WiFi: VHM-OCP-GUEST[0m
+[0;32mI (7915) Application: Network connected[0m
+[0;32mI (7915) StateMachine: State: starting -> activating[0m
+create static modelsI (7915) MODEL_LOADER: Successfully load srmodels
+[0;32mI (7915) Assets: Refreshing display theme...[0m
+[0;32mI (7925) EyeDisplay: SetTheme: forced black background[0m
+[0;32mI (7925) EyeDisplay: SetEmotion: microchip_ai[0m
+[0;32mI (7925) Ota: Current version: 2.2.4[0m
+[0;32mI (7945) wifi:<ba-add>idx:1 (ifx:0, dc:b7:ac:02:b6:e0), tid:0, ssn:2, winSize:64[0m
+[0;32mI (8275) esp-x509-crt-bundle: Certificate validated[0m
+[0;32mI (8665) HttpClient: Established new connection to api.tenclass.net:443[0m
+[0;32mI (8915) HttpClient: HTTP connection closed[0m
+[0;32mI (8915) Ota: Current is the latest version[0m
+[0;32mI (8915) Ota: Running partition: ota_0[0m
+[0;32mI (8915) MQTT: Connecting to endpoint mqtt.xiaozhi.me[0m
+[0;32mI (9265) esp-x509-crt-bundle: Certificate validated[0m
+[0;32mI (9725) MQTT: Connected to endpoint[0m
+[0;32mI (9725) Application: Activation done[0m
+[0;32mI (9725) SystemInfo: free sram: 108371 minimal sram: 102747[0m
+[0;32mI (9725) StateMachine: State: activating -> idle[0m
+[0;32mI (9745) WifiStation: Setting WiFi power save level: LOW_POWER (MAX_MODEM)[0m
+[0;32mI (9745) wifi:Set ps type: 2, coexist: 0[0m
+
+[0;32mI (9745) CustomWakeWord: Command: hey bubu, Text: Hey Bubu, Action: wake, Phoneme: hd BoBo[0m
+[0;32mI (9745) CustomWakeWord: Command: smile, Text: Smile, Action: smile, Phoneme: SMiL[0m
+[1;31mE (9925) gdma-link: gdma_link_mount_buffers(173): no more space for buffer mounting[0m
+Command TELL ME A JOKE is invalid, please check format.
+[1;31mE (10155) MN_COMMAND: invalid command, please check format, TELL ME A JOKE.[0m
+
+Command SING A SONG is invalid, please check format.
+[1;31mE (10155) MN_COMMAND: invalid command, please check format, SING A SONG.[0m
+
+Command PLAY NEWS CHANNEL is invalid, please check format.
+[1;31mE (10155) MN_COMMAND: invalid command, please check format, PLAY NEWS CHANNEL.[0m
+
+Command TURN ON MY SOUNDBOX is invalid, please check format.
+[1;31mE (10155) MN_COMMAND: invalid command, please check format, TURN ON MY SOUNDBOX.[0m
+
+Command TURN OFF MY SOUNDBOX is invalid, please check format.
+[1;31mE (10155) MN_COMMAND: invalid command, please check format, TURN OFF MY SOUNDBOX.[0m
+
+Command TURN OF MY SOUNDBOX is invalid, please check format.
+[1;31mE (10155) MN_COMMAND: invalid command, please check format, TURN OF MY SOUNDBOX.[0m
+
+Command HIGHEST VOLUME is invalid, please check format.
+[1;31mE (10155) MN_COMMAND: invalid command, please check format, HIGHEST VOLUME.[0m
+
+Command LOWEST VOLUME is invalid, please check format.
+[1;31mE (10155) MN_COMMAND: invalid command, please check format, LOWEST VOLUME.[0m
+
+Command INCREASE THE VOLUME is invalid, please check format.
+[1;31mE (10155) MN_COMMAND: invalid command, please check format, INCREASE THE VOLUME.[0m
+
+Command DECREASE THE VOLUME is invalid, please check format.
+[1;31mE (10165) MN_COMMAND: invalid command, please check format, DECREASE THE VOLUME.[0m
+
+Command TURN ON THE TV is invalid, please check format.
+[1;31mE (10165) MN_COMMAND: invalid command, please check format, TURN ON THE TV.[0m
+
+Command TURN OFF THE TV is invalid, please check format.
+[1;31mE (10165) MN_COMMAND: invalid command, please check format, TURN OFF THE TV.[0m
+
+Command TURN OF THE TV is invalid, please check format.
+[1;31mE (10165) MN_COMMAND: invalid command, please check format, TURN OF THE TV.[0m
+
+Command MAKE ME A TEA is invalid, please check format.
+[1;31mE (10165) MN_COMMAND: invalid command, please check format, MAKE ME A TEA.[0m
+
+Command MAKE ME A COFFEE is invalid, please check format.
+[1;31mE (10165) MN_COMMAND: invalid command, please check format, MAKE ME A COFFEE.[0m
+
+Command TURN ON THE LIGHT is invalid, please check format.
+[1;31mE (10165) MN_COMMAND: invalid command, please check format, TURN ON THE LIGHT.[0m
+
+Command TURN OFF THE LIGHT is invalid, please check format.
+[1;31mE (10165) MN_COMMAND: invalid command, please check format, TURN OFF THE LIGHT.[0m
+
+Command TURN OF THE LIGHT is invalid, please check format.
+[1;31mE (10165) MN_COMMAND: invalid command, please check format, TURN OF THE LIGHT.[0m
+
+Command CHANGE THE COLOR TO RED is invalid, please check format.
+[1;31mE (10175) MN_COMMAND: invalid command, please check format, CHANGE THE COLOR TO RED.[0m
+
+Command CHANGE THE COLOR TO GREEN is invalid, please check format.
+[1;31mE (10175) MN_COMMAND: invalid command, please check format, CHANGE THE COLOR TO GREEN.[0m
+
+Command TURN ON ALL THE LIGHTS is invalid, please check format.
+[1;31mE (10175) MN_COMMAND: invalid command, please check format, TURN ON ALL THE LIGHTS.[0m
+
+Command TURN OFF ALL THE LIGHTS is invalid, please check format.
+[1;31mE (10175) MN_COMMAND: invalid command, please check format, TURN OFF ALL THE LIGHTS.[0m
+
+Command TURN OF ALL THE LIGHTS is invalid, please check format.
+[1;31mE (10175) MN_COMMAND: invalid command, please check format, TURN OF ALL THE LIGHTS.[0m
+
+Command TURN ON THE AIR CONDITIONER is invalid, please check format.
+[1;31mE (10175) MN_COMMAND: invalid command, please check format, TURN ON THE AIR CONDITIONER.[0m
+
+Command TURN OFF THE AIR CONDITIONER is invalid, please check format.
+[1;31mE (10185) MN_COMMAND: invalid command, please check format, TURN OFF THE AIR CONDITIONER.[0m
+
+Command TURN OF THE AIR CONDITIONER is invalid, please check format.
+[1;31mE (10185) MN_COMMAND: invalid command, please check format, TURN OF THE AIR CONDITIONER.[0m
+
+Command SET THE TEMPERATURE TO SIXTEEN DEGREES is invalid, please check format.
+[1;31mE (10185) MN_COMMAND: invalid command, please check format, SET THE TEMPERATURE TO SIXTEEN DEGREES.[0m
+
+Command SET THE TEMPERATURE TO SEVENTEEN DEGREES is invalid, please check format.
+[1;31mE (10185) MN_COMMAND: invalid command, please check format, SET THE TEMPERATURE TO SEVENTEEN DEGREES.[0m
+
+Command SET THE TEMPERATURE TO EIGHTEEN DEGREES is invalid, please check format.
+[1;31mE (10185) MN_COMMAND: invalid command, please check format, SET THE TEMPERATURE TO EIGHTEEN DEGREES.[0m
+
+Command SET THE TEMPERATURE TO NINETEEN DEGREES is invalid, please check format.
+[1;31mE (10185) MN_COMMAND: invalid command, please check format, SET THE TEMPERATURE TO NINETEEN DEGREES.[0m
+
+Command SET THE TEMPERATURE TO TWENTY DEGREES is invalid, please check format.
+[1;31mE (10195) MN_COMMAND: invalid command, please check format, SET THE TEMPERATURE TO TWENTY DEGREES.[0m
+
+Command SET THE TEMPERATURE TO TWENTY ONE DEGREES is invalid, please check format.
+[1;31mE (10195) MN_COMMAND: invalid command, please check format, SET THE TEMPERATURE TO TWENTY ONE DEGREES.[0m
+
+Command SET THE TEMPERATURE TO TWENTY TWO DEGREES is invalid, please check format.
+[1;31mE (10195) MN_COMMAND: invalid command, please check format, SET THE TEMPERATURE TO TWENTY TWO DEGREES.[0m
+
+Command SET THE TEMPERATURE TO TWENTY THREE DEGREES is invalid, please check format.
+[1;31mE (10195) MN_COMMAND: invalid command, please check format, SET THE TEMPERATURE TO TWENTY THREE DEGREES.[0m
+
+Command SET THE TEMPERATURE TO TWENTY FOUR DEGREES is invalid, please check format.
+[1;31mE (10195) MN_COMMAND: invalid command, please check format, SET THE TEMPERATURE TO TWENTY FOUR DEGREES.[0m
+
+Command SET THE TEMPERATURE TO TWENTY FIVE DEGREES is invalid, please check format.
+[1;31mE (10195) MN_COMMAND: invalid command, please check format, SET THE TEMPERATURE TO TWENTY FIVE DEGREES.[0m
+
+Command SET THE TEMPERATURE TO TWENTY SIX DEGREES is invalid, please check format.
+[1;31mE (10205) MN_COMMAND: invalid command, please check format, SET THE TEMPERATURE TO TWENTY SIX DEGREES.[0m
+
+Command LOWEST FAN SPEED is invalid, please check format.
+[1;31mE (10205) MN_COMMAND: invalid command, please check format, LOWEST FAN SPEED.[0m
+
+Command MEDIUM FAN SPEED is invalid, please check format.
+[1;31mE (10205) MN_COMMAND: invalid command, please check format, MEDIUM FAN SPEED.[0m
+
+Command HIGHEST FAN SPEED is invalid, please check format.
+[1;31mE (10205) MN_COMMAND: invalid command, please check format, HIGHEST FAN SPEED.[0m
+
+Command AUTO ADJUST THE FAN SPEED is invalid, please check format.
+[1;31mE (10205) MN_COMMAND: invalid command, please check format, AUTO ADJUST THE FAN SPEED.[0m
+
+Command DECREASE THE FAN SPEED is invalid, please check format.
+[1;31mE (10205) MN_COMMAND: invalid command, please check format, DECREASE THE FAN SPEED.[0m
+
+Command INCREASE THE FAN SPEED is invalid, please check format.
+[1;31mE (10205) MN_COMMAND: invalid command, please check format, INCREASE THE FAN SPEED.[0m
+
+Command INCREASE THE TEMPERATURE is invalid, please check format.
+[1;31mE (10205) MN_COMMAND: invalid command, please check format, INCREASE THE TEMPERATURE.[0m
+
+Command DECREASE THE TEMPERATURE is invalid, please check format.
+[1;31mE (10215) MN_COMMAND: invalid command, please check format, DECREASE THE TEMPERATURE.[0m
+
+Command COOLING MODE is invalid, please check format.
+[1;31mE (10215) MN_COMMAND: invalid command, please check format, COOLING MODE.[0m
+
+Command HEATING MODE is invalid, please check format.
+[1;31mE (10215) MN_COMMAND: invalid command, please check format, HEATING MODE.[0m
+
+Command VENTILATION MODE is invalid, please check format.
+[1;31mE (10215) MN_COMMAND: invalid command, please check format, VENTILATION MODE.[0m
+
+Command DEHUMIDIFY MODE is invalid, please check format.
+[1;31mE (10215) MN_COMMAND: invalid command, please check format, DEHUMIDIFY MODE.[0m
+
+Build fst from commands.
+Quantized MultiNet7:rnnt_ctc_2.0, name:mn7_en, (Dec 16 2025 14:45:55)
+Quantized MultiNet7 search method: 2, time out:3.0 s
+set det threshold to 0.200000
+Command hey bubu is invalid, please check format.
+[1;31mE (10545) MN_COMMAND: invalid command, please check format, hey bubu.[0m
+
+[0;33mW (10545) CustomWakeWord: Phoneme registration failed for 'hey bubu' (hd BoBo), trying text registration fallback[0m
+Command hey bubu is invalid, please check format.
+[1;31mE (10555) MN_COMMAND: invalid command, please check format, hey bubu.[0m
+
+[0;33mW (10555) CustomWakeWord: Skipping unsupported local command: 'hey bubu' (action=wake)[0m
+[1;31mE (10555) CustomWakeWord: No valid wake command accepted by multinet model[0m
+[1;31mE (10555) AudioService: Failed to initialize wake word[0m
+[0;32mI (10555) AudioCodec: Set output enable to true[0m
+[0;32mI (10555) AudioService: Resampling audio from 16000 to 24000[0m
+[0;32mI (19675) SystemInfo: free sram: 106391 minimal sram: 81155[0m
+[0;32mI (27555) AudioCodec: Set output enable to false[0m
+[0;32mI (27655) AudioCodec: Set output enable to true[0m
+[0;32mI (27655) AudioService: Resampling audio from 16000 to 24000[0m
+[0;32mI (29675) SystemInfo: free sram: 105331 minimal sram: 81155[0m
+[0;32mI (39675) SystemInfo: free sram: 106403 minimal sram: 81155[0m
+[0;32mI (49675) SystemInfo: free sram: 106407 minimal sram: 81155[0m
+[0;32mI (59675) SystemInfo: free sram: 106407 minimal sram: 81155[0m
+[0;32mI (69675) SystemInfo: free sram: 106411 minimal sram: 81155[0m
+[0;32mI (69725) Esp32S3RoundI80Board: WiFi idle timeout → LOW_POWER[0m
+[0;32mI (69725) WifiStation: Setting WiFi power save level: LOW_POWER (MAX_MODEM)[0m
+[0;32mI (69725) wifi:Set ps type: 2, coexist: 0[0m
+
+[0;32mI (79675) SystemInfo: free sram: 106283 minimal sram: 81155[0m
+[0;32mI (89675) SystemInfo: free sram: 106283 minimal sram: 81155[0m
+[0;32mI (99675) SystemInfo: free sram: 106283 minimal sram: 81155[0m
+[0;32mI (102655) AudioCodec: Set output enable to false[0m
+[0;32mI (108975) AudioCodec: Set output enable to true[0m
+[0;32mI (109675) SystemInfo: free sram: 104063 minimal sram: 81155[0m
+[0;32mI (119675) SystemInfo: free sram: 106287 minimal sram: 81155[0m
+[0;32mI (124975) AudioCodec: Set output enable to false[0m
+[0;32mI (129675) SystemInfo: free sram: 106259 minimal sram: 81155[0m
+[0;32mI (130605) AudioCodec: Set output enable to true[0m
+[0;32mI (139675) SystemInfo: free sram: 106303 minimal sram: 81155[0m
+[0;32mI (149685) SystemInfo: free sram: 106299 minimal sram: 81155[0m
+[0;32mI (159685) SystemInfo: free sram: 106299 minimal sram: 81155[0m
+[0;32mI (169675) SystemInfo: free sram: 106307 minimal sram: 81155[0m
+[0;32mI (179605) AudioCodec: Set output enable to false[0m
+[0;32mI (179675) SystemInfo: free sram: 106303 minimal sram: 81155[0m
+[0;32mI (180675) CareSystem: Saved: hunger=13 mood=34 energy=0 clean=47[0m
+[0;32mI (181625) AudioCodec: Set output enable to true[0m
+[0;32mI (189675) SystemInfo: free sram: 106303 minimal sram: 81155[0m
+[0;32mI (199675) SystemInfo: free sram: 106303 minimal sram: 81155[0m
+[0;32mI (209675) SystemInfo: free sram: 106307 minimal sram: 81155[0m
+[0;32mI (219675) SystemInfo: free sram: 106307 minimal sram: 81155[0m
+[0;32mI (222925) AudioService: Resampling audio from 16000 to 24000[0m
+[0;32mI (229675) SystemInfo: free sram: 106303 minimal sram: 81155[0m
+[0;32mI (239675) SystemInfo: free sram: 106303 minimal sram: 81155[0m
+[0;32mI (249675) SystemInfo: free sram: 106307 minimal sram: 81155[0m
+[0;32mI (259675) SystemInfo: free sram: 106303 minimal sram: 81155[0m
+[0;32mI (262625) AudioCodec: Set output enable to false[0m
+[0;32mI (264755) AudioCodec: Set output enable to true[0m
+[0;32mI (269675) SystemInfo: free sram: 106303 minimal sram: 81155[0m
+[0;32mI (279675) SystemInfo: free sram: 106303 minimal sram: 81155[0m
+[0;32mI (289685) SystemInfo: free sram: 106303 minimal sram: 81155[0m
+[0;32mI (299685) SystemInfo: free sram: 106291 minimal sram: 81155[0m
+[0;32mI (304755) AudioCodec: Set output enable to false[0m
+[0;32mI (307065) AudioCodec: Set output enable to true[0m
+[0;32mI (307065) AudioService: Resampling audio from 16000 to 24000[0m
+[0;32mI (309675) SystemInfo: free sram: 106303 minimal sram: 81155[0m
+[0;32mI (319675) SystemInfo: free sram: 106151 minimal sram: 81155[0m
+[0;32mI (325065) AudioCodec: Set output enable to false[0m
+[0;32mI (329675) SystemInfo: free sram: 106043 minimal sram: 81155[0m
+[0;32mI (339675) SystemInfo: free sram: 106047 minimal sram: 81155[0m
+[0;32mI (349675) SystemInfo: free sram: 106047 minimal sram: 81155[0m
+[0;32mI (359675) SystemInfo: free sram: 106047 minimal sram: 81155[0m
+[0;32mI (360685) CareSystem: Saved: hunger=12 mood=34 energy=0 clean=47[0m
+[0;32mI (369675) SystemInfo: free sram: 106147 minimal sram: 81155[0m
+[0;32mI (379675) SystemInfo: free sram: 106147 minimal sram: 81155[0m
+[0;32mI (389675) SystemInfo: free sram: 106043 minimal sram: 81155[0m
+[0;32mI (399675) SystemInfo: free sram: 106147 minimal sram: 81155[0m
+[0;32mI (409675) SystemInfo: free sram: 106151 minimal sram: 81155[0m
+[0;32mI (419675) SystemInfo: free sram: 106039 minimal sram: 81155[0m
+[0;32mI (429675) SystemInfo: free sram: 106151 minimal sram: 81155[0m
+[0;32mI (439675) SystemInfo: free sram: 106047 minimal sram: 81155[0m
+[0;32mI (449675) SystemInfo: free sram: 106151 minimal sram: 81155[0m
+[0;32mI (459675) SystemInfo: free sram: 106147 minimal sram: 81155[0m
+[0;32mI (469675) SystemInfo: free sram: 106151 minimal sram: 81155[0m
+[0;32mI (479675) SystemInfo: free sram: 106147 minimal sram: 81155[0m
+[0;32mI (489675) SystemInfo: free sram: 106039 minimal sram: 81155[0m
+[0;32mI (499675) SystemInfo: free sram: 106147 minimal sram: 81155[0m
+[0;32mI (509675) SystemInfo: free sram: 106151 minimal sram: 81155[0m
+[0;32mI (519675) SystemInfo: free sram: 106147 minimal sram: 81155[0m
+[0;32mI (529675) SystemInfo: free sram: 106147 minimal sram: 81155[0m
+[0;32mI (535215) Esp32S3RoundI80Board: [Touch] TAP at (195,129) dur=ldms drift=1070275424[0m
+[0;32mI (535225) Esp32S3RoundI80Board: Touch dismissed clock screensaver[0m
+[0;32mI (535225) AudioCodec: Set output enable to true[0m
+[0;32mI (538535) Esp32S3RoundI80Board: [Touch] LONG_PRESS at (133,136) held=ldms drift=1070275424[0m

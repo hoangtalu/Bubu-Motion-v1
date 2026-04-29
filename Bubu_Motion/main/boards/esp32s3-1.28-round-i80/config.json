@@ -1,0 +1,19 @@
+{
+    "target": "esp32s3",
+    "builds": [
+        {
+            "name": "esp32s3-1.28-round-i80",
+            "sdkconfig_append": [
+                "CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y",
+                "CONFIG_PARTITION_TABLE_CUSTOM_FILENAME=\"partitions/v2/16m.csv\"",
+                "CONFIG_ESP_LCD_PANEL_IO_ADDITIONS=y",
+                "CONFIG_SPIRAM_MODE_OPI=y",
+                "CONFIG_SPIRAM_SIZE=8388608",
+                "CONFIG_SPIRAM_TYPE_AUTO=y",
+                "CONFIG_SPIRAM_FETCH_INSTRUCTIONS=y",
+                "CONFIG_SPIRAM_RODATA=y",
+                "CONFIG_SPIRAM_SPEED_80M=y"
+            ]
+        }
+    ]
+}

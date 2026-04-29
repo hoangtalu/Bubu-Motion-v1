@@ -1,0 +1,57 @@
+═══════════════════════════════════════════════════════════
+  BUBU - QUICK DEVICE SETUP
+═══════════════════════════════════════════════════════════
+
+📦 FLASH NEW DEVICE:
+   pio run -t upload
+
+🔌 CONNECT SERIAL: (115200 baud)
+
+⚙️  CONFIGURE GEMINI:
+   > chat key YOUR_GEMINI_API_KEY_HERE
+   > chat status
+
+   Expected: key=(set)
+
+✅ DONE! Chat should work now.
+
+═══════════════════════════════════════════════════════════
+
+📋 USEFUL COMMANDS:
+
+   chat key <KEY>       Set API key
+   chat status          Show configuration
+   chat voice Aoede     Change voice (Aoede/Charon/Fenrir/Kore/Puck)
+   chat audio on        Enable audio mode
+   chat on              Enable chat system
+
+   demo-setup           Create test reminders/notes
+   demo-chime           Test reminder sound
+
+═══════════════════════════════════════════════════════════
+
+🔒 SECURITY NOTE:
+
+   ❌ API key is NO LONGER hardcoded in firmware
+   ✅ Each device stores key in NVS (flash memory)
+   ✅ Safe to upload firmware to GitHub
+   ⚠️  New devices MUST be configured via serial
+
+═══════════════════════════════════════════════════════════
+
+🆘 TROUBLESHOOTING:
+
+   Chat not working?
+   → Run: chat status
+   → Check: key=(set) not key=(not set)
+   → Fix: chat key YOUR_KEY
+
+   GitHub secret warning?
+   → You're using old firmware
+   → Rebuild with latest code
+
+═══════════════════════════════════════════════════════════
+
+📚 FULL DOCS: See SETUP_NEW_DEVICE.md
+
+═══════════════════════════════════════════════════════════

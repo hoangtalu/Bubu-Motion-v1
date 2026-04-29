@@ -1,0 +1,21 @@
+Command: /Users/judes/.espressif/python_env/idf5.5_py3.9_env/bin/python /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/tools/idf_monitor.py -p /dev/cu.usbmodem1101 -b 115200 --toolchain-prefix xtensa-esp32s3-elf- --target esp32s3 --revision 0 /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/build-idf55/xiaozhi.elf /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/build-idf55/bootloader/bootloader.elf -m '/Users/judes/.espressif/python_env/idf5.5_py3.9_env/bin/python' '/Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/tools/idf.py' '-C' '/Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion' '-B' '/Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/build-idf55' '-p' '/dev/cu.usbmodem1101'
+[0;33m--- esp-idf-monitor 1.9.0 on /dev/cu.usbmodem1101 115200[0m
+[0;33m--- Quit: Ctrl+] | Menu: Ctrl+T | Help: Ctrl+T followed by Ctrl+H[0m
+[0m--- 0x40382702: [0;33mesp_cpu_wait_for_intr[0m[0m at [0;32m/Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/esp_hw_support/cpu.c[0m[0m:[1;31m64[0m
+[0m--- 0x403c8700: [0;33m_stext[0m[0m at [0;32m??[0m[0m:[1;31m?[0m
+[0m--- 0x403c8908: [0;33mcall_start_cpu0[0m[0m at [0;32m/Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/bootloader/subproject/main/bootloader_start.c[0m[0m:[1;31m25[0m
+[0m--- 0x4205b987: [0;33mmodel_create[0m[0m at [0;32m/home/sunxiangyu/workspace/esp_sr_lib/components/multinet/multinet6_quantized.c[0m[0m:[1;31m877[0m
+[0m--- 0x400570e8: [0;33mmemset[0m[0m in [0;32mROM[0m
+[0m--- 0x400570f3: [0;33mmemset[0m[0m in [0;32mROM[0m
+[0m--- 0x4205b984: [0;33mmodel_create[0m[0m at [0;32m/home/sunxiangyu/workspace/esp_sr_lib/components/multinet/multinet6_quantized.c[0m[0m:[1;31m874[0m
+[0m--- 0x4205c235: [0;33mmodel_init[0m[0m at [0;32m/home/sunxiangyu/workspace/esp_sr_lib/components/multinet/multinet6_quantized.c[0m[0m:[1;31m1757[0m
+[0m--- 0x4203153f: [0;33mCustomWakeWord::Initialize(AudioCodec*, srmodel_list_t*)[0m[0m at [0;32m/Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/main/audio/wake_words/custom_wake_word.cc[0m[0m:[1;31m191[0m
+[0m--- 0x42009e83: [0;33mAudioService::EnableWakeWordDetection(bool)[0m[0m at [0;32m/Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/main/audio/audio_service.cc[0m[0m:[1;31m567[0m
+[0m--- 0x42022459: [0;33mApplication::HandleStateChangedEvent()[0m[0m at [0;32m/Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/main/application.cc[0m[0m:[1;31m1152[0m
+[0m--- 0x42024d0e: [0;33mApplication::Run()[0m[0m at [0;32m/Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/main/application.cc[0m[0m:[1;31m264[0m
+[0m--- 0x42028fd9: [0;33mapp_main[0m[0m at [0;32m/Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/main/main.cc[0m[0m:[1;31m28[0m
+[0m--- 0x421d8147: [0;33mmain_task[0m[0m at [0;32m/Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/freertos/app_startup.c[0m[0m:[1;31m208[0m
+[0m--- 0x40385871: [0;33mesp_restart_noos[0m[0m at [0;32m/Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/esp_system/port/soc/esp32s3/system_internal.c[0m[0m:[1;31m164[0m
+[0m--- 0x403c8700: [0;33m_stext[0m[0m at [0;32m??[0m[0m:[1;31m?[0m
+[0m--- 0x403c8908: [0;33mcall_start_cpu0[0m[0m at [0;32m/Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/bootloader/subproject/main/bootloader_start.c[0m[0m:[1;31m25[0m
+[0m

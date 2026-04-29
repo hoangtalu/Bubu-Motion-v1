@@ -1,0 +1,44 @@
+{
+    "version": 1,
+    "srmodels": "srmodels.bin",
+    "multinet_model": {
+        "language": "en",
+        "duration": 3000,
+        "threshold": 0.2,
+        "commands": [
+            {
+                "command": "hey bubu",
+                "text": "Hey Bubu",
+                "action": "wake",
+                "phoneme": "hd BoBo"
+            },
+            {
+                "command": "smile",
+                "text": "Smile",
+                "action": "smile",
+                "phoneme": "SMiL"
+            },
+            {
+                "command": "angry",
+                "text": "Angry",
+                "action": "angry"
+            },
+            {
+                "command": "mad",
+                "text": "Mad",
+                "action": "angry"
+            },
+            {
+                "command": "stupid",
+                "text": "STUPID",
+                "action": "angry"
+            }
+        ]
+    },
+    "emoji_collection": [
+        {
+            "name": "feeding",
+            "file": "feeding.gif"
+        }
+    ]
+}

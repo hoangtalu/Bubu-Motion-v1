@@ -1,0 +1,70 @@
+#ifndef _BOARD_CONFIG_H_
+#define _BOARD_CONFIG_H_
+
+#include <driver/gpio.h>
+
+#define AUDIO_INPUT_SAMPLE_RATE  24000
+#define AUDIO_OUTPUT_SAMPLE_RATE 24000
+
+#define AUDIO_I2S_GPIO_MCLK GPIO_NUM_NC
+#define AUDIO_I2S_GPIO_WS   GPIO_NUM_4
+#define AUDIO_I2S_GPIO_BCLK GPIO_NUM_5
+#define AUDIO_I2S_GPIO_DIN  GPIO_NUM_6
+#define AUDIO_I2S_GPIO_DOUT GPIO_NUM_7
+
+#define AUDIO_CODEC_PA_PIN       GPIO_NUM_NC // Handled by MAX98357A SD pin if needed, but manual doesn't specify
+#define AUDIO_CODEC_I2C_SDA_PIN  GPIO_NUM_8
+#define AUDIO_CODEC_I2C_SCL_PIN  GPIO_NUM_9
+
+#define BUILTIN_LED_GPIO        GPIO_NUM_46
+#define BOOT_BUTTON_GPIO        GPIO_NUM_0
+
+#define DISPLAY_WIDTH   240
+#define DISPLAY_HEIGHT  240
+#define DISPLAY_MIRROR_X true
+#define DISPLAY_MIRROR_Y true
+#define DISPLAY_SWAP_XY true
+
+#define DISPLAY_OFFSET_X  0
+#define DISPLAY_OFFSET_Y  0
+
+#define DISPLAY_BACKLIGHT_PIN GPIO_NUM_42
+#define DISPLAY_BACKLIGHT_OUTPUT_INVERT false
+
+// I80 Parallel Interface
+#define LCD_PIN_D0 GPIO_NUM_10
+#define LCD_PIN_D1 GPIO_NUM_11
+#define LCD_PIN_D2 GPIO_NUM_12
+#define LCD_PIN_D3 GPIO_NUM_13
+#define LCD_PIN_D4 GPIO_NUM_14
+#define LCD_PIN_D5 GPIO_NUM_15
+#define LCD_PIN_D6 GPIO_NUM_16
+#define LCD_PIN_D7 GPIO_NUM_17
+
+#define LCD_PIN_WR  GPIO_NUM_3
+#define LCD_PIN_DC  GPIO_NUM_18
+#define LCD_PIN_CS  GPIO_NUM_2
+#define LCD_PIN_RST GPIO_NUM_21
+#define LCD_PIN_RD  GPIO_NUM_NC // Assuming tied high
+
+// TCA6408 IO Expander Ports
+#define XIO_TOUCH_INT 0
+#define XIO_IMU_INT1  1
+#define XIO_IMU_INT2  2
+#define XIO_KEY_UP    3
+#define XIO_KEY_POWER 4
+#define XIO_KEY_DOWN  5
+#define XIO_USB_DET   6
+#define XIO_RTC_INT   7
+
+#define TOUCH_RST_PIN GPIO_NUM_0
+#define TOUCH_INT_PIN GPIO_NUM_45   // TCA6408 INT output → ESP32 GPIO 45
+
+#define SD_SPI_HOST SPI3_HOST
+#define SD_SPI_CS   GPIO_NUM_40
+#define SD_SPI_CLK  GPIO_NUM_41
+#define SD_SPI_MOSI GPIO_NUM_47
+#define SD_SPI_MISO GPIO_NUM_48
+#define SD_MOUNT_POINT "/sdcard"
+
+#endif // _BOARD_CONFIG_H_

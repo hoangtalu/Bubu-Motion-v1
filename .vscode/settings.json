@@ -1,0 +1,5 @@
+{
+    "cmake.sourceDirectory": "/Users/judes/Downloads/xiaozhi-main/esp/esp-idf",
+    "idf.currentSetup": "/Users/judes/.espressif/v6.0/esp-idf",
+    "idf.port": "/dev/tty.usbmodem11201"
+}
