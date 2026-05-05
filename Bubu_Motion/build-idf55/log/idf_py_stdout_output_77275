@@ -244,4 +244,31 @@ create static modelsI (5171) MODEL_LOADER: Successfully load srmodels
 [0;32mI (356701) SystemInfo: free sram: 112091 minimal sram: 90999[0m
 [0;32mI (361721) CareSystem: Saved: hunger=59 mood=71 energy=53 clean=96[0m
 [0;32mI (366701) SystemInfo: free sram: 111971 minimal sram: 90999[0m
-[0;32mI (376701) SystemInfo: free sram: 112007 minimal sram
+[0;32mI (376701) SystemInfo: free sram: 112007 minimal sram: 90999[0m
+[0;32mI (386701) SystemInfo: free sram: 112099 minimal sram: 90999[0m
+[0;32mI (393601) Esp32S3RoundI80Board: [Touch] TAP at (90,192) dur=ldms drift=1070273120[0m
+[0;32mI (393601) Esp32S3RoundI80Board: Touch dismissed clock screensaver[0m
+[0;32mI (393601) AudioCodec: Set output enable to true[0m
+[0;32mI (395201) Esp32S3RoundI80Board: [Touch] TAP at (117,144) dur=ldms drift=1070273120[0m
+[0;32mI (395201) WifiStation: Setting WiFi power save level: BALANCED (MIN_MODEM)[0m
+[0;32mI (395201) wifi:Set ps type: 1, coexist: 0[0m
+
+[0;32mI (395201) Esp32S3RoundI80Board: Eye tap -> toggle conversation[0m
+[0;32mI (395201) StateMachine: State: idle -> connecting[0m
+[0;32mI (395201) WifiStation: Setting WiFi power save level: PERFORMANCE (NONE)[0m
+[0;32mI (395201) wifi:Set ps type: 0, coexist: 0[0m
+
+[0;32mI (395331) MQTT: Session ID: a86b5534[0m
+[0;32mI (395331) WifiStation: Setting WiFi power save level: PERFORMANCE (NONE)[0m
+[0;32mI (395331) wifi:Set ps type: 0, coexist: 0[0m
+
+[0;32mI (395331) StateMachine: State: connecting -> listening[0m
+[0;32mI (395331) WifiStation: Setting WiFi power save level: PERFORMANCE (NONE)[0m
+[0;32mI (395331) wifi:Set ps type: 0, coexist: 0[0m
+
+[0;33mW (395331) AFE_CONFIG: wakenet model not found. please load wakenet model...[0m
+[0;32mI (395331) AFE: AFE Version: (1MIC_V251128)[0m
+[0;32mI (395331) AFE: Input PCM Config: total 1 channels(1 microphone, 0 playback), sample rate:16000[0m
+[0;32mI (395341) AFE: AFE Pipeline: [input] -> |VAD(WebRTC)| -> [output][0m
+[0;32mI (395341) AfeAudioProcessor: Audio communication task started, feed size: 512 fetch size: 512[0m
+[0;32mI (395461) AudioCodec: Set input enable to true[0m
