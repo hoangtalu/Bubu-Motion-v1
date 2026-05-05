@@ -4,6 +4,7 @@
 #include "menu_system.h"
 
 #include "care_system.h"
+#include "behavior_scheduler.h"
 #include "audio/audio_codec.h"
 #include "assets.h"
 #include "board.h"
@@ -11,6 +12,8 @@
 #include "boards/common/wifi_connect_service.h"
 #include "eye_display.h"
 #include "level_system.h"
+#include "notes_system.h"
+#include "reminder_system.h"
 #include "lvgl_display/gif/lvgl_gif.h"
 #include "lvgl_display/lvgl_image.h"
 #include "lvgl_display/lvgl_theme.h"
@@ -129,6 +132,34 @@ lv_obj_t* settingsPanel = nullptr;
 lv_obj_t* settingsTitle = nullptr;
 lv_obj_t* settingsItems[SETTINGS_ITEM_COUNT] = {nullptr};
 
+lv_obj_t* notesPanel = nullptr;
+lv_obj_t* notesTitle = nullptr;
+lv_obj_t* notesList = nullptr;
+lv_obj_t* notesUpButton = nullptr;
+lv_obj_t* notesDownButton = nullptr;
+std::vector<lv_obj_t*> notesItems;
+std::vector<NotesSystem::NoteEntry> notesEntries;
+size_t selectedNoteIndex = 0;
+
+lv_obj_t* noteDetailPanel = nullptr;
+lv_obj_t* noteDetailTitle = nullptr;
+lv_obj_t* noteDetailValue = nullptr;
+lv_obj_t* noteDetailHint = nullptr;
+
+lv_obj_t* remindersPanel = nullptr;
+lv_obj_t* remindersTitle = nullptr;
+lv_obj_t* remindersList = nullptr;
+lv_obj_t* remindersUpButton = nullptr;
+lv_obj_t* remindersDownButton = nullptr;
+std::vector<lv_obj_t*> remindersItems;
+std::vector<ReminderSystem::Reminder> remindersEntries;
+size_t selectedReminderIndex = 0;
+
+lv_obj_t* reminderDetailPanel = nullptr;
+lv_obj_t* reminderDetailTitle = nullptr;
+lv_obj_t* reminderDetailValue = nullptr;
+lv_obj_t* reminderDetailHint = nullptr;
+
 lv_obj_t* volumePanel = nullptr;
 lv_obj_t* volumeTitle = nullptr;
 lv_obj_t* volumeValueLabel = nullptr;
@@ -170,7 +201,7 @@ constexpr const char* kFeedingGifMissingNotice = "Feeding GIF missing";
 const char* menuItemLabelTexts[MENU_ITEM_COUNT] = {
     "CHĂM SÓC",
     "KẾT NỐI",
-    "THÔNG ĐIỆP",
+    "NHẮC NHỞ",
     "GHI CHÚ",
     "CÀI ĐẶT",
 };
@@ -246,6 +277,7 @@ bool IsPointInside(lv_obj_t* obj, uint16_t x, uint16_t y) {
 
 void MarkMenuActivity() {
     lastMenuActivityMs = lv_tick_get();
+    BehaviorScheduler::SetLastInteractionTime();
 }
 
 EyeDisplay* GetEyeDisplay() {
@@ -822,6 +854,228 @@ void ShowPanel(lv_obj_t* panel) {
     }
 }
 
+void UpdateNotesItemStyles() {
+    if (notesList == nullptr) {
+        return;
+    }
+
+    for (size_t i = 0; i < notesItems.size(); ++i) {
+        int dist = std::abs(static_cast<int>(i) - static_cast<int>(selectedNoteIndex));
+        lv_obj_t* item = notesItems[i];
+        if (item == nullptr) {
+            continue;
+        }
+
+        const lv_font_t* font = dist == 0 ? &lv_font_montserrat_vn_22 : &lv_font_montserrat_vn_20;
+        lv_opa_t opa = dist == 0 ? LV_OPA_COVER : (dist == 1 ? 200 : LV_OPA_40);
+        lv_obj_set_style_text_font(item, font, 0);
+        lv_obj_set_style_text_opa(item, opa, 0);
+        lv_obj_set_style_text_color(item, lv_color_hex(COLOR_TEXT), 0);
+        lv_obj_set_style_text_align(item, LV_TEXT_ALIGN_CENTER, 0);
+    }
+}
+
+void ScrollNotesToIndex(size_t idx, lv_anim_enable_t anim) {
+    if (notesItems.empty() || idx >= notesItems.size()) {
+        return;
+    }
+    selectedNoteIndex = idx;
+    UpdateNotesItemStyles();
+    if (notesItems[idx] != nullptr) {
+        lv_obj_scroll_to_view(notesItems[idx], anim);
+    }
+}
+
+void RebuildNotesList() {
+    if (notesList == nullptr) {
+        return;
+    }
+
+    while (lv_obj_get_child_cnt(notesList) > 0) {
+        lv_obj_delete(lv_obj_get_child(notesList, 0));
+    }
+    notesItems.clear();
+
+    notesEntries = NotesSystem::List();
+    if (notesEntries.empty()) {
+        auto* label = lv_label_create(notesList);
+        lv_label_set_text(label, "NO NOTES");
+        lv_obj_set_width(label, lv_pct(100));
+        lv_obj_set_style_pad_all(label, 8, 0);
+        lv_obj_set_style_min_height(label, 28, 0);
+        notesItems.push_back(label);
+        selectedNoteIndex = 0;
+        UpdateNotesItemStyles();
+        return;
+    }
+
+    for (size_t i = 0; i < notesEntries.size(); ++i) {
+        auto* label = lv_label_create(notesList);
+        std::string row_text = std::to_string(i + 1) + ". " + notesEntries[i].key;
+        lv_label_set_text(label, row_text.c_str());
+        lv_obj_set_width(label, lv_pct(100));
+        lv_obj_set_style_pad_all(label, 8, 0);
+        lv_obj_set_style_min_height(label, 28, 0);
+        notesItems.push_back(label);
+    }
+
+    if (selectedNoteIndex >= notesItems.size()) {
+        selectedNoteIndex = 0;
+    }
+    ScrollNotesToIndex(selectedNoteIndex, LV_ANIM_OFF);
+}
+
+void ShowNoteDetailForCurrentSelection() {
+    if (noteDetailTitle == nullptr || noteDetailValue == nullptr || noteDetailHint == nullptr) {
+        return;
+    }
+
+    if (notesEntries.empty()) {
+        lv_label_set_text(noteDetailTitle, "NO NOTES");
+        lv_label_set_text(noteDetailValue, "Use remember(key, value) via MCP to store notes.");
+        lv_label_set_text(noteDetailHint, "TAP/POWER: BACK");
+        return;
+    }
+
+    if (selectedNoteIndex >= notesEntries.size()) {
+        selectedNoteIndex = 0;
+    }
+    const auto& note = notesEntries[selectedNoteIndex];
+    lv_label_set_text(noteDetailTitle, note.key.c_str());
+    lv_label_set_text(noteDetailValue, note.value.c_str());
+    lv_label_set_text(noteDetailHint, "UP/DOWN: NEXT NOTE  TAP/POWER: BACK");
+}
+
+const char* ReminderStateText(ReminderSystem::ReminderState state) {
+    switch (state) {
+        case ReminderSystem::ReminderState::kPending:
+            return "PENDING";
+        case ReminderSystem::ReminderState::kFiring:
+            return "FIRING";
+        case ReminderSystem::ReminderState::kSnoozed:
+            return "SNOOZED";
+        case ReminderSystem::ReminderState::kConfirmed:
+            return "CONFIRMED";
+        case ReminderSystem::ReminderState::kCancelled:
+            return "CANCELLED";
+        default:
+            return "UNKNOWN";
+    }
+}
+
+void UpdateRemindersItemStyles() {
+    if (remindersList == nullptr) {
+        return;
+    }
+
+    for (size_t i = 0; i < remindersItems.size(); ++i) {
+        int dist = std::abs(static_cast<int>(i) - static_cast<int>(selectedReminderIndex));
+        lv_obj_t* item = remindersItems[i];
+        if (item == nullptr) {
+            continue;
+        }
+
+        const lv_font_t* font = dist == 0 ? &lv_font_montserrat_vn_22 : &lv_font_montserrat_vn_20;
+        lv_opa_t opa = dist == 0 ? LV_OPA_COVER : (dist == 1 ? 200 : LV_OPA_40);
+        lv_obj_set_style_text_font(item, font, 0);
+        lv_obj_set_style_text_opa(item, opa, 0);
+        lv_obj_set_style_text_color(item, lv_color_hex(COLOR_TEXT), 0);
+        lv_obj_set_style_text_align(item, LV_TEXT_ALIGN_CENTER, 0);
+    }
+}
+
+void ScrollRemindersToIndex(size_t idx, lv_anim_enable_t anim) {
+    if (remindersItems.empty() || idx >= remindersItems.size()) {
+        return;
+    }
+    selectedReminderIndex = idx;
+    UpdateRemindersItemStyles();
+    if (remindersItems[idx] != nullptr) {
+        lv_obj_scroll_to_view(remindersItems[idx], anim);
+    }
+}
+
+void RebuildRemindersList() {
+    if (remindersList == nullptr) {
+        return;
+    }
+
+    while (lv_obj_get_child_cnt(remindersList) > 0) {
+        lv_obj_delete(lv_obj_get_child(remindersList, 0));
+    }
+    remindersItems.clear();
+
+    remindersEntries = ReminderSystem::List();
+    if (remindersEntries.empty()) {
+        auto* label = lv_label_create(remindersList);
+        lv_label_set_text(label, "NO REMINDERS");
+        lv_obj_set_width(label, lv_pct(100));
+        lv_obj_set_style_pad_all(label, 8, 0);
+        lv_obj_set_style_min_height(label, 28, 0);
+        remindersItems.push_back(label);
+        selectedReminderIndex = 0;
+        UpdateRemindersItemStyles();
+        return;
+    }
+
+    for (size_t i = 0; i < remindersEntries.size(); ++i) {
+        auto* label = lv_label_create(remindersList);
+        char time_text[8];
+        std::snprintf(time_text, sizeof(time_text), "%02d:%02d",
+                      remindersEntries[i].target_hour, remindersEntries[i].target_minute);
+        std::string row_text = std::to_string(i + 1) + ". ";
+        row_text += time_text;
+        row_text += " ";
+        row_text += remindersEntries[i].message;
+        lv_label_set_text(label, row_text.c_str());
+        lv_obj_set_width(label, lv_pct(100));
+        lv_obj_set_style_pad_all(label, 8, 0);
+        lv_obj_set_style_min_height(label, 28, 0);
+        remindersItems.push_back(label);
+    }
+
+    if (selectedReminderIndex >= remindersItems.size()) {
+        selectedReminderIndex = 0;
+    }
+    ScrollRemindersToIndex(selectedReminderIndex, LV_ANIM_OFF);
+}
+
+void ShowReminderDetailForCurrentSelection() {
+    if (reminderDetailTitle == nullptr || reminderDetailValue == nullptr || reminderDetailHint == nullptr) {
+        return;
+    }
+
+    if (remindersEntries.empty()) {
+        lv_label_set_text(reminderDetailTitle, "NO REMINDERS");
+        lv_label_set_text(reminderDetailValue, "Create reminders via AI.");
+        lv_label_set_text(reminderDetailHint, "TAP/POWER: BACK");
+        return;
+    }
+
+    if (selectedReminderIndex >= remindersEntries.size()) {
+        selectedReminderIndex = 0;
+    }
+    const auto& reminder = remindersEntries[selectedReminderIndex];
+    char title[32];
+    std::snprintf(title, sizeof(title), "#%d %02d:%02d", static_cast<int>(reminder.id),
+                  reminder.target_hour, reminder.target_minute);
+    lv_label_set_text(reminderDetailTitle, title);
+
+    std::string detail = reminder.message;
+    detail += "\nState: ";
+    detail += ReminderStateText(reminder.state);
+    detail += "\nSnooze: ";
+    detail += std::to_string(reminder.snooze_interval_min);
+    detail += "m";
+    if (reminder.snooze_count > 0) {
+        detail += " (";
+        detail += std::to_string(reminder.snooze_count);
+        detail += ")";
+    }
+    lv_label_set_text(reminderDetailValue, detail.c_str());
+    lv_label_set_text(reminderDetailHint, "UP/DOWN: NEXT  TAP/POWER: BACK");
+}
+
 lv_obj_t* CreateTextButton(lv_obj_t* parent, const char* text, lv_coord_t w, lv_coord_t h, const lv_font_t* font = &lv_font_montserrat_14) {
     auto* button = lv_btn_create(parent);
     lv_obj_set_size(button, w, h);
@@ -1052,6 +1306,10 @@ void HideAllPanels() {
     HidePanel(carePanel);
     HidePanel(connectPanel);
     HidePanel(keyboardPanel);
+    HidePanel(notesPanel);
+    HidePanel(noteDetailPanel);
+    HidePanel(remindersPanel);
+    HidePanel(reminderDetailPanel);
     HidePanel(statsPanel);
     HidePanel(settingsPanel);
     HidePanel(volumePanel);
@@ -1417,6 +1675,182 @@ void CreateSettingsPanel() {
     UpdateSettingsItemStyles();
 }
 
+void CreateNotesPanel() {
+    if (notesPanel != nullptr) {
+        return;
+    }
+
+    notesPanel = lv_obj_create(lv_screen_active());
+    lv_obj_set_size(notesPanel, 240, 240);
+    lv_obj_center(notesPanel);
+    lv_obj_set_style_radius(notesPanel, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(notesPanel, lv_color_hex(COLOR_BACKGROUND), 0);
+    lv_obj_set_style_bg_opa(notesPanel, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(notesPanel, 12, 0);
+    lv_obj_set_style_border_color(notesPanel, lv_color_hex(COLOR_MINT), 0);
+    lv_obj_set_style_border_opa(notesPanel, LV_OPA_COVER, 0);
+    lv_obj_set_style_pad_all(notesPanel, 0, 0);
+    lv_obj_clear_flag(notesPanel, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(notesPanel, LV_OBJ_FLAG_HIDDEN);
+
+    notesTitle = lv_label_create(notesPanel);
+    lv_label_set_text(notesTitle, "NOTES");
+    lv_obj_set_style_text_color(notesTitle, lv_color_hex(COLOR_TEXT), 0);
+    lv_obj_set_style_text_font(notesTitle, &lv_font_montserrat_vn_20, 0);
+    lv_obj_align(notesTitle, LV_ALIGN_TOP_MID, 0, 26);
+
+    notesList = lv_obj_create(notesPanel);
+    lv_obj_set_size(notesList, 190, 110);
+    lv_obj_align(notesList, LV_ALIGN_CENTER, 0, 22);
+    lv_obj_set_scroll_dir(notesList, LV_DIR_VER);
+    lv_obj_set_scroll_snap_y(notesList, LV_SCROLL_SNAP_CENTER);
+    lv_obj_set_scrollbar_mode(notesList, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_clear_flag(notesList, LV_OBJ_FLAG_SCROLL_MOMENTUM);
+    lv_obj_set_style_pad_all(notesList, 0, 0);
+    lv_obj_set_style_pad_row(notesList, 6, 0);
+    lv_obj_set_style_bg_opa(notesList, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(notesList, 0, 0);
+    lv_obj_set_flex_flow(notesList, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(notesList, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START);
+
+    notesUpButton = CreateNavButton(notesPanel, LV_ALIGN_TOP_MID, 0, -65, LV_SYMBOL_UP,
+                                    LV_ALIGN_CENTER, 0, 30,
+                                    [](lv_event_t*) { MenuSystem::SelectNotesPrev(); });
+    notesDownButton = CreateNavButton(notesPanel, LV_ALIGN_BOTTOM_MID, 0, 65, LV_SYMBOL_DOWN,
+                                      LV_ALIGN_CENTER, 0, -30,
+                                      [](lv_event_t*) { MenuSystem::SelectNotesNext(); });
+
+    noteDetailPanel = lv_obj_create(lv_screen_active());
+    lv_obj_set_size(noteDetailPanel, 240, 240);
+    lv_obj_center(noteDetailPanel);
+    lv_obj_set_style_radius(noteDetailPanel, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(noteDetailPanel, lv_color_hex(COLOR_BACKGROUND), 0);
+    lv_obj_set_style_bg_opa(noteDetailPanel, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(noteDetailPanel, 12, 0);
+    lv_obj_set_style_border_color(noteDetailPanel, lv_color_hex(COLOR_MINT), 0);
+    lv_obj_set_style_border_opa(noteDetailPanel, LV_OPA_COVER, 0);
+    lv_obj_set_style_pad_all(noteDetailPanel, 0, 0);
+    lv_obj_clear_flag(noteDetailPanel, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(noteDetailPanel, LV_OBJ_FLAG_HIDDEN);
+
+    noteDetailTitle = lv_label_create(noteDetailPanel);
+    lv_label_set_text(noteDetailTitle, "NOTE");
+    lv_obj_set_width(noteDetailTitle, 180);
+    lv_obj_set_style_text_color(noteDetailTitle, lv_color_hex(COLOR_MINT), 0);
+    lv_obj_set_style_text_font(noteDetailTitle, &lv_font_montserrat_vn_20, 0);
+    lv_obj_set_style_text_align(noteDetailTitle, LV_TEXT_ALIGN_CENTER, 0);
+    lv_label_set_long_mode(noteDetailTitle, LV_LABEL_LONG_DOT);
+    lv_obj_align(noteDetailTitle, LV_ALIGN_TOP_MID, 0, 22);
+
+    noteDetailValue = lv_label_create(noteDetailPanel);
+    lv_label_set_text(noteDetailValue, "");
+    lv_obj_set_width(noteDetailValue, 176);
+    lv_obj_set_style_text_color(noteDetailValue, lv_color_hex(COLOR_TEXT), 0);
+    lv_obj_set_style_text_font(noteDetailValue, &lv_font_montserrat_vn_20, 0);
+    lv_obj_set_style_text_align(noteDetailValue, LV_TEXT_ALIGN_CENTER, 0);
+    lv_label_set_long_mode(noteDetailValue, LV_LABEL_LONG_WRAP);
+    lv_obj_align(noteDetailValue, LV_ALIGN_CENTER, 0, 8);
+
+    noteDetailHint = lv_label_create(noteDetailPanel);
+    lv_label_set_text(noteDetailHint, "TAP/POWER: BACK");
+    lv_obj_set_width(noteDetailHint, 186);
+    lv_obj_set_style_text_color(noteDetailHint, lv_color_hex(0xA8BBC2), 0);
+    lv_obj_set_style_text_font(noteDetailHint, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_align(noteDetailHint, LV_TEXT_ALIGN_CENTER, 0);
+    lv_label_set_long_mode(noteDetailHint, LV_LABEL_LONG_WRAP);
+    lv_obj_align(noteDetailHint, LV_ALIGN_BOTTOM_MID, 0, -20);
+
+    RebuildNotesList();
+}
+
+void CreateRemindersPanel() {
+    if (remindersPanel != nullptr) {
+        return;
+    }
+
+    remindersPanel = lv_obj_create(lv_screen_active());
+    lv_obj_set_size(remindersPanel, 240, 240);
+    lv_obj_center(remindersPanel);
+    lv_obj_set_style_radius(remindersPanel, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(remindersPanel, lv_color_hex(COLOR_BACKGROUND), 0);
+    lv_obj_set_style_bg_opa(remindersPanel, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(remindersPanel, 12, 0);
+    lv_obj_set_style_border_color(remindersPanel, lv_color_hex(COLOR_MINT), 0);
+    lv_obj_set_style_border_opa(remindersPanel, LV_OPA_COVER, 0);
+    lv_obj_set_style_pad_all(remindersPanel, 0, 0);
+    lv_obj_clear_flag(remindersPanel, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(remindersPanel, LV_OBJ_FLAG_HIDDEN);
+
+    remindersTitle = lv_label_create(remindersPanel);
+    lv_label_set_text(remindersTitle, "REMINDERS");
+    lv_obj_set_style_text_color(remindersTitle, lv_color_hex(COLOR_TEXT), 0);
+    lv_obj_set_style_text_font(remindersTitle, &lv_font_montserrat_vn_20, 0);
+    lv_obj_align(remindersTitle, LV_ALIGN_TOP_MID, 0, 26);
+
+    remindersList = lv_obj_create(remindersPanel);
+    lv_obj_set_size(remindersList, 190, 110);
+    lv_obj_align(remindersList, LV_ALIGN_CENTER, 0, 22);
+    lv_obj_set_scroll_dir(remindersList, LV_DIR_VER);
+    lv_obj_set_scroll_snap_y(remindersList, LV_SCROLL_SNAP_CENTER);
+    lv_obj_set_scrollbar_mode(remindersList, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_clear_flag(remindersList, LV_OBJ_FLAG_SCROLL_MOMENTUM);
+    lv_obj_set_style_pad_all(remindersList, 0, 0);
+    lv_obj_set_style_pad_row(remindersList, 6, 0);
+    lv_obj_set_style_bg_opa(remindersList, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(remindersList, 0, 0);
+    lv_obj_set_flex_flow(remindersList, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(remindersList, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START);
+
+    remindersUpButton = CreateNavButton(remindersPanel, LV_ALIGN_TOP_MID, 0, -65, LV_SYMBOL_UP,
+                                        LV_ALIGN_CENTER, 0, 30,
+                                        [](lv_event_t*) { MenuSystem::SelectRemindersPrev(); });
+    remindersDownButton = CreateNavButton(remindersPanel, LV_ALIGN_BOTTOM_MID, 0, 65, LV_SYMBOL_DOWN,
+                                          LV_ALIGN_CENTER, 0, -30,
+                                          [](lv_event_t*) { MenuSystem::SelectRemindersNext(); });
+
+    reminderDetailPanel = lv_obj_create(lv_screen_active());
+    lv_obj_set_size(reminderDetailPanel, 240, 240);
+    lv_obj_center(reminderDetailPanel);
+    lv_obj_set_style_radius(reminderDetailPanel, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(reminderDetailPanel, lv_color_hex(COLOR_BACKGROUND), 0);
+    lv_obj_set_style_bg_opa(reminderDetailPanel, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(reminderDetailPanel, 12, 0);
+    lv_obj_set_style_border_color(reminderDetailPanel, lv_color_hex(COLOR_MINT), 0);
+    lv_obj_set_style_border_opa(reminderDetailPanel, LV_OPA_COVER, 0);
+    lv_obj_set_style_pad_all(reminderDetailPanel, 0, 0);
+    lv_obj_clear_flag(reminderDetailPanel, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(reminderDetailPanel, LV_OBJ_FLAG_HIDDEN);
+
+    reminderDetailTitle = lv_label_create(reminderDetailPanel);
+    lv_label_set_text(reminderDetailTitle, "REMINDER");
+    lv_obj_set_width(reminderDetailTitle, 180);
+    lv_obj_set_style_text_color(reminderDetailTitle, lv_color_hex(COLOR_MINT), 0);
+    lv_obj_set_style_text_font(reminderDetailTitle, &lv_font_montserrat_vn_20, 0);
+    lv_obj_set_style_text_align(reminderDetailTitle, LV_TEXT_ALIGN_CENTER, 0);
+    lv_label_set_long_mode(reminderDetailTitle, LV_LABEL_LONG_DOT);
+    lv_obj_align(reminderDetailTitle, LV_ALIGN_TOP_MID, 0, 22);
+
+    reminderDetailValue = lv_label_create(reminderDetailPanel);
+    lv_label_set_text(reminderDetailValue, "");
+    lv_obj_set_width(reminderDetailValue, 176);
+    lv_obj_set_style_text_color(reminderDetailValue, lv_color_hex(COLOR_TEXT), 0);
+    lv_obj_set_style_text_font(reminderDetailValue, &lv_font_montserrat_vn_20, 0);
+    lv_obj_set_style_text_align(reminderDetailValue, LV_TEXT_ALIGN_CENTER, 0);
+    lv_label_set_long_mode(reminderDetailValue, LV_LABEL_LONG_WRAP);
+    lv_obj_align(reminderDetailValue, LV_ALIGN_CENTER, 0, 8);
+
+    reminderDetailHint = lv_label_create(reminderDetailPanel);
+    lv_label_set_text(reminderDetailHint, "TAP/POWER: BACK");
+    lv_obj_set_width(reminderDetailHint, 186);
+    lv_obj_set_style_text_color(reminderDetailHint, lv_color_hex(0xA8BBC2), 0);
+    lv_obj_set_style_text_font(reminderDetailHint, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_align(reminderDetailHint, LV_TEXT_ALIGN_CENTER, 0);
+    lv_label_set_long_mode(reminderDetailHint, LV_LABEL_LONG_WRAP);
+    lv_obj_align(reminderDetailHint, LV_ALIGN_BOTTOM_MID, 0, -20);
+
+    RebuildRemindersList();
+}
+
 void CreateVolumePanel() {
     if (volumePanel != nullptr) {
         return;
@@ -1605,6 +2039,8 @@ void Begin(Display* display) {
     CreateConnectPanel();
     CreateKeyboardPanel();
     CreateSettingsPanel();
+    CreateNotesPanel();
+    CreateRemindersPanel();
     CreateVolumePanel();
     CreateEyeEditorPanel();
     CreateStatsPanel();
@@ -1715,12 +2151,24 @@ void ActivateSelected() {
             ScrollConnectToIndex(static_cast<uint8_t>(selectedConnectItem), LV_ANIM_OFF);
             break;
         }
-        case MENU_MESSAGE:
-            ESP_LOGI(TAG, "MESSAGE: not yet implemented");
+        case MENU_REMINDERS: {
+            DisplayLockGuard lock(displayHandle);
+            RebuildRemindersList();
+            HidePanel(menuPanel);
+            ShowPanel(remindersPanel);
+            currentState = MENU_REMINDERS_OPEN;
+            ScrollRemindersToIndex(selectedReminderIndex, LV_ANIM_OFF);
             break;
-        case MENU_NOTES:
-            ESP_LOGI(TAG, "NOTES: not yet implemented");
+        }
+        case MENU_NOTES: {
+            DisplayLockGuard lock(displayHandle);
+            RebuildNotesList();
+            HidePanel(menuPanel);
+            ShowPanel(notesPanel);
+            currentState = MENU_NOTES_OPEN;
+            ScrollNotesToIndex(selectedNoteIndex, LV_ANIM_OFF);
             break;
+        }
         case MENU_SETTINGS: {
             DisplayLockGuard lock(displayHandle);
             HidePanel(menuPanel);
@@ -1773,6 +2221,18 @@ void NavigateNext() {
                 UpdateSettingsItemStyles();
             }
             break;
+        case MENU_REMINDERS_OPEN:
+            SelectRemindersNext();
+            break;
+        case MENU_REMINDER_DETAIL_OPEN:
+            RemindersDetailNext();
+            break;
+        case MENU_NOTES_OPEN:
+            SelectNotesNext();
+            break;
+        case MENU_NOTE_DETAIL_OPEN:
+            NotesDetailNext();
+            break;
         default:
             break;
     }
@@ -1816,6 +2276,18 @@ void NavigatePrev() {
                 UpdateSettingsItemStyles();
             }
             break;
+        case MENU_REMINDERS_OPEN:
+            SelectRemindersPrev();
+            break;
+        case MENU_REMINDER_DETAIL_OPEN:
+            RemindersDetailPrev();
+            break;
+        case MENU_NOTES_OPEN:
+            SelectNotesPrev();
+            break;
+        case MENU_NOTE_DETAIL_OPEN:
+            NotesDetailPrev();
+            break;
         default:
             break;
     }
@@ -1854,6 +2326,18 @@ void ActivateCurrent() {
             break;
         case MENU_EYE_EDITOR_OPEN:
             EyeEditorApplyIncrement();
+            break;
+        case MENU_REMINDERS_OPEN:
+            ActivateRemindersSelected();
+            break;
+        case MENU_REMINDER_DETAIL_OPEN:
+            CloseReminderDetailToReminders();
+            break;
+        case MENU_NOTES_OPEN:
+            ActivateNotesSelected();
+            break;
+        case MENU_NOTE_DETAIL_OPEN:
+            CloseNoteDetailToNotes();
             break;
         default:
             break;
@@ -2097,7 +2581,88 @@ void CloseKeyboardToConnect() {
     connectView = CONNECT_VIEW_WIFI_LIST;
     ApplyConnectView();
 }
-void CloseMessageToMenu() {}
+
+void SelectRemindersNext() {
+    if (currentState != MENU_REMINDERS_OPEN || remindersItems.empty()) {
+        return;
+    }
+    MarkMenuActivity();
+    size_t next = selectedReminderIndex + 1;
+    if (next >= remindersItems.size()) {
+        next = remindersItems.size() - 1;
+    }
+    DisplayLockGuard lock(displayHandle);
+    ScrollRemindersToIndex(next, LV_ANIM_ON);
+}
+
+void SelectRemindersPrev() {
+    if (currentState != MENU_REMINDERS_OPEN || remindersItems.empty()) {
+        return;
+    }
+    MarkMenuActivity();
+    size_t next = selectedReminderIndex == 0 ? 0 : selectedReminderIndex - 1;
+    DisplayLockGuard lock(displayHandle);
+    ScrollRemindersToIndex(next, LV_ANIM_ON);
+}
+
+void ActivateRemindersSelected() {
+    if (currentState != MENU_REMINDERS_OPEN) {
+        return;
+    }
+    MarkMenuActivity();
+    DisplayLockGuard lock(displayHandle);
+    RebuildRemindersList();
+    HidePanel(remindersPanel);
+    ShowPanel(reminderDetailPanel);
+    currentState = MENU_REMINDER_DETAIL_OPEN;
+    ShowReminderDetailForCurrentSelection();
+}
+
+void CloseRemindersToMenu() {
+    if (currentState != MENU_REMINDERS_OPEN) {
+        return;
+    }
+
+    DisplayLockGuard lock(displayHandle);
+    HidePanel(remindersPanel);
+    ShowPanel(menuPanel);
+    currentState = MENU_OPEN;
+    selectedItem = MENU_REMINDERS;
+    ScrollMenuToIndex(static_cast<uint8_t>(selectedItem), LV_ANIM_OFF);
+}
+
+void CloseReminderDetailToReminders() {
+    if (currentState != MENU_REMINDER_DETAIL_OPEN) {
+        return;
+    }
+
+    DisplayLockGuard lock(displayHandle);
+    RebuildRemindersList();
+    HidePanel(reminderDetailPanel);
+    ShowPanel(remindersPanel);
+    currentState = MENU_REMINDERS_OPEN;
+    ScrollRemindersToIndex(selectedReminderIndex, LV_ANIM_OFF);
+}
+
+void RemindersDetailNext() {
+    if (currentState != MENU_REMINDER_DETAIL_OPEN || remindersEntries.empty()) {
+        return;
+    }
+    MarkMenuActivity();
+    selectedReminderIndex = (selectedReminderIndex + 1) % remindersEntries.size();
+    DisplayLockGuard lock(displayHandle);
+    ShowReminderDetailForCurrentSelection();
+}
+
+void RemindersDetailPrev() {
+    if (currentState != MENU_REMINDER_DETAIL_OPEN || remindersEntries.empty()) {
+        return;
+    }
+    MarkMenuActivity();
+    selectedReminderIndex = (selectedReminderIndex + remindersEntries.size() - 1) % remindersEntries.size();
+    DisplayLockGuard lock(displayHandle);
+    ShowReminderDetailForCurrentSelection();
+}
 
 void ShowStats() {
     if (currentState != MENU_CARE_OPEN && currentState != MENU_OPEN) {
@@ -2409,13 +2974,87 @@ void SelectSleepNext() {}
 void SelectSleepPrev() {}
 void ActivateSleepSelected() {}
 void CloseSleepToCare() {}
-void SelectNotesNext() {}
-void SelectNotesPrev() {}
-void ActivateNotesSelected() {}
-void CloseNotesToMenu() {}
-void CloseNoteDetailToNotes() {}
-void NotesDetailNext() {}
-void NotesDetailPrev() {}
+void SelectNotesNext() {
+    if (currentState != MENU_NOTES_OPEN || notesItems.empty()) {
+        return;
+    }
+    MarkMenuActivity();
+    size_t next = selectedNoteIndex + 1;
+    if (next >= notesItems.size()) {
+        next = notesItems.size() - 1;
+    }
+    DisplayLockGuard lock(displayHandle);
+    ScrollNotesToIndex(next, LV_ANIM_ON);
+}
+
+void SelectNotesPrev() {
+    if (currentState != MENU_NOTES_OPEN || notesItems.empty()) {
+        return;
+    }
+    MarkMenuActivity();
+    size_t next = selectedNoteIndex == 0 ? 0 : selectedNoteIndex - 1;
+    DisplayLockGuard lock(displayHandle);
+    ScrollNotesToIndex(next, LV_ANIM_ON);
+}
+
+void ActivateNotesSelected() {
+    if (currentState != MENU_NOTES_OPEN) {
+        return;
+    }
+    MarkMenuActivity();
+    DisplayLockGuard lock(displayHandle);
+    RebuildNotesList();
+    HidePanel(notesPanel);
+    ShowPanel(noteDetailPanel);
+    currentState = MENU_NOTE_DETAIL_OPEN;
+    ShowNoteDetailForCurrentSelection();
+}
+
+void CloseNotesToMenu() {
+    if (currentState != MENU_NOTES_OPEN) {
+        return;
+    }
+
+    DisplayLockGuard lock(displayHandle);
+    HidePanel(notesPanel);
+    ShowPanel(menuPanel);
+    currentState = MENU_OPEN;
+    selectedItem = MENU_NOTES;
+    ScrollMenuToIndex(static_cast<uint8_t>(selectedItem), LV_ANIM_OFF);
+}
+
+void CloseNoteDetailToNotes() {
+    if (currentState != MENU_NOTE_DETAIL_OPEN) {
+        return;
+    }
+
+    DisplayLockGuard lock(displayHandle);
+    RebuildNotesList();
+    HidePanel(noteDetailPanel);
+    ShowPanel(notesPanel);
+    currentState = MENU_NOTES_OPEN;
+    ScrollNotesToIndex(selectedNoteIndex, LV_ANIM_OFF);
+}
+
+void NotesDetailNext() {
+    if (currentState != MENU_NOTE_DETAIL_OPEN || notesEntries.empty()) {
+        return;
+    }
+    MarkMenuActivity();
+    selectedNoteIndex = (selectedNoteIndex + 1) % notesEntries.size();
+    DisplayLockGuard lock(displayHandle);
+    ShowNoteDetailForCurrentSelection();
+}
+
+void NotesDetailPrev() {
+    if (currentState != MENU_NOTE_DETAIL_OPEN || notesEntries.empty()) {
+        return;
+    }
+    MarkMenuActivity();
+    selectedNoteIndex = (selectedNoteIndex + notesEntries.size() - 1) % notesEntries.size();
+    DisplayLockGuard lock(displayHandle);
+    ShowNoteDetailForCurrentSelection();
+}
 void StartCleanAnimation() {}
 
 void Render() {
@@ -2511,6 +3150,10 @@ bool IsTapOnPrevButton(uint16_t x, uint16_t y) {
             return IsPointInside(careUpButton, x, y);
         case MENU_CONNECT_OPEN:
             return IsPointInside(connectUpButton, x, y);
+        case MENU_REMINDERS_OPEN:
+            return IsPointInside(remindersUpButton, x, y);
+        case MENU_NOTES_OPEN:
+            return IsPointInside(notesUpButton, x, y);
         case MENU_STATS_OPEN:
             return IsPointInside(statsLeftBtn, x, y);
         default:
@@ -2526,6 +3169,10 @@ bool IsTapOnNextButton(uint16_t x, uint16_t y) {
             return IsPointInside(careDownButton, x, y);
         case MENU_CONNECT_OPEN:
             return IsPointInside(connectDownButton, x, y);
+        case MENU_REMINDERS_OPEN:
+            return IsPointInside(remindersDownButton, x, y);
+        case MENU_NOTES_OPEN:
+            return IsPointInside(notesDownButton, x, y);
         case MENU_STATS_OPEN:
             return IsPointInside(statsRightBtn, x, y);
         default:
@@ -2555,6 +3202,19 @@ bool IsTapOnStatsNav(uint16_t x, uint16_t y) {
 }
 
 bool IsTapOnSleepSelected(uint16_t, uint16_t) { return false; }
-bool IsTapOnNotesSelected(uint16_t, uint16_t) { return false; }
+bool IsTapOnNotesSelected(uint16_t x, uint16_t y) {
+    if (currentState != MENU_NOTES_OPEN || notesItems.empty() || selectedNoteIndex >= notesItems.size()) {
+        return false;
+    }
+    return IsPointInside(notesItems[selectedNoteIndex], x, y);
+}
+
+bool IsTapOnRemindersSelected(uint16_t x, uint16_t y) {
+    if (currentState != MENU_REMINDERS_OPEN || remindersItems.empty() ||
+        selectedReminderIndex >= remindersItems.size()) {
+        return false;
+    }
+    return IsPointInside(remindersItems[selectedReminderIndex], x, y);
+}
 
 }  // namespace MenuSystem

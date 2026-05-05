@@ -52,6 +52,7 @@ if("${CONFIG}" STREQUAL "" OR "${CONFIG}" STREQUAL "")
   "ldgen_libraries"
   "ldgen_libraries.in"
   "low_battery.ogg.S"
+  "notification.ogg.S"
   "popup.ogg.S"
   "project_elf_src_esp32s3.c"
   "success.ogg.S"

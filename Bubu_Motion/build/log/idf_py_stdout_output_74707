@@ -1,0 +1,247 @@
+Command: /Users/judes/.espressif/python_env/idf5.5_py3.9_env/bin/python /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/tools/idf_monitor.py -p /dev/cu.wchusbserial1120 -b 115200 --toolchain-prefix xtensa-esp32s3-elf- --target esp32s3 --revision 0 /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/build/xiaozhi.elf /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/build/bootloader/bootloader.elf -m '/Users/judes/.espressif/python_env/idf5.5_py3.9_env/bin/python' '/Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/tools/idf.py' '-p' '/dev/cu.wchusbserial1120'
+ESP-ROM:esp32s3-20210327
+Build:Mar 27 2021
+rst:0x1 (POWERON),boot:0x8 (SPI_FAST_FLASH_BOOT)
+SPIWP:0xee
+mode:DIO, clock div:1
+load:0x3fce2820,len:0x548
+load:0x403c8700,len:0xc3c
+load:0x403cb700,len:0x2e70
+entry 0x403c8908
+[0;32mI (35) octal_psram: vendor id    : 0x0d (AP)[0m
+[0;32mI (35) octal_psram: dev id       : 0x02 (generation 3)[0m
+[0;32mI (35) octal_psram: density      : 0x03 (64 Mbit)[0m
+[0;32mI (37) octal_psram: good-die     : 0x01 (Pass)[0m
+[0;32mI (41) octal_psram: Latency      : 0x01 (Fixed)[0m
+[0;32mI (45) octal_psram: VCC          : 0x01 (3V)[0m
+[0;32mI (49) octal_psram: SRF          : 0x01 (Fast Refresh)[0m
+[0;32mI (54) octal_psram: BurstType    : 0x01 (Hybrid Wrap)[0m
+[0;32mI (59) octal_psram: BurstLen     : 0x01 (32 Byte)[0m
+[0;32mI (63) octal_psram: Readlatency  : 0x02 (10 cycles@Fixed)[0m
+[0;32mI (68) octal_psram: DriveStrength: 0x00 (1/1)[0m
+[0;32mI (72) MSPI Timing: Enter psram timing tuning[0m
+[0;32mI (77) esp_psram: Found 8MB PSRAM device[0m
+[0;32mI (80) esp_psram: Speed: 80MHz[0m
+[0;32mI (83) cpu_start: Multicore app[0m
+[0;32mI (97) cpu_start: GPIO 44 and 43 are used as console UART I/O pins[0m
+[0;32mI (97) cpu_start: Pro cpu start user code[0m
+[0;32mI (97) cpu_start: cpu freq: 240000000 Hz[0m
+[0;32mI (99) app_init: Application information:[0m
+[0;32mI (103) app_init: Project name:     xiaozhi[0m
+[0;32mI (107) app_init: App version:      2.2.4[0m
+[0;32mI (110) app_init: Compile time:     May  5 2026 11:41:22[0m
+[0;32mI (115) app_init: ELF file SHA256:  0a7a56189...[0m
+[0;32mI (120) app_init: ESP-IDF:          HEAD-HASH-NOTFOUND[0m
+[0;32mI (125) efuse_init: Min chip rev:     v0.0[0m
+[0;32mI (129) efuse_init: Max chip rev:     v0.99 [0m
+[0;32mI (132) efuse_init: Chip rev:         v0.2[0m
+[0;32mI (136) heap_init: Initializing. RAM available for dynamic allocation:[0m
+[0;32mI (143) heap_init: At 3FCAF710 len 0003A000 (232 KiB): RAM[0m
+[0;32mI (148) heap_init: At 3FCE9710 len 00005724 (21 KiB): RAM[0m
+[0;32mI (153) heap_init: At 3FCF0000 len 00008000 (32 KiB): DRAM[0m
+[0;32mI (158) heap_init: At 600FE000 len 00001FD8 (7 KiB): RTCRAM[0m
+[0;32mI (164) esp_psram: Adding pool of 8192K of PSRAM memory to heap allocator[0m
+[0;32mI (170) spi_flash: detected chip: boya[0m
+[0;32mI (173) spi_flash: flash io: qio[0m
+[0;32mI (177) sleep_gpio: Configure to isolate all GPIO pins in sleep state[0m
+[0;32mI (183) sleep_gpio: Enable automatic switching of GPIO sleep configuration[0m
+[0;32mI (190) main_task: Started on CPU0[0m
+[0;32mI (220) esp_psram: Reserving pool of 96K of internal memory for DMA/internal allocations[0m
+[0;32mI (220) main_task: Calling app_main()[0m
+[0;32mI (240) Board: UUID=29dbd396-c0d7-4b9f-83d8-e80eef382f57 SKU=bubu-motion-new[0m
+[0;32mI (240) button: IoT Button Version: 4.1.6[0m
+[0;32mI (240) BubuMotionNewBoard: Initializing BubuMotionNewBoard (ESP32-S3 N16R8, GC9A01, CST816D, NS4168, INMP441)[0m
+[0;32mI (250) BubuMotionNewBoard: BOOT button initialized (click=chat, long=WiFi config)[0m
+[0;32mI (260) gc9a01: LCD panel create success, version: 2.0.1[0m
+[0;32mI (380) Display: Power management not supported[0m
+[0;32mI (390) LcdDisplay: Turning display on[0m
+[0;32mI (390) LcdDisplay: Initialize LVGL library[0m
+[0;32mI (390) LcdDisplay: Use 2MB of PSRAM for image cache[0m
+[0;32mI (390) LcdDisplay: Initialize LVGL port[0m
+[0;32mI (400) LcdDisplay: Adding LCD display[0m
+[0;32mI (400) LVGL: Starting LVGL task[0m
+[0;32mI (400) BubuMotionNewBoard: CST816 chip ID: 0xB6 (CST816D)[0m
+[0;32mI (430) BubuMotionNewBoard: CST816 configured: EnChange INT enabled, long-press = 50[0m
+[0;32mI (430) BubuMotionNewBoard: Touch INT GPIO 18 configured (falling-edge ISR)[0m
+[0;32mI (430) BubuMotionNewBoard: Touch initialized: CST816D + direct GPIO INT + 20ms poll[0m
+[0;32mI (440) NoAudioCodec: Simplex channels created[0m
+[0;32mI (440) AudioCodec: Set output volume to 5[0m
+[0;32mI (440) AudioCodec: Set input gain to 3.0[0m
+[0;32mI (450) Backlight: Set brightness to 75[0m
+[0;32mI (450) StateMachine: State: unknown -> starting[0m
+[0;32mI (460) MenuSystem: Initializing menu system...[0m
+[0;32mI (560) MenuSystem: Menu system ready[0m
+[0;32mI (560) BubuRoboEyesPort: RoboEyes runtime initialized[0m
+[0;32mI (560) AudioCodec: Audio codec started with gain 3.0 and output volume 5[0m
+[0;32mI (570) EmotionVoiceMap: EmotionVoiceMap initialized with 27 emotions and 15 voice mappings[0m
+[0;32mI (580) LevelSystem: LevelSystem ready: level=1 xp=3/75[0m
+[0;32mI (580) CareSystem: Loaded: hunger=29 mood=29 energy=29 clean=30[0m
+[0;32mI (590) CareSystem: CareSystem ready[0m
+[0;32mI (590) MCP: Add tool: self.get_device_status[0m
+[0;32mI (590) MCP: Add tool: self.audio_speaker.set_volume[0m
+[0;32mI (600) MCP: Add tool: self.screen.set_brightness[0m
+[0;32mI (600) MCP: Add tool: self.screen.show_message[0m
+[0;32mI (610) MCP: Add tool: self.screen.set_emotion[0m
+[0;32mI (610) BubuRoboEyesPort: [ANIM] mode=PAUSED state=1 menu=0 emotion=neutral duration=155ms applied=- base=- overlay=- next=0ms overlay_left=0ms hold_left=0ms blink(v=1,a=1) sleep_elapsed=0ms clean_left=0ms indicator=0 status_visible=0 status=-[0m
+[0;32mI (640) MCP: Add tool: self.screen.set_theme[0m
+[0;32mI (640) MCP: Add tool: self.audio_speaker.play_sound[0m
+[0;32mI (640) MCP: Add tool: self.get_system_info [user][0m
+[0;32mI (640) MCP: Add tool: self.reboot [user][0m
+[0;32mI (650) MCP: Add tool: self.upgrade_firmware [user][0m
+[0;32mI (660) MCP: Add tool: self.screen.get_info [user][0m
+[0;32mI (660) MCP: Add tool: self.screen.snapshot [user][0m
+[0;32mI (660) MCP: Add tool: self.screen.preview_image [user][0m
+[0;32mI (670) Assets: The storage free size is 21184 KB[0m
+[0;32mI (670) Assets: The partition size is 4992 KB[0m
+[0;32mI (1010) Assets: The checksum calculation time is 331 ms[0m
+[0;32mI (1010) MCP: Add tool: self.assets.set_download_url [user][0m
+[0;32mI (1010) WifiManager: Initializing...[0m
+[0;32mI (1010) pp: pp rom version: e7ae62f[0m
+[0;32mI (1010) net80211: net80211 rom version: e7ae62f[0m
+[0;32mI (1030) wifi:wifi driver task: 3fce8b90, prio:23, stack:6144, core=0[0m
+[0;32mI (1030) wifi:wifi firmware version: ee91c8c[0m
+[0;32mI (1030) wifi:wifi certification version: v7.0[0m
+[0;32mI (1030) wifi:config NVS flash: disabled[0m
+[0;32mI (1040) wifi:config nano formatting: enabled[0m
+[0;32mI (1040) wifi:Init data frame dynamic rx buffer num: 6[0m
+[0;32mI (1040) wifi:Init dynamic rx mgmt buffer num: 5[0m
+[0;32mI (1050) wifi:Init management short buffer num: 32[0m
+[0;32mI (1050) wifi:Init dynamic tx buffer num: 32[0m
+[0;32mI (1060) wifi:Init static tx FG buffer num: 2[0m
+[0;32mI (1060) wifi:Init static rx buffer size: 1600[0m
+[0;32mI (1070) wifi:Init static rx buffer num: 3[0m
+[0;32mI (1070) wifi:Init dynamic rx buffer num: 6[0m
+[0;32mI (1080) wifi_init: rx ba win: 3[0m
+[0;32mI (1080) wifi_init: accept mbox: 6[0m
+[0;32mI (1080) wifi_init: tcpip mbox: 16[0m
+[0;32mI (1080) wifi_init: udp mbox: 6[0m
+[0;32mI (1090) wifi_init: tcp mbox: 6[0m
+[0;32mI (1090) wifi_init: tcp tx win: 5760[0m
+[0;32mI (1090) wifi_init: tcp rx win: 5760[0m
+[0;32mI (1100) wifi_init: tcp mss: 1440[0m
+[0;32mI (1100) WifiManager: Initialized[0m
+[0;32mI (1100) WifiBoard: Starting WiFi connection attempt[0m
+[0;32mI (1110) WifiManager: Starting station[0m
+[0;32mI (1110) phy_init: phy_version 711,97bcf0a2,Aug 25 2025,19:04:10[0m
+[0;32mI (1150) wifi:mode : sta (b8:f8:62:e9:93:18)[0m
+[0;32mI (1150) wifi:enable tsf[0m
+[0;32mI (1150) WifiBoard: WiFi scanning[0m
+[0;32mI (1620) BubuRoboEyesPort: [ANIM] mode=PAUSED state=1 menu=0 emotion=neutral duration=1160ms applied=- base=- overlay=- next=0ms overlay_left=0ms hold_left=0ms blink(v=0,a=0) sleep_elapsed=0ms clean_left=0ms indicator=0 status_visible=0 status=Scanning Wi-Fi...[0m
+[0;32mI (2620) BubuRoboEyesPort: [ANIM] mode=PAUSED state=1 menu=0 emotion=neutral duration=2160ms applied=- base=- overlay=- next=0ms overlay_left=0ms hold_left=0ms blink(v=0,a=0) sleep_elapsed=0ms clean_left=0ms indicator=0 status_visible=0 status=Scanning Wi-Fi...[0m
+[0;32mI (3570) WifiStation: Found AP: VHM-OCP-GUEST, BSSID: dc:b7:ac:02:b6:e0, RSSI: -75, Channel: 1, Authmode: 3[0m
+[0;32mI (3570) WifiStation: Found AP: VHM-OCP-GUEST, BSSID: dc:b7:ac:02:67:80, RSSI: -89, Channel: 11, Authmode: 3[0m
+[0;32mI (3580) WifiBoard: WiFi connecting to VHM-OCP-GUEST[0m
+[0;33mW (3580) wifi:Password length matches WPA2 standards, authmode threshold changes from OPEN to WPA2[0m
+[0;32mI (3670) wifi:new:<1,0>, old:<1,0>, ap:<255,255>, sta:<1,0>, prof:1, snd_ch_cfg:0x0[0m
+[0;32mI (3670) wifi:state: init -> auth (0xb0)[0m
+[0;32mI (3670) wifi:state: auth -> assoc (0x0)[0m
+[0;32mI (3670) BubuRoboEyesPort: [ANIM] mode=PAUSED state=1 menu=0 emotion=neutral duration=3214ms applied=- base=- overlay=- next=0ms overlay_left=0ms hold_left=0ms blink(v=0,a=0) sleep_elapsed=0ms clean_left=0ms indicator=0 status_visible=0 status=Kết nối với VHM-OCP-GUEST...[0m
+[0;32mI (3680) wifi:state: assoc -> run (0x10)[0m
+[0;32mI (3710) wifi:connected with VHM-OCP-GUEST, aid = 2, channel 1, BW20, bssid = dc:b7:ac:02:b6:e0[0m
+[0;32mI (3710) wifi:security: WPA2-PSK, phy: bgn, rssi: -76[0m
+[0;32mI (3710) wifi:pm start, type: 1[0m
+
+[0;32mI (3710) wifi:dp: 1, bi: 102400, li: 10, scale listen interval from 1024000 us to 1024000 us[0m
+[0;32mI (3720) wifi:set rx beacon pti, rx_bcn_pti: 0, bcn_timeout: 25000, mt_pti: 0, mt_time: 10000[0m
+[0;32mI (3740) wifi:<ba-add>idx:0 (ifx:0, dc:b7:ac:02:b6:e0), tid:7, ssn:0, winSize:64[0m
+[0;32mI (3800) wifi:AP's beacon interval = 102400 us, DTIM period = 1[0m
+[0;32mI (4690) BubuRoboEyesPort: [ANIM] mode=PAUSED state=1 menu=0 emotion=neutral duration=4232ms applied=- base=- overlay=- next=0ms overlay_left=0ms hold_left=0ms blink(v=0,a=0) sleep_elapsed=0ms clean_left=0ms indicator=0 status_visible=0 status=Kết nối với VHM-OCP-GUEST...[0m
+[0;32mI (4760) esp_netif_handlers: sta ip: 172.16.2.5, mask: 255.255.252.0, gw: 172.16.0.1[0m
+[0;32mI (4760) WifiStation: Got IP: 172.16.2.5[0m
+[0;32mI (4760) WifiBoard: Connected to WiFi: VHM-OCP-GUEST[0m
+[0;32mI (4760) Application: Network connected[0m
+[0;32mI (4760) StateMachine: State: starting -> activating[0m
+create static modelsI (4770) MODEL_LOADER: Successfully load srmodels
+[0;32mI (4770) Assets: Refreshing display theme...[0m
+[0;32mI (4780) Assets: Set hide_subtitle to false[0m
+[0;32mI (4780) Ota: Current version: 2.2.4[0m
+[0;32mI (4790) wifi:<ba-add>idx:1 (ifx:0, dc:b7:ac:02:b6:e0), tid:0, ssn:2, winSize:64[0m
+[0;32mI (5040) esp-x509-crt-bundle: Certificate validated[0m
+[0;32mI (5470) HttpClient: Established new connection to api.tenclass.net:443[0m
+[0;32mI (5690) BubuRoboEyesPort: [ANIM] mode=PAUSED state=8 menu=0 emotion=microchip_ai duration=908ms applied=microchip_ai base=- overlay=- next=0ms overlay_left=0ms hold_left=2092ms blink(v=0,a=0) sleep_elapsed=0ms clean_left=0ms indicator=0 status_visible=0 status=Có gì mới không nhề..?[0m
+[0;32mI (5700) HttpClient: HTTP connection closed[0m
+[0;32mI (5710) Ota: Current is the latest version[0m
+[0;32mI (5710) Ota: Running partition: ota_0[0m
+[0;32mI (5720) MQTT: Connecting to endpoint mqtt.xiaozhi.me[0m
+[0;32mI (5900) esp-x509-crt-bundle: Certificate validated[0m
+[0;32mI (6330) MQTT: Connected to endpoint[0m
+[0;32mI (6330) Application: Activation done[0m
+[0;32mI (6330) SystemInfo: heap free:8005816 min:7987380 | sram free:105875 min:90843 largest:69632 | psram free:7979540 min:7966256 largest:7864320[0m
+[0;32mI (6340) StateMachine: State: activating -> idle[0m
+[0;32mI (6360) WifiStation: Setting WiFi power save level: LOW_POWER (MAX_MODEM)[0m
+[0;32mI (6360) wifi:Set ps type: 2, coexist: 0[0m
+
+[0;32mI (6360) CustomWakeWord: Command: Hey Bubu, Text: Hey Bubu, Action: wake[0m
+[0;32mI (6700) BubuRoboEyesPort: [ANIM] mode=IDLE_ANIM state=3 menu=0 emotion=neutral duration=344ms applied=neutral base=- overlay=- next=4656ms overlay_left=0ms hold_left=1079ms blink(v=0,a=0) sleep_elapsed=0ms clean_left=0ms indicator=0 status_visible=1 status=~ lala.. ~[0m
+Build fst from commands.
+Quantized MultiNet6:rnnt_ctc_1.0, name:mn6_en, (Dec 16 2025 14:45:55)
+Quantized MultiNet6 search method: 2, time out:3.0 s
+set det threshold to 0.200000
+Build fst from commands.
+1 active speech commands:
+Command 1: HEY BUBU
+[0;32mI (7510) Application: Resource snapshot [idle][0m
+[0;32mI (7510) SystemInfo: heap free:3741572 min:3521628 | sram free:95615 min:69735 largest:69632 | psram free:3719304 min:3521612 largest:3473408[0m
+| Task             | Core | Prio | Stack HWM (words) |
+| main             |    0 |   10 |              5584 |
+| audio_input      |    0 |    8 |              5396 |
+| taskLVGL         |    1 |    1 |              2600 |
+| IDLE1            |    1 |    0 |               720 |
+| IDLE0            |    0 |    0 |               728 |
+| mqtt_task        | 2147483647 |    5 |              1540 |
+| tiT              | 2147483647 |   18 |              1360 |
+| audio_output     | 2147483647 |    4 |              3100 |
+| opus_codec       | 2147483647 |    2 |             23428 |
+| ipc1             |    1 |   24 |               552 |
+| sys_evt          |    0 |   20 |              1364 |
+| ipc0             |    0 |   24 |               400 |
+| wifi             |    0 |   23 |              3528 |
+| esp_timer        |    0 |   22 |              1776 |
+| Tmr Svc          | 2147483647 |    1 |              1400 |
+[0;32mI (7600) AudioCodec: Set output enable to true[0m
+[0;32mI (7710) BubuRoboEyesPort: [ANIM] mode=IDLE_ANIM state=3 menu=0 emotion=neutral duration=1352ms applied=neutral base=- overlay=- next=3648ms overlay_left=0ms hold_left=71ms blink(v=0,a=0) sleep_elapsed=0ms clean_left=0ms indicator=0 status_visible=1 status=~ lala.. ~[0m
+[0;32mI (7780) AudioCodec: Set input enable to true[0m
+[0;32mI (8710) BubuRoboEyesPort: [ANIM] mode=IDLE_ANIM state=3 menu=0 emotion=neutral duration=2353ms applied=neutral base=- overlay=- next=2648ms overlay_left=0ms hold_left=0ms blink(v=0,a=0) sleep_elapsed=0ms clean_left=0ms indicator=0 status_visible=1 status=~ lala.. ~[0m
+[0;32mI (9720) BubuRoboEyesPort: [ANIM] mode=IDLE_ANIM state=3 menu=0 emotion=neutral duration=3360ms applied=neutral base=- overlay=- next=1640ms overlay_left=0ms hold_left=0ms blink(v=0,a=0) sleep_elapsed=0ms clean_left=0ms indicator=0 status_visible=1 status=~ lala.. ~[0m
+[0;32mI (10740) BubuRoboEyesPort: [ANIM] mode=IDLE_ANIM state=3 menu=0 emotion=neutral duration=4378ms applied=neutral base=- overlay=- next=622ms overlay_left=0ms hold_left=0ms blink(v=0,a=0) sleep_elapsed=0ms clean_left=0ms indicator=0 status_visible=1 status=~ lala.. ~[0m
+[0;32mI (11370) BubuRoboEyesPort: Stats emotion: h=29 m=29 e=29 c=30 -> base=happy overlay=- applied=happy[0m
+[0;32mI (11370) AudioService: Playing emotional voice for emotion: happy (size: zu bytes)[0m
+[0;32mI (11380) AudioService: Resampling audio from 24000 to 16000[0m
+[0;32mI (12060) BubuRoboEyesPort: [ANIM] mode=IDLE_ANIM state=3 menu=0 emotion=happy duration=687ms applied=happy base=happy overlay=- next=4312ms overlay_left=0ms hold_left=0ms blink(v=0,a=0) sleep_elapsed=0ms clean_left=0ms indicator=0 status_visible=1 status=~ lala.. ~[0m
+[0;32mI (13080) BubuRoboEyesPort: [ANIM] mode=IDLE_ANIM state=3 menu=0 emotion=happy duration=1705ms applied=happy base=happy overlay=- next=3294ms overlay_left=0ms hold_left=0ms blink(v=0,a=0) sleep_elapsed=0ms clean_left=0ms indicator=0 status_visible=1 status=~ lala.. ~[0m
+[0;32mI (14090) BubuRoboEyesPort: [ANIM] mode=IDLE_ANIM state=3 menu=0 emotion=happy duration=2717ms applied=happy base=happy overlay=- next=2282ms overlay_left=0ms hold_left=0ms blink(v=0,a=0) sleep_elapsed=0ms clean_left=0ms indicator=0 status_visible=1 status=~ lala.. ~[0m
+[0;32mI (15100) BubuRoboEyesPort: [ANIM] mode=IDLE_ANIM state=3 menu=0 emotion=happy duration=3734ms applied=happy base=happy overlay=- next=1266ms overlay_left=0ms hold_left=0ms blink(v=0,a=0) sleep_elapsed=0ms clean_left=0ms indicator=0 status_visible=1 status=~ lala.. ~[0m
+[0;32mI (16110) BubuRoboEyesPort: [ANIM] mode=IDLE_ANIM state=3 menu=0 emotion=happy duration=4736ms applied=happy base=happy overlay=- next=263ms overlay_left=0ms hold_left=0ms blink(v=0,a=0) sleep_elapsed=0ms clean_left=0ms indicator=0 status_visible=1 status=~ lala.. ~[0m
+[0;32mI (16390) BubuRoboEyesPort: Stats emotion: h=29 m=29 e=29 c=30 -> base=sad overlay=- applied=sad[0m
+[0;32mI (16390) AudioService: Playing emotional voice for emotion: sad (size: zu bytes)[0m
+[0;32mI (16620) SystemInfo: heap free:3656848 min:3521628 | sram free:75099 min:69735 largest:69632 | psram free:3656404 min:3521612 largest:3473408[0m
+[0;32mI (17110) BubuRoboEyesPort: [ANIM] mode=IDLE_ANIM state=3 menu=0 emotion=sad duration=726ms applied=sad base=sad overlay=- next=4274ms overlay_left=0ms hold_left=0ms blink(v=0,a=0) sleep_elapsed=0ms clean_left=0ms indicator=0 status_visible=1 status=~ lala.. ~[0m
+[0;32mI (18120) BubuRoboEyesPort: [ANIM] mode=IDLE_ANIM state=3 menu=0 emotion=sad duration=1729ms applied=sad base=sad overlay=- next=3271ms overlay_left=0ms hold_left=0ms blink(v=0,a=0) sleep_elapsed=0ms clean_left=0ms indicator=0 status_visible=1 status=~ lala.. ~[0m
+[0;32mI (19130) BubuRoboEyesPort: [ANIM] mode=IDLE_ANIM state=3 menu=0 emotion=sad duration=2742ms applied=sad base=sad overlay=- next=2258ms overlay_left=0ms hold_left=0ms blink(v=0,a=0) sleep_elapsed=0ms clean_left=0ms indicator=0 status_visible=1 status=~ lala.. ~[0m
+[0;32mI (20130) BubuRoboEyesPort: [ANIM] mode=IDLE_ANIM state=3 menu=0 emotion=sad duration=3745ms applied=sad base=sad overlay=- next=1255ms overlay_left=0ms hold_left=0ms blink(v=0,a=0) sleep_elapsed=0ms clean_left=0ms indicator=0 status_visible=1 status=~ lala.. ~[0m
+[0;32mI (21140) BubuRoboEyesPort: [ANIM] mode=IDLE_ANIM state=3 menu=0 emotion=sad duration=4749ms applied=sad base=sad overlay=- next=251ms overlay_left=0ms hold_left=0ms blink(v=0,a=0) sleep_elapsed=0ms clean_left=0ms indicator=0 status_visible=1 status=~ lala.. ~[0m
+[0;32mI (21390) BubuRoboEyesPort: Stats emotion: h=29 m=29 e=29 c=30 -> base=sad overlay=thinking applied=thinking[0m
+[0;32mI (21390) AudioService: Playing emotional voice for emotion: thinking (size: zu bytes)[0m
+[0;32mI (22170) BubuRoboEyesPort: [ANIM] mode=IDLE_ANIM state=3 menu=0 emotion=thinking duration=780ms applied=thinking base=sad overlay=thinking next=4220ms overlay_left=520ms hold_left=0ms blink(v=0,a=0) sleep_elapsed=0ms clean_left=0ms indicator=0 status_visible=0 status=~ lala.. ~[0m
+[0;32mI (22700) BubuRoboEyesPort: Stats emotion: h=29 m=29 e=29 c=30 -> base=sad overlay=- applied=sad[0m
+[0;32mI (23170) BubuRoboEyesPort: [ANIM] mode=IDLE_ANIM state=3 menu=0 emotion=sad duration=472ms applied=sad base=sad overlay=- next=3215ms overlay_left=0ms hold_left=0ms blink(v=0,a=0) sleep_elapsed=0ms clean_left=0ms indicator=0 status_visible=0 status=~ lala.. ~[0m
+[0;32mI (24180) BubuRoboEyesPort: [ANIM] mode=IDLE_ANIM state=3 menu=0 emotion=sad duration=1473ms applied=sad base=sad overlay=- next=2214ms overlay_left=0ms hold_left=0ms blink(v=0,a=0) sleep_elapsed=0ms clean_left=0ms indicator=0 status_visible=0 status=~ lala.. ~[0m
+[0;32mI (25190) BubuRoboEyesPort: [ANIM] mode=IDLE_ANIM state=3 menu=0 emotion=sad duration=2485ms applied=sad base=sad overlay=- next=1202ms overlay_left=0ms hold_left=0ms blink(v=0,a=0) sleep_elapsed=0ms clean_left=0ms indicator=0 status_visible=0 status=~ lala.. ~[0m
+[0;32mI (26210) BubuRoboEyesPort: [ANIM] mode=IDLE_ANIM state=3 menu=0 emotion=sad duration=3512ms applied=sad base=sad overlay=- next=175ms overlay_left=0ms hold_left=0ms blink(v=0,a=0) sleep_elapsed=0ms clean_left=0ms indicator=0 status_visible=0 status=~ lala.. ~[0m
+[0;32mI (26410) BubuRoboEyesPort: Stats emotion: h=29 m=29 e=29 c=30 -> base=angry overlay=- applied=angry[0m
+[0;32mI (26410) AudioService: Playing emotional voice for emotion: angry (size: zu bytes)[0m
+[0;32mI (26970) SystemInfo: heap free:3660736 min:3521628 | sram free:76367 min:69735 largest:69632 | psram free:3657888 min:3521612 largest:3473408[0m
+[0;32mI (27240) BubuRoboEyesPort: [ANIM] mode=IDLE_ANIM state=3 menu=0 emotion=angry duration=824ms applied=angry base=angry overlay=- next=4176ms overlay_left=0ms hold_left=0ms blink(v=0,a=0) sleep_elapsed=0ms clean_left=0ms indicator=0 status_visible=0 status=~ lala.. ~[0m
+[0;32mI (28270) BubuRoboEyesPort: [ANIM] mode=IDLE_ANIM state=3 menu=0 emotion=angry duration=1851ms applied=angry base=angry overlay=- next=3149ms overlay_left=0ms hold_left=0ms blink(v=0,a=0) sleep_elapsed=0ms clean_left=0ms indicator=0 status_visible=0 status=~ lala.. ~[0m
+[0;32mI (29280) BubuRoboEyesPort: [ANIM] mode=IDLE_ANIM state=3 menu=0 emotion=angry duration=2862ms applied=angry base=angry overlay=- next=2138ms overlay_left=0ms hold_left=0ms blink(v=0,a=0) sleep_elapsed=0ms clean_left=0ms indicator=0 status_visible=0 status=~ lala.. ~[0m
+[0;32mI (30280) BubuRoboEyesPort: [ANIM] mode=IDLE_ANIM state=3 menu=0 emotion=angry duration=3862ms applied=angry base=angry overlay=- next=1138ms overlay_left=0ms hold_left=0ms blink(v=0,a=0) sleep_elapsed=0ms clean_left=0ms indicator=0 status_visible=0 status=~ lala.. ~[0m
+[0;32mI (31280) BubuRoboEyesPort: [ANIM] mode=IDLE_ANIM state=3 menu=0 emotion=angry duration=4862ms applied=angry base=angry overlay=- next=138ms overlay_left=0ms hold_left=0ms blink(v=0,a=0) sleep_elapsed=0ms clean_left=0ms indicator=0 status_visible=0 status=~ lala.. ~[0m
+[0;32mI (31430) BubuRoboEyesPort: Stats emotion: h=29 m=29 e=29 c=30 -> base=angry overlay=thinking applied=thinking[0m
+[0;32mI (31430) AudioService: Playing emotional voice for emotion: thinking (size: zu bytes)[0m
+[0;32mI (32290) BubuRoboEyesPort: [ANIM] mode=IDLE_ANIM state=3 menu=0 emotion=thinking duration=858ms applied=thinking base=angry overlay=thinking next=4142ms overlay_left=442ms hold_left=0ms blink(v=0,a=0) sleep_elapsed=0ms clean_left=0ms indicator=0 status_visible=0 status=~ lala.. ~[0m
+[0;32mI (32740) BubuRoboEyesPort: Stats emotion: h=29 m=29 e=29 c=30 -> base=angry overlay=- applied=angry[0m
+[0;32mI (33290) BubuRoboEyesPort: [ANIM] mode=IDLE_ANIM state=3 menu=0 emotion=angry duration=549ms applied=angry base=angry overlay=- next=3141ms overlay_left=0ms hold_left=0ms blink(v=0,a=0) sleep_elapsed=0ms clean_left=0ms indicator=0 status_visible=0 status=~ lala.. ~[0m
+[0;32mI (34300) BubuRoboEyesPort: [ANIM] mode=IDLE_ANIM state=3 menu=0 emotion=angry duration=1560ms applied=angry base=angry overlay=- next=2130ms overlay_left=0ms hold_left=0ms blink(v=0,a=0) sleep_elapsed=0ms clean_left=0ms indicator=0 status_visible=0 status=~ lala.. ~[0m
+[0;32mI (35300) BubuRoboEyesPort: [ANIM] mode=IDLE_ANIM state=3 menu=0 emotion=angry duration=2560ms applied=angry base=angry overlay=- next=1130ms overlay_left=0ms hold_left=0ms blink(v=0,a=0) sleep_elapsed=0ms clean_left=0ms indicator=0 status_visible=0 status=~ lala.. ~[0m
+[0;32mI (36300) BubuRoboEyesPort: [ANIM] mode=IDLE_ANIM state=3 menu=0 emotion=angry duration=3560ms applied=angry base=angry overlay=- next=130ms overlay_left=0ms hold_left=0ms blink(v=0,a=0) sleep_elapsed=0ms clean_left=0ms indicator=0 status_visible=0 status=~ lala.. ~[0m
+[0;32mI (36590) SystemInfo: heap free:3670820 min:3521628 | sram free:78315 min:69735 largest:69632 | psram free:3666024 min:3521612 largest:3473408[0m

@@ -9,7 +9,11 @@
 #include <array>
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <ctime>
+#include <limits>
 #include <esp_pthread.h>
 
 #include "application.h"
@@ -18,6 +22,12 @@
 #include "oled_display.h"
 #include "board.h"
 #include "settings.h"
+#include "notes_system.h"
+#include "reminder_system.h"
+#include "speaker_profile.h"
+#include "behavior_scheduler.h"
+#include "care_system.h"
+#include "level_system.h"
 #include "lvgl_theme.h"
 #include "lvgl_display.h"
 
@@ -63,6 +73,124 @@ std::string SupportedEmotionsList() {
            "delicious, shocked, surprised, sad, crying, worried, embarrassed, nervous, "
            "anxious, angry, annoyed, sleepy, thinking, winking, silly, skeptic, "
            "skeptical, doubt, doubtful, confused";
+}
+
+bool ParseTime24h(const std::string& text, int* out_hour, int* out_minute) {
+    if (out_hour == nullptr || out_minute == nullptr) {
+        return false;
+    }
+
+    size_t colon = text.find(':');
+    if (colon == std::string::npos || text.find(':', colon + 1) != std::string::npos) {
+        return false;
+    }
+
+    const std::string hour_str = text.substr(0, colon);
+    const std::string minute_str = text.substr(colon + 1);
+    if (hour_str.empty() || minute_str.empty()) {
+        return false;
+    }
+    if (hour_str.size() > 2 || minute_str.size() != 2) {
+        return false;
+    }
+    if (!std::all_of(hour_str.begin(), hour_str.end(), [](unsigned char c) { return std::isdigit(c) != 0; }) ||
+        !std::all_of(minute_str.begin(), minute_str.end(), [](unsigned char c) { return std::isdigit(c) != 0; })) {
+        return false;
+    }
+
+    const int hour = std::stoi(hour_str);
+    const int minute = std::stoi(minute_str);
+    if (hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+        return false;
+    }
+
+    *out_hour = hour;
+    *out_minute = minute;
+    return true;
+}
+
+std::string TrimCopy(std::string value) {
+    size_t start = 0;
+    while (start < value.size() && std::isspace(static_cast<unsigned char>(value[start]))) {
+        ++start;
+    }
+    size_t end = value.size();
+    while (end > start && std::isspace(static_cast<unsigned char>(value[end - 1]))) {
+        --end;
+    }
+    return value.substr(start, end - start);
+}
+
+bool ParseInteger(const std::string& text, int* out_value) {
+    if (out_value == nullptr) {
+        return false;
+    }
+
+    const std::string trimmed = TrimCopy(text);
+    if (trimmed.empty()) {
+        return false;
+    }
+
+    const char* cstr = trimmed.c_str();
+    char* end = nullptr;
+    const long value = std::strtol(cstr, &end, 10);
+    if (end == cstr || *end != '\0') {
+        return false;
+    }
+    if (value < std::numeric_limits<int>::min() || value > std::numeric_limits<int>::max()) {
+        return false;
+    }
+
+    *out_value = static_cast<int>(value);
+    return true;
+}
+
+const char* ReminderStateToString(ReminderSystem::ReminderState state) {
+    switch (state) {
+        case ReminderSystem::ReminderState::kPending:
+            return "pending";
+        case ReminderSystem::ReminderState::kFiring:
+            return "firing";
+        case ReminderSystem::ReminderState::kSnoozed:
+            return "snoozed";
+        case ReminderSystem::ReminderState::kConfirmed:
+            return "confirmed";
+        case ReminderSystem::ReminderState::kCancelled:
+            return "cancelled";
+        default:
+            return "unknown";
+    }
+}
+
+const char* FeatureIdToString(LevelSystem::FeatureID feature) {
+    switch (feature) {
+        case LevelSystem::IDLE_JITTER:
+            return "idle_jitter";
+        case LevelSystem::IDLE_GIGGLE:
+            return "idle_giggle";
+        case LevelSystem::IDLE_JUDGING:
+            return "idle_judging";
+        case LevelSystem::IDLE_SPEED_FAST:
+            return "idle_speed_fast";
+        case LevelSystem::EMO_EXCITED:
+            return "emo_excited";
+        case LevelSystem::EMO_ANGRY1:
+            return "emo_angry1";
+        case LevelSystem::EMO_LOVE:
+            return "emo_love";
+        case LevelSystem::EMO_SAD1:
+            return "emo_sad1";
+        case LevelSystem::EMO_HAPPY1:
+            return "emo_happy1";
+        case LevelSystem::LEGACY_EMO_LOVE:
+            return "legacy_emo_love";
+        case LevelSystem::LEGACY_EMO_CYCLOP:
+            return "legacy_emo_cyclop";
+        case LevelSystem::LEGACY_EMO_DRUNK:
+            return "legacy_emo_drunk";
+        default:
+            return "unknown";
+    }
 }
 
 std::string_view ResolveSoundName(std::string_view sound_name) {
@@ -286,6 +414,353 @@ void McpServer::AddCommonTools() {
             }
             Application::GetInstance().PlaySound(resolved);
             return std::string("playing sound " + NormalizeToken(requested));
+        });
+
+    AddTool("self.get_time",
+        "Get current device local time and date as structured data.",
+        PropertyList(),
+        [](const PropertyList& properties) -> ReturnValue {
+            (void)properties;
+
+            const time_t now = time(nullptr);
+            struct tm local_tm = {};
+            struct tm utc_tm = {};
+            localtime_r(&now, &local_tm);
+            gmtime_r(&now, &utc_tm);
+
+            char date_buf[16] = {0};
+            char time_buf[16] = {0};
+            char iso_local_buf[40] = {0};
+            strftime(date_buf, sizeof(date_buf), "%Y-%m-%d", &local_tm);
+            strftime(time_buf, sizeof(time_buf), "%H:%M:%S", &local_tm);
+            strftime(iso_local_buf, sizeof(iso_local_buf), "%Y-%m-%dT%H:%M:%S", &local_tm);
+
+            const time_t local_epoch = mktime(&local_tm);
+            const time_t utc_as_local_epoch = mktime(&utc_tm);
+            const int timezone_offset_min = static_cast<int>(difftime(local_epoch, utc_as_local_epoch) / 60.0);
+            const bool time_valid = local_tm.tm_year >= (2025 - 1900);
+
+            cJSON* json = cJSON_CreateObject();
+            cJSON_AddNumberToObject(json, "unix_epoch_sec", static_cast<double>(now));
+            cJSON_AddStringToObject(json, "date", date_buf);
+            cJSON_AddStringToObject(json, "time", time_buf);
+            cJSON_AddStringToObject(json, "iso_local", iso_local_buf);
+            cJSON_AddNumberToObject(json, "timezone_offset_min", timezone_offset_min);
+            cJSON_AddBoolToObject(json, "time_valid", time_valid);
+            return json;
+        });
+
+    AddTool("self.behavior.get_config",
+        "Get proactive behavior scheduler config.",
+        PropertyList(),
+        [](const PropertyList& properties) -> ReturnValue {
+            (void)properties;
+            cJSON* json = cJSON_CreateObject();
+            cJSON_AddNumberToObject(json, "idle_timeout_min",
+                                    BehaviorScheduler::GetIdleTimeoutMinutes());
+            return json;
+        });
+
+    AddTool("self.behavior.set_idle_timeout_minutes",
+        "Set proactive idle-talk timeout in minutes (range 5..240).",
+        PropertyList({
+            Property("minutes", kPropertyTypeInteger, 5, 240)
+        }),
+        [](const PropertyList& properties) -> ReturnValue {
+            const int minutes = properties["minutes"].value<int>();
+            if (!BehaviorScheduler::SetIdleTimeoutMinutes(minutes)) {
+                throw std::runtime_error("set_idle_timeout failed");
+            }
+            return std::string("idle_timeout_min set");
+        });
+
+    AddTool("self.get_care_stats",
+        "Get current CareSystem stats and status flags.",
+        PropertyList(),
+        [](const PropertyList& properties) -> ReturnValue {
+            (void)properties;
+
+            const int hunger = CareSystem::GetHunger();
+            const int mood = CareSystem::GetMood();
+            const int energy = CareSystem::GetEnergy();
+            const int cleanliness = CareSystem::GetCleanliness();
+            const int min_stat = std::min(std::min(hunger, mood), std::min(energy, cleanliness));
+
+            cJSON* json = cJSON_CreateObject();
+            cJSON_AddNumberToObject(json, "hunger", hunger);
+            cJSON_AddNumberToObject(json, "mood", mood);
+            cJSON_AddNumberToObject(json, "energy", energy);
+            cJSON_AddNumberToObject(json, "cleanliness", cleanliness);
+            cJSON_AddNumberToObject(json, "min_stat", min_stat);
+            cJSON_AddBoolToObject(json, "needs_attention", CareSystem::NeedsAttention());
+            cJSON_AddBoolToObject(json, "is_critical", CareSystem::IsCritical());
+            return json;
+        });
+
+    AddTool("self.get_level_info",
+        "Get current level progression and feature unlock states.",
+        PropertyList(),
+        [](const PropertyList& properties) -> ReturnValue {
+            (void)properties;
+
+            const int level = LevelSystem::GetLevel();
+            const int xp = LevelSystem::GetXP();
+            const int xp_for_next = LevelSystem::GetXPForNextLevel();
+            const int xp_remaining = std::max(0, xp_for_next - xp);
+            const double progress_pct =
+                (xp_for_next > 0) ? (100.0 * static_cast<double>(xp) / static_cast<double>(xp_for_next)) : 0.0;
+
+            cJSON* json = cJSON_CreateObject();
+            cJSON_AddNumberToObject(json, "level", level);
+            cJSON_AddNumberToObject(json, "xp", xp);
+            cJSON_AddNumberToObject(json, "xp_for_next_level", xp_for_next);
+            cJSON_AddNumberToObject(json, "xp_remaining", xp_remaining);
+            cJSON_AddNumberToObject(json, "progress_percent", progress_pct);
+
+            cJSON* unlocks = cJSON_CreateArray();
+            cJSON_AddItemToObject(json, "feature_unlocks", unlocks);
+            for (int i = 0; i < static_cast<int>(LevelSystem::FEATURE_COUNT); ++i) {
+                const auto feature = static_cast<LevelSystem::FeatureID>(i);
+                cJSON* item = cJSON_CreateObject();
+                cJSON_AddStringToObject(item, "feature", FeatureIdToString(feature));
+                cJSON_AddBoolToObject(item, "unlocked", LevelSystem::IsUnlocked(feature));
+                cJSON_AddItemToArray(unlocks, item);
+            }
+            return json;
+        });
+
+    AddTool("self.remember",
+        "Save or update a memory key/value pair for later recall. "
+        "Keys are normalized and storage is capped at 20 entries.",
+        PropertyList({
+            Property("key", kPropertyTypeString),
+            Property("value", kPropertyTypeString)
+        }),
+        [](const PropertyList& properties) -> ReturnValue {
+            const auto key = properties["key"].value<std::string>();
+            const auto value = properties["value"].value<std::string>();
+            std::string error;
+            if (!NotesSystem::Save(key, value, &error)) {
+                throw std::runtime_error("remember failed: " + error);
+            }
+            return std::string("saved");
+        });
+
+    AddTool("self.recall",
+        "Recall a saved memory value by key.",
+        PropertyList({
+            Property("key", kPropertyTypeString)
+        }),
+        [](const PropertyList& properties) -> ReturnValue {
+            const auto key = properties["key"].value<std::string>();
+            std::string value;
+            if (!NotesSystem::Get(key, &value)) {
+                throw std::runtime_error("recall failed: key not found");
+            }
+            return value;
+        });
+
+    AddTool("self.create_reminder",
+        "Create and persist a timed reminder. "
+        "Args: message, target_time_24h (HH:MM), confirmation_phrase, "
+        "snooze_interval_min, and optional target_speaker.",
+        PropertyList({
+            Property("message", kPropertyTypeString),
+            Property("target_time_24h", kPropertyTypeString),
+            Property("confirmation_phrase", kPropertyTypeString, std::string("yes i understand")),
+            Property("snooze_interval_min", kPropertyTypeInteger, 5, 1, 180),
+            Property("target_speaker", kPropertyTypeString, std::string(""))
+        }),
+        [](const PropertyList& properties) -> ReturnValue {
+            const auto message = properties["message"].value<std::string>();
+            const auto target_time = properties["target_time_24h"].value<std::string>();
+            const auto confirmation_phrase = properties["confirmation_phrase"].value<std::string>();
+            const auto snooze_interval_min = properties["snooze_interval_min"].value<int>();
+            const auto target_speaker = properties["target_speaker"].value<std::string>();
+
+            int target_hour = 0;
+            int target_minute = 0;
+            if (!ParseTime24h(target_time, &target_hour, &target_minute)) {
+                throw std::runtime_error("create_reminder failed: target_time_24h must be HH:MM (24h)");
+            }
+
+            ReminderSystem::Reminder reminder;
+            reminder.message = message;
+            reminder.target_hour = target_hour;
+            reminder.target_minute = target_minute;
+            reminder.confirmation_phrase = confirmation_phrase;
+            reminder.snooze_interval_min = snooze_interval_min;
+            reminder.target_speaker = target_speaker;
+
+            int32_t reminder_id = 0;
+            std::string error;
+            if (!ReminderSystem::Add(reminder, &reminder_id, &error)) {
+                throw std::runtime_error("create_reminder failed: " + error);
+            }
+
+            cJSON* json = cJSON_CreateObject();
+            cJSON_AddNumberToObject(json, "id", reminder_id);
+            cJSON_AddStringToObject(json, "message", reminder.message.c_str());
+            cJSON_AddNumberToObject(json, "target_hour", target_hour);
+            cJSON_AddNumberToObject(json, "target_minute", target_minute);
+            cJSON_AddStringToObject(json, "target_time_24h", target_time.c_str());
+            cJSON_AddStringToObject(json, "confirmation_phrase", confirmation_phrase.c_str());
+            cJSON_AddNumberToObject(json, "snooze_interval_min", snooze_interval_min);
+            cJSON_AddStringToObject(json, "target_speaker", target_speaker.c_str());
+            return json;
+        });
+
+    AddTool("self.cancel_reminder",
+        "Cancel an existing reminder by id.",
+        PropertyList({
+            Property("id", kPropertyTypeInteger, 1, std::numeric_limits<int>::max())
+        }),
+        [](const PropertyList& properties) -> ReturnValue {
+            const int32_t id = static_cast<int32_t>(properties["id"].value<int>());
+
+            std::string error;
+            if (!ReminderSystem::Cancel(id, &error)) {
+                throw std::runtime_error("cancel_reminder failed: " + error);
+            }
+
+            cJSON* json = cJSON_CreateObject();
+            cJSON_AddNumberToObject(json, "id", static_cast<double>(id));
+            cJSON_AddStringToObject(json, "status", "cancelled");
+            return json;
+        });
+
+    AddTool("self.edit_reminder",
+        "Edit a single field on an existing reminder and persist changes. "
+        "Valid fields: snooze_interval_min, confirmation_phrase, target_time_24h.",
+        PropertyList({
+            Property("id", kPropertyTypeInteger, 1, std::numeric_limits<int>::max()),
+            Property("field", kPropertyTypeString),
+            Property("new_value", kPropertyTypeString)
+        }),
+        [](const PropertyList& properties) -> ReturnValue {
+            const int32_t id = static_cast<int32_t>(properties["id"].value<int>());
+            const std::string field = NormalizeToken(properties["field"].value<std::string>());
+            const std::string new_value_raw = properties["new_value"].value<std::string>();
+
+            auto reminders = ReminderSystem::List();
+            auto it = std::find_if(reminders.begin(), reminders.end(),
+                                   [id](const ReminderSystem::Reminder& reminder) {
+                                       return reminder.id == id;
+                                   });
+            if (it == reminders.end()) {
+                throw std::runtime_error("edit_reminder failed: reminder not found");
+            }
+
+            ReminderSystem::Reminder updated = *it;
+            if (field == "snooze_interval_min") {
+                int value = 0;
+                if (!ParseInteger(new_value_raw, &value) || value < 1 || value > 180) {
+                    throw std::runtime_error(
+                        "edit_reminder failed: snooze_interval_min must be an integer in [1, 180]");
+                }
+                updated.snooze_interval_min = value;
+            } else if (field == "confirmation_phrase") {
+                const std::string phrase = TrimCopy(new_value_raw);
+                if (phrase.empty()) {
+                    throw std::runtime_error(
+                        "edit_reminder failed: confirmation_phrase cannot be empty");
+                }
+                updated.confirmation_phrase = phrase;
+            } else if (field == "target_time_24h") {
+                int hour = 0;
+                int minute = 0;
+                if (!ParseTime24h(new_value_raw, &hour, &minute)) {
+                    throw std::runtime_error(
+                        "edit_reminder failed: target_time_24h must be HH:MM (24h)");
+                }
+                updated.target_hour = hour;
+                updated.target_minute = minute;
+            } else {
+                throw std::runtime_error(
+                    "edit_reminder failed: unsupported field (valid: snooze_interval_min, confirmation_phrase, target_time_24h)");
+            }
+
+            std::string error;
+            if (!ReminderSystem::Update(updated, &error)) {
+                throw std::runtime_error("edit_reminder failed: " + error);
+            }
+
+            cJSON* json = cJSON_CreateObject();
+            cJSON_AddNumberToObject(json, "id", static_cast<double>(updated.id));
+            cJSON_AddStringToObject(json, "field", field.c_str());
+            cJSON_AddStringToObject(json, "status", "updated");
+            cJSON_AddNumberToObject(json, "target_hour", updated.target_hour);
+            cJSON_AddNumberToObject(json, "target_minute", updated.target_minute);
+            cJSON_AddStringToObject(json, "confirmation_phrase", updated.confirmation_phrase.c_str());
+            cJSON_AddNumberToObject(json, "snooze_interval_min", updated.snooze_interval_min);
+            return json;
+        });
+
+    AddTool("self.get_reminders",
+        "List all reminders currently persisted on device.",
+        PropertyList(),
+        [](const PropertyList& properties) -> ReturnValue {
+            (void)properties;
+            const auto reminders = ReminderSystem::List();
+
+            cJSON* root = cJSON_CreateObject();
+            cJSON* list = cJSON_CreateArray();
+            cJSON_AddItemToObject(root, "reminders", list);
+            cJSON_AddNumberToObject(root, "count", static_cast<double>(reminders.size()));
+
+            for (const auto& reminder : reminders) {
+                cJSON* item = cJSON_CreateObject();
+                cJSON_AddNumberToObject(item, "id", static_cast<double>(reminder.id));
+                cJSON_AddStringToObject(item, "message", reminder.message.c_str());
+                cJSON_AddNumberToObject(item, "target_hour", reminder.target_hour);
+                cJSON_AddNumberToObject(item, "target_minute", reminder.target_minute);
+
+                char target_time_24h[8];
+                std::snprintf(target_time_24h, sizeof(target_time_24h), "%02d:%02d",
+                              reminder.target_hour, reminder.target_minute);
+                cJSON_AddStringToObject(item, "target_time_24h", target_time_24h);
+
+                cJSON_AddStringToObject(item, "state", ReminderStateToString(reminder.state));
+                cJSON_AddNumberToObject(item, "snooze_interval_min", reminder.snooze_interval_min);
+                cJSON_AddNumberToObject(item, "snooze_count", reminder.snooze_count);
+                cJSON_AddStringToObject(item, "confirmation_phrase", reminder.confirmation_phrase.c_str());
+                cJSON_AddStringToObject(item, "target_speaker", reminder.target_speaker.c_str());
+                cJSON_AddItemToArray(list, item);
+            }
+
+            return root;
+        });
+
+    AddTool("self.speaker_profile.register",
+        "Register or update the single-owner profile from explicit self-identification. "
+        "Use this when the user says statements like 'my name is ...' or 'call me ...'. "
+        "This is self-reported identity storage, not biometric voice recognition.",
+        PropertyList({
+            Property("name", kPropertyTypeString)
+        }),
+        [](const PropertyList& properties) -> ReturnValue {
+            const auto name = properties["name"].value<std::string>();
+            std::string error;
+            if (!SpeakerProfile::Register(name, &error)) {
+                throw std::runtime_error("speaker_profile.register failed: " + error);
+            }
+            return std::string("owner profile saved");
+        });
+
+    AddTool("self.get_current_speaker",
+        "Get the current speaker name in single-owner mode. Returns the saved owner name "
+        "if registered, otherwise returns 'unknown'. This is based on explicit registration, "
+        "not biometric speaker recognition.",
+        PropertyList(),
+        [](const PropertyList& properties) -> ReturnValue {
+            (void)properties;
+
+            cJSON* json = cJSON_CreateObject();
+            const std::string name = SpeakerProfile::Identify();
+            cJSON_AddStringToObject(json, "name", name.c_str());
+            cJSON_AddBoolToObject(json, "is_registered", name != "unknown");
+            cJSON_AddStringToObject(json, "mode", "self_reported_single_owner");
+            return json;
         });
 
     // Restore the original tools list to the end of the tools list

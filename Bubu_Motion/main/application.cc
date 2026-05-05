@@ -10,8 +10,12 @@
 #include "assets.h"
 #include "settings.h"
 #include "care_system.h"
+#include "behavior_scheduler.h"
 #include "level_system.h"
+#include "speaker_profile.h"
+#include "reminder_system.h"
 #include "display/menu_system.h"
+#include "message_board.h"
 
 #include <cctype>
 #include <cstring>
@@ -28,6 +32,11 @@ namespace {
 
 constexpr uint64_t kListeningNoSpeechTimeoutMs = 8000;
 constexpr std::string_view kLocalCommandPrefix = "__local_cmd__:";
+constexpr uint64_t kProactiveDebugWindowMs = 10000;
+constexpr uint64_t kProactiveWatchdogTimeoutMs = 6000;
+constexpr int kProactiveMaxRetries = 1;
+constexpr const char* kProactiveFallbackMessage = "I couldn't start talking. Tap to try again.";
+constexpr bool kEnableProactiveBackendPrompt = false;
 
 std::string NormalizeHiddenPromptText(const std::string& text) {
     std::string normalized;
@@ -90,9 +99,27 @@ Application::Application() {
         .skip_unhandled_events = true
     };
     esp_timer_create(&clock_timer_args, &clock_timer_handle_);
+
+    esp_timer_create_args_t proactive_watchdog_args = {
+        .callback = [](void* arg) {
+            auto* app = static_cast<Application*>(arg);
+            app->Schedule([app]() {
+                app->HandleProactiveWatchdogTimeout();
+            });
+        },
+        .arg = this,
+        .dispatch_method = ESP_TIMER_TASK,
+        .name = "proactive_watchdog",
+        .skip_unhandled_events = true
+    };
+    esp_timer_create(&proactive_watchdog_args, &proactive_watchdog_timer_handle_);
 }
 
 Application::~Application() {
+    if (proactive_watchdog_timer_handle_ != nullptr) {
+        esp_timer_stop(proactive_watchdog_timer_handle_);
+        esp_timer_delete(proactive_watchdog_timer_handle_);
+    }
     if (clock_timer_handle_ != nullptr) {
         esp_timer_stop(clock_timer_handle_);
         esp_timer_delete(clock_timer_handle_);
@@ -140,6 +167,9 @@ void Application::Initialize() {
     // Initialize care and level systems
     LevelSystem::Begin();
     CareSystem::Begin();
+    SpeakerProfile::Begin();
+    ReminderSystem::Begin();
+    BehaviorScheduler::Begin();
 
     // Start the clock timer to update the status bar
     esp_timer_start_periodic(clock_timer_handle_, 1000000);
@@ -315,6 +345,8 @@ void Application::Run() {
             // Care + level system tick (every second; internal throttles handle actual rates)
             CareSystem::Update();
             LevelSystem::Tick();
+            ReminderSystem::Tick();
+            BehaviorScheduler::Tick();
             MenuSystem::Render();
             CheckListeningInactivityTimeout();
 
@@ -598,6 +630,39 @@ void Application::InitializeProtocol() {
         Schedule([this]() {
             auto display = Board::GetInstance().GetDisplay();
             display->SetChatMessage("system", "");
+
+            bool should_retry = false;
+            {
+                std::lock_guard<std::mutex> lock(proactive_mutex_);
+                should_retry = proactive_retry_pending_reconnect_ &&
+                               !pending_proactive_seed_prompt_.empty();
+            }
+
+            if (should_retry) {
+                ESP_LOGI(TAG, "Retrying proactive conversation by reopening channel");
+                // Close callbacks can arrive while state is still listening/speaking.
+                // Transition through idle first, then start reconnect on next main-loop turn.
+                if (GetDeviceState() != kDeviceStateIdle) {
+                    SetDeviceState(kDeviceStateIdle);
+                }
+                Schedule([this]() {
+                    if (GetDeviceState() != kDeviceStateIdle) {
+                        ESP_LOGW(TAG, "Proactive retry skipped: expected idle state, got %d",
+                                 static_cast<int>(GetDeviceState()));
+                        return;
+                    }
+                    {
+                        std::lock_guard<std::mutex> lock(proactive_mutex_);
+                        proactive_retry_pending_reconnect_ = false;
+                    }
+                    SetDeviceState(kDeviceStateConnecting);
+                    Schedule([this]() {
+                        ContinueInitiateConversation();
+                    });
+                });
+                return;
+            }
+
             SetDeviceState(kDeviceStateIdle);
         });
     });
@@ -605,9 +670,26 @@ void Application::InitializeProtocol() {
     protocol_->OnIncomingJson([this, display](const cJSON* root) {
         // Parse JSON data
         auto type = cJSON_GetObjectItem(root, "type");
+        if (!cJSON_IsString(type)) {
+            ESP_LOGW(TAG, "Incoming JSON missing type");
+            return;
+        }
+        LogProactiveIncomingType(type->valuestring);
         if (strcmp(type->valuestring, "tts") == 0) {
             auto state = cJSON_GetObjectItem(root, "state");
             if (strcmp(state->valuestring, "start") == 0) {
+                {
+                    std::lock_guard<std::mutex> lock(proactive_mutex_);
+                    if (proactive_waiting_tts_start_) {
+                        proactive_waiting_tts_start_ = false;
+                        proactive_debug_window_until_ms_ = 0;
+                        proactive_debug_session_id_.clear();
+                        active_proactive_seed_prompt_.clear();
+                        proactive_fallback_in_progress_ = false;
+                        StopProactiveWatchdogLocked();
+                        ESP_LOGI(TAG, "Proactive tts:start received");
+                    }
+                }
                 Schedule([this]() {
                     aborted_ = false;
                     SetDeviceState(kDeviceStateSpeaking);
@@ -636,6 +718,19 @@ void Application::InitializeProtocol() {
             if (cJSON_IsString(text)) {
                 ESP_LOGI(TAG, ">> %s", text->valuestring);
                 std::string message(text->valuestring);
+
+                const int32_t firing_reminder_id = ReminderSystem::GetActiveFiringReminderId();
+                if (firing_reminder_id > 0) {
+                    std::string reminder_error;
+                    if (!ReminderSystem::OnResponse(firing_reminder_id, message, &reminder_error)) {
+                        ESP_LOGW(TAG, "Reminder response handling failed (id=%d): %s",
+                                 static_cast<int>(firing_reminder_id), reminder_error.c_str());
+                    } else {
+                        ESP_LOGI(TAG, "Reminder response handled locally (id=%d)",
+                                 static_cast<int>(firing_reminder_id));
+                    }
+                }
+
                 bool suppress_hidden_prompt = false;
                 {
                     std::lock_guard<std::mutex> lock(proactive_mutex_);
@@ -691,6 +786,35 @@ void Application::InitializeProtocol() {
             auto message = cJSON_GetObjectItem(root, "message");
             auto emotion = cJSON_GetObjectItem(root, "emotion");
             if (cJSON_IsString(status) && cJSON_IsString(message) && cJSON_IsString(emotion)) {
+                const std::string status_text(status->valuestring);
+                const std::string message_text(message->valuestring);
+                const bool detect_wakeword_reject =
+                    status_text == "ERROR" &&
+                    (message_text.find("only for wake words") != std::string::npos ||
+                     message_text.find("仅用于唤醒词") != std::string::npos);
+
+                if (detect_wakeword_reject) {
+                    const int32_t firing_id = ReminderSystem::GetActiveFiringReminderId();
+                    if (firing_id > 0) {
+                        ReminderSystem::Reminder reminder;
+                        std::string reminder_message = "Reminder is active. Please confirm by voice.";
+                        if (ReminderSystem::GetById(firing_id, &reminder) &&
+                            !reminder.message.empty()) {
+                            reminder_message = "Reminder: " + reminder.message;
+                        }
+
+                        ESP_LOGW(TAG, "Proactive detect rejected by server for reminder id=%d, falling back to local notify/listen",
+                                 static_cast<int>(firing_id));
+                        Schedule([this, display, reminder_message = std::move(reminder_message)]() {
+                            display->ShowNotification(reminder_message.c_str(), 5000);
+                            audio_service_.PlaySound(Lang::Sounds::OGG_POPUP);
+                            if (GetDeviceState() == kDeviceStateConnecting) {
+                                SetListeningMode(GetDefaultListeningMode());
+                            }
+                        });
+                        return;
+                    }
+                }
                 Alert(status->valuestring, message->valuestring, emotion->valuestring, Lang::Sounds::OGG_VIBRATION);
             } else {
                 ESP_LOGW(TAG, "Alert command requires status, message and emotion");
@@ -774,19 +898,151 @@ void Application::DismissAlert() {
     }
 }
 
+void Application::StopProactiveWatchdogLocked() {
+    if (proactive_watchdog_timer_handle_ != nullptr) {
+        esp_timer_stop(proactive_watchdog_timer_handle_);
+    }
+}
+
+void Application::ArmProactiveWatchdog() {
+    std::lock_guard<std::mutex> lock(proactive_mutex_);
+    if (!proactive_waiting_tts_start_) {
+        return;
+    }
+    StopProactiveWatchdogLocked();
+    if (proactive_watchdog_timer_handle_ != nullptr) {
+        esp_timer_start_once(proactive_watchdog_timer_handle_, kProactiveWatchdogTimeoutMs * 1000ULL);
+    }
+}
+
+void Application::HandleProactiveRetryLocked(const char* reason) {
+    if (active_proactive_seed_prompt_.empty()) {
+        HandleProactiveFallbackLocked("retry requested with empty seed");
+        return;
+    }
+
+    pending_proactive_seed_prompt_ = active_proactive_seed_prompt_;
+    proactive_waiting_tts_start_ = false;
+    proactive_debug_session_id_.clear();
+    proactive_debug_window_until_ms_ = 0;
+    proactive_retry_pending_reconnect_ = true;
+    proactive_fallback_in_progress_ = false;
+    proactive_retry_count_++;
+    StopProactiveWatchdogLocked();
+
+    ESP_LOGW(TAG, "Proactive watchdog timeout (%s), retrying once (retry=%d/%d)",
+             reason, proactive_retry_count_, kProactiveMaxRetries);
+}
+
+void Application::HandleProactiveFallbackLocked(const char* reason) {
+    proactive_waiting_tts_start_ = false;
+    proactive_retry_pending_reconnect_ = false;
+    proactive_fallback_in_progress_ = true;
+    proactive_debug_session_id_.clear();
+    proactive_debug_window_until_ms_ = 0;
+    active_proactive_seed_prompt_.clear();
+    pending_proactive_seed_prompt_.clear();
+    StopProactiveWatchdogLocked();
+    ESP_LOGW(TAG, "Proactive fallback to local board: %s", reason);
+}
+
+void Application::HandleProactiveWatchdogTimeout() {
+    bool should_retry = false;
+    bool should_fallback = false;
+    {
+        std::lock_guard<std::mutex> lock(proactive_mutex_);
+        if (!proactive_waiting_tts_start_) {
+            return;
+        }
+        if (proactive_retry_count_ < kProactiveMaxRetries) {
+            HandleProactiveRetryLocked("no tts:start in watchdog window");
+            should_retry = true;
+        } else {
+            HandleProactiveFallbackLocked("no tts:start after retry");
+            should_fallback = true;
+        }
+    }
+
+    if (should_retry) {
+        if (protocol_ && protocol_->IsAudioChannelOpened()) {
+            protocol_->CloseAudioChannel();
+            return;
+        }
+        {
+            std::lock_guard<std::mutex> lock(proactive_mutex_);
+            proactive_retry_pending_reconnect_ = false;
+        }
+        SetDeviceState(kDeviceStateConnecting);
+        Schedule([this]() {
+            ContinueInitiateConversation();
+        });
+        return;
+    }
+
+    if (!should_fallback) {
+        return;
+    }
+    if (protocol_ && protocol_->IsAudioChannelOpened()) {
+        protocol_->CloseAudioChannel();
+    } else {
+        SetDeviceState(kDeviceStateIdle);
+    }
+    MessageBoard::Open("", kProactiveFallbackMessage);
+    audio_service_.PlaySound(Lang::Sounds::OGG_NOTIFICATION);
+}
+
+void Application::LogProactiveIncomingType(const char* type) {
+    if (type == nullptr) {
+        return;
+    }
+
+    std::string tracked_session;
+    uint64_t window_until_ms = 0;
+    uint64_t now_ms = esp_timer_get_time() / 1000ULL;
+    {
+        std::lock_guard<std::mutex> lock(proactive_mutex_);
+        if (proactive_debug_window_until_ms_ == 0 || now_ms > proactive_debug_window_until_ms_) {
+            if (proactive_debug_window_until_ms_ != 0) {
+                proactive_debug_window_until_ms_ = 0;
+                proactive_debug_session_id_.clear();
+            }
+            return;
+        }
+        tracked_session = proactive_debug_session_id_;
+        window_until_ms = proactive_debug_window_until_ms_;
+    }
+
+    const std::string current_session = protocol_ ? protocol_->session_id() : "";
+    if (!tracked_session.empty() && !current_session.empty() && tracked_session != current_session) {
+        return;
+    }
+
+    const uint32_t now_log_ms = esp_log_timestamp();
+    ESP_LOGI(TAG,
+             "[ProactiveDebug] rx type=%s session=%s now_ms=%u window_until_ms=%u",
+             type,
+             current_session.empty() ? "(none)" : current_session.c_str(),
+             static_cast<unsigned>(now_log_ms),
+             static_cast<unsigned>(window_until_ms));
+}
+
 void Application::ToggleChatState() {
+    BehaviorScheduler::SetLastInteractionTime();
     xEventGroupSetBits(event_group_, MAIN_EVENT_TOGGLE_CHAT);
 }
 
 void Application::StartListening() {
+    BehaviorScheduler::SetLastInteractionTime();
     xEventGroupSetBits(event_group_, MAIN_EVENT_START_LISTENING);
 }
 
 void Application::StopListening() {
+    BehaviorScheduler::SetLastInteractionTime();
     xEventGroupSetBits(event_group_, MAIN_EVENT_STOP_LISTENING);
 }
 
 void Application::EndConversation() {
+    BehaviorScheduler::SetLastInteractionTime();
     Schedule([this]() {
         const auto state = GetDeviceState();
         if (state != kDeviceStateConnecting &&
@@ -836,9 +1092,43 @@ bool Application::InitiateConversation(const std::string& seed_prompt) {
             return;
         }
 
+        if (!kEnableProactiveBackendPrompt) {
+            {
+                std::lock_guard<std::mutex> lock(proactive_mutex_);
+                pending_proactive_seed_prompt_.clear();
+                active_proactive_seed_prompt_.clear();
+                proactive_debug_session_id_.clear();
+                proactive_debug_window_until_ms_ = 0;
+                proactive_waiting_tts_start_ = false;
+                proactive_retry_pending_reconnect_ = false;
+                proactive_fallback_in_progress_ = false;
+                proactive_retry_count_ = 0;
+                suppressed_hidden_stt_text_.clear();
+                StopProactiveWatchdogLocked();
+            }
+            ESP_LOGI(TAG, "Proactive backend prompt disabled, using local message board only");
+            MessageBoard::Open("", seed_prompt);
+            audio_service_.PlaySound(Lang::Sounds::OGG_NOTIFICATION);
+            return;
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(proactive_mutex_);
+            pending_proactive_seed_prompt_ = seed_prompt;
+            suppressed_hidden_stt_text_.clear();
+            active_proactive_seed_prompt_.clear();
+            proactive_debug_session_id_.clear();
+            proactive_debug_window_until_ms_ = 0;
+            proactive_waiting_tts_start_ = false;
+            proactive_retry_pending_reconnect_ = false;
+            proactive_fallback_in_progress_ = false;
+            proactive_retry_count_ = 0;
+            StopProactiveWatchdogLocked();
+        }
+
         SetDeviceState(kDeviceStateConnecting);
-        Schedule([this, seed_prompt]() {
-            ContinueInitiateConversation(seed_prompt);
+        Schedule([this]() {
+            ContinueInitiateConversation();
         });
     });
     return true;
@@ -947,6 +1237,7 @@ void Application::HandleStopListeningEvent() {
 }
 
 void Application::HandleWakeWordDetectedEvent() {
+    BehaviorScheduler::SetLastInteractionTime();
     auto wake_word = audio_service_.GetLastWakeWord();
     if (wake_word.rfind(kLocalCommandPrefix.data(), 0) == 0) {
         std::string action = NormalizeLocalCommandAction(wake_word.substr(kLocalCommandPrefix.size()));
@@ -1045,7 +1336,7 @@ void Application::ContinueWakeWordInvoke(const std::string& wake_word) {
 #endif
 }
 
-void Application::ContinueInitiateConversation(const std::string& seed_prompt) {
+void Application::ContinueInitiateConversation() {
     if (GetDeviceState() != kDeviceStateConnecting) {
         return;
     }
@@ -1062,14 +1353,8 @@ void Application::ContinueInitiateConversation(const std::string& seed_prompt) {
         }
     }
 
-    ESP_LOGI(TAG, "Initiating proactive conversation");
-    {
-        std::lock_guard<std::mutex> lock(proactive_mutex_);
-        suppressed_hidden_stt_text_ = seed_prompt;
-    }
-
-    listening_mode_ = GetDefaultListeningMode();
-    protocol_->SendHiddenTextPrompt(seed_prompt);
+    ESP_LOGI(TAG, "Initiating proactive conversation via normal listening path");
+    SetListeningMode(GetDefaultListeningMode());
 }
 
 void Application::HandleStateChangedEvent() {
@@ -1088,7 +1373,20 @@ void Application::HandleStateChangedEvent() {
             listening_voice_detected_.store(false);
             {
                 std::lock_guard<std::mutex> lock(proactive_mutex_);
+                const bool preserving_retry_seed =
+                    proactive_retry_pending_reconnect_ &&
+                    !pending_proactive_seed_prompt_.empty();
+                if (!preserving_retry_seed) {
+                    pending_proactive_seed_prompt_.clear();
+                    active_proactive_seed_prompt_.clear();
+                    proactive_retry_pending_reconnect_ = false;
+                }
+                proactive_debug_session_id_.clear();
+                proactive_debug_window_until_ms_ = 0;
+                proactive_waiting_tts_start_ = false;
+                proactive_fallback_in_progress_ = false;
                 suppressed_hidden_stt_text_.clear();
+                StopProactiveWatchdogLocked();
             }
             display->SetStatus(Lang::Strings::STANDBY);
             display->ClearChatMessages();  // Clear messages first
@@ -1116,6 +1414,33 @@ void Application::HandleStateChangedEvent() {
                 
                 // Send the start listening command
                 protocol_->SendStartListening(listening_mode_);
+
+                std::string proactive_seed_prompt;
+                {
+                    std::lock_guard<std::mutex> lock(proactive_mutex_);
+                    proactive_seed_prompt = std::move(pending_proactive_seed_prompt_);
+                    pending_proactive_seed_prompt_.clear();
+                }
+                if (!proactive_seed_prompt.empty()) {
+                    ESP_LOGI(TAG, "Sending proactive hidden seed prompt");
+                    const uint64_t now_ms = esp_timer_get_time() / 1000ULL;
+                    const std::string current_session = protocol_ ? protocol_->session_id() : "";
+                    {
+                        std::lock_guard<std::mutex> lock(proactive_mutex_);
+                        active_proactive_seed_prompt_ = proactive_seed_prompt;
+                        proactive_debug_session_id_ = current_session;
+                        proactive_debug_window_until_ms_ = now_ms + kProactiveDebugWindowMs;
+                        proactive_waiting_tts_start_ = true;
+                        proactive_fallback_in_progress_ = false;
+                    }
+                    ESP_LOGI(TAG,
+                             "Proactive debug window armed session=%s now_ms=%u until_ms=%u",
+                             current_session.empty() ? "(none)" : current_session.c_str(),
+                             static_cast<unsigned>(now_ms),
+                             static_cast<unsigned>(now_ms + kProactiveDebugWindowMs));
+                    protocol_->SendHiddenTextPrompt(proactive_seed_prompt);
+                    ArmProactiveWatchdog();
+                }
                 audio_service_.EnableVoiceProcessing(true);
             }
 

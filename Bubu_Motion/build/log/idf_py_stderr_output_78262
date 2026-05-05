@@ -1,2 +1,0 @@
-Command: cmake -G Ninja -DPYTHON_DEPS_CHECKED=1 -DPYTHON=/Users/judes/.espressif/python_env/idf5.5_py3.9_env/bin/python -DESP_PLATFORM=1 -DCCACHE_ENABLE=0 /Users/judes/Downloads/xiaozhi-main/xiaozhi-doremon/xiaozhi-esp32
-fatal: not a git repository (or any of the parent directories): .git

@@ -1,0 +1,315 @@
+Command: /Users/judes/.espressif/python_env/idf5.5_py3.9_env/bin/python /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/tools/idf_monitor.py -p /dev/cu.usbmodem11201 -b 115200 --toolchain-prefix xtensa-esp32s3-elf- --target esp32s3 --revision 0 /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/build/xiaozhi.elf /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/build/bootloader/bootloader.elf -m '/Users/judes/.espressif/python_env/idf5.5_py3.9_env/bin/python' '/Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/tools/idf.py'
+ESP-ROM:esp32s3-20210327
+Build:Mar 27 2021
+rst:0x15 (USB_UART_CHIP_RESET),boot:0x28 (SPI_FAST_FLASH_BOOT)
+Saved PC:0x40382702
+SPIWP:0xee
+mode:DIO, clock div:1
+load:0x3fce2820,len:0x584
+load:0x403c8700,len:0xbfc
+load:0x403cb700,len:0x2e50
+entry 0x403c8908
+[0;32mI (34) octal_psram: vendor id    : 0x0d (AP)[0m
+[0;32mI (34) octal_psram: dev id       : 0x02 (generation 3)[0m
+[0;32mI (34) octal_psram: density      : 0x03 (64 Mbit)[0m
+[0;32mI (35) octal_psram: good-die     : 0x01 (Pass)[0m
+[0;32mI (35) octal_psram: Latency      : 0x01 (Fixed)[0m
+[0;32mI (35) octal_psram: VCC          : 0x01 (3V)[0m
+[0;32mI (35) octal_psram: SRF          : 0x01 (Fast Refresh)[0m
+[0;32mI (35) octal_psram: BurstType    : 0x01 (Hybrid Wrap)[0m
+[0;32mI (36) octal_psram: BurstLen     : 0x01 (32 Byte)[0m
+[0;32mI (36) octal_psram: Readlatency  : 0x02 (10 cycles@Fixed)[0m
+[0;32mI (36) octal_psram: DriveStrength: 0x00 (1/1)[0m
+[0;32mI (36) MSPI Timing: Enter psram timing tuning[0m
+[0;32mI (37) esp_psram: Found 8MB PSRAM device[0m
+[0;32mI (37) esp_psram: Speed: 80MHz[0m
+[0;32mI (125) mmu_psram: Read only data copied and mapped to SPIRAM[0m
+[0;32mI (248) mmu_psram: Instructions copied and mapped to SPIRAM[0m
+[0;32mI (248) cpu_start: Multicore app[0m
+[0;32mI (256) cpu_start: Pro cpu start user code[0m
+[0;32mI (256) cpu_start: cpu freq: 240000000 Hz[0m
+[0;32mI (256) app_init: Application information:[0m
+[0;32mI (257) app_init: Project name:     xiaozhi[0m
+[0;32mI (257) app_init: App version:      2.2.4[0m
+[0;32mI (257) app_init: Compile time:     May  4 2026 15:01:53[0m
+[0;32mI (257) app_init: ELF file SHA256:  a86986ea0...[0m
+[0;32mI (257) app_init: ESP-IDF:          b4d74c1-dirty[0m
+[0;32mI (257) efuse_init: Min chip rev:     v0.0[0m
+[0;32mI (257) efuse_init: Max chip rev:     v0.99 [0m
+[0;32mI (258) efuse_init: Chip rev:         v0.2[0m
+[0;32mI (258) heap_init: Initializing. RAM available for dynamic allocation:[0m
+[0;32mI (258) heap_init: At 3FCAE648 len 0003B0C8 (236 KiB): RAM[0m
+[0;32mI (258) heap_init: At 3FCE9710 len 00005724 (21 KiB): RAM[0m
+[0;32mI (258) heap_init: At 3FCF0000 len 00008000 (32 KiB): DRAM[0m
+[0;32mI (258) heap_init: At 600FE000 len 00001FD8 (7 KiB): RTCRAM[0m
+[0;32mI (259) esp_psram: Adding pool of 4800K of PSRAM memory to heap allocator[0m
+[0;32mI (259) esp_psram: Adding pool of 21K of PSRAM memory gap generated due to end address alignment of drom to the heap allocator[0m
+[0;32mI (259) spi_flash: detected chip: winbond[0m
+[0;32mI (260) spi_flash: flash io: qio[0m
+[0;32mI (260) sleep_gpio: Configure to isolate all GPIO pins in sleep state[0m
+[0;32mI (261) sleep_gpio: Enable automatic switching of GPIO sleep configuration[0m
+[0;32mI (261) main_task: Started on CPU0[0m
+[0;32mI (271) esp_psram: Reserving pool of 96K of internal memory for DMA/internal allocations[0m
+[0;32mI (271) main_task: Calling app_main()[0m
+[0;32mI (281) Board: UUID=e9d73c1f-43f8-48be-8267-82f9e603c226 SKU=esp32s3-1.28-round-i80[0m
+[0;32mI (281) Esp32S3RoundI80Board: Initializing Esp32S3RoundI80Board (V2 - Fixed I2C & IO Expander)[0m
+[0;32mI (281) button: IoT Button Version: 4.1.6[0m
+[0;32mI (281) Esp32S3RoundI80Board: Buttons initialized: POWER(WiFi/Chat), UP(Vol+), DOWN(Vol-)[0m
+[0;32mI (281) gc9a01: LCD panel create success, version: 2.0.1[0m
+[0;32mI (401) Display: Power management not supported[0m
+[0;32mI (411) LcdDisplay: Turning display on[0m
+[0;32mI (411) LcdDisplay: Initialize LVGL library[0m
+[0;32mI (411) LcdDisplay: Use 2MB of PSRAM for image cache[0m
+[0;32mI (411) LcdDisplay: Initialize LVGL port[0m
+[0;32mI (421) LcdDisplay: Adding LCD display[0m
+[0;32mI (421) LVGL: Starting LVGL task[0m
+[0;32mI (421) Qmi8658: QMI8658 found (WHO_AM_I=0x05)[0m
+[0;32mI (421) Esp32S3RoundI80Board: QMI8658 IMU ready — eye tilt tracking enabled[0m
+[0;32mI (481) Esp32S3RoundI80Board: CST816 chip ID: 0xB4 (CST816S)[0m
+[0;32mI (501) Esp32S3RoundI80Board: CST816 configured: EnChange INT enabled, long-press = 50 (~0.5 s)[0m
+[0;32mI (501) Esp32S3RoundI80Board: Touch INT GPIO 45 configured (falling-edge ISR)[0m
+[0;32mI (501) Esp32S3RoundI80Board: Touch initialized: CST816D + TCA INT + 20 ms poll[0m
+[0;32mI (501) NoAudioCodec: Duplex channels created (16-bit, TX both speakers)[0m
+[0;32mI (501) AudioCodec: Set output volume to 12[0m
+[0;32mI (501) AudioCodec: Set input gain to 3.0[0m
+[0;32mI (501) Backlight: Set brightness to 75[0m
+[0;32mI (501) StateMachine: State: unknown -> starting[0m
+[0;32mI (511) EyeAnimation: RoboEyes initialized (240x240)[0m
+[0;32mI (521) MenuSystem: Initializing menu system...[0m
+[0;32mI (611) NotesSystem: Loaded 1 note entries[0m
+[0;32mI (641) ReminderSystem: Loaded 0 reminders (next_id=5)[0m
+[0;32mI (661) MenuSystem: Menu system ready[0m
+[0;32mI (661) EyeDisplay: EyeDisplay UI setup complete (black background + animated eyes + menu)[0m
+[0;32mI (701) AudioCodec: Audio codec started with gain 3.0 and output volume 5[0m
+[0;32mI (701) EmotionVoiceMap: EmotionVoiceMap initialized with 21 emotions and 0 voice mappings[0m
+[0;32mI (711) LevelSystem: LevelSystem ready: level=2 xp=92/100[0m
+[0;32mI (711) CareSystem: Loaded: hunger=0 mood=0 energy=0 clean=0[0m
+[0;32mI (711) CareSystem: CareSystem ready[0m
+[0;32mI (711) BehaviorScheduler: Ready (idle_timeout_min=60)[0m
+[0;32mI (711) MCP: Add tool: self.get_device_status[0m
+[0;32mI (711) MCP: Add tool: self.audio_speaker.set_volume[0m
+[0;32mI (711) MCP: Add tool: self.screen.set_brightness[0m
+[0;32mI (711) MCP: Add tool: self.screen.show_message[0m
+[0;32mI (711) MCP: Add tool: self.screen.set_emotion[0m
+[0;32mI (711) MCP: Add tool: self.screen.set_theme[0m
+[0;32mI (711) MCP: Add tool: self.audio_speaker.play_sound[0m
+[0;32mI (711) MCP: Add tool: self.get_time[0m
+[0;32mI (711) MCP: Add tool: self.behavior.get_config[0m
+[0;32mI (711) MCP: Add tool: self.behavior.set_idle_timeout_minutes[0m
+[0;32mI (711) MCP: Add tool: self.remember[0m
+[0;32mI (711) MCP: Add tool: self.recall[0m
+[0;32mI (711) MCP: Add tool: self.create_reminder[0m
+[0;32mI (711) MCP: Add tool: self.cancel_reminder[0m
+[0;32mI (711) MCP: Add tool: self.edit_reminder[0m
+[0;32mI (711) MCP: Add tool: self.speaker_profile.register[0m
+[0;32mI (711) MCP: Add tool: self.get_current_speaker[0m
+[0;32mI (711) MCP: Add tool: self.get_system_info [user][0m
+[0;32mI (711) MCP: Add tool: self.reboot [user][0m
+[0;32mI (711) MCP: Add tool: self.upgrade_firmware [user][0m
+[0;32mI (711) MCP: Add tool: self.screen.get_info [user][0m
+[0;32mI (711) MCP: Add tool: self.screen.snapshot [user][0m
+[0;32mI (711) MCP: Add tool: self.screen.preview_image [user][0m
+[0;32mI (711) Assets: The storage free size is 24576 KB[0m
+[0;32mI (711) Assets: The partition size is 4992 KB[0m
+[0;32mI (981) Assets: The checksum calculation time is 264 ms[0m
+[0;32mI (981) MCP: Add tool: self.assets.set_download_url [user][0m
+[0;32mI (981) WifiManager: Initializing...[0m
+[0;32mI (981) pp: pp rom version: e7ae62f[0m
+[0;32mI (981) net80211: net80211 rom version: e7ae62f[0m
+[0;32mI (991) wifi:wifi driver task: 3fce7fe8, prio:23, stack:6144, core=0[0m
+[0;32mI (991) wifi:wifi firmware version: ee91c8c[0m
+[0;32mI (991) wifi:wifi certification version: v7.0[0m
+[0;32mI (991) wifi:config NVS flash: disabled[0m
+[0;32mI (991) wifi:config nano formatting: enabled[0m
+[0;32mI (991) wifi:Init data frame dynamic rx buffer num: 6[0m
+[0;32mI (991) wifi:Init dynamic rx mgmt buffer num: 5[0m
+[0;32mI (991) wifi:Init management short buffer num: 32[0m
+[0;32mI (991) wifi:Init dynamic tx buffer num: 32[0m
+[0;32mI (991) wifi:Init static tx FG buffer num: 2[0m
+[0;32mI (991) wifi:Init static rx buffer size: 1600[0m
+[0;32mI (991) wifi:Init static rx buffer num: 3[0m
+[0;32mI (991) wifi:Init dynamic rx buffer num: 6[0m
+[0;32mI (991) wifi_init: rx ba win: 3[0m
+[0;32mI (991) wifi_init: accept mbox: 6[0m
+[0;32mI (991) wifi_init: tcpip mbox: 16[0m
+[0;32mI (991) wifi_init: udp mbox: 6[0m
+[0;32mI (991) wifi_init: tcp mbox: 6[0m
+[0;32mI (991) wifi_init: tcp tx win: 5760[0m
+[0;32mI (991) wifi_init: tcp rx win: 5760[0m
+[0;32mI (991) wifi_init: tcp mss: 1440[0m
+[0;32mI (991) WifiManager: Initialized[0m
+[0;32mI (991) WifiBoard: Starting WiFi connection attempt[0m
+[0;32mI (991) WifiManager: Starting station[0m
+[0;32mI (991) phy_init: phy_version 711,97bcf0a2,Aug 25 2025,19:04:10[0m
+[0;32mI (1031) wifi:mode : sta (b8:f8:62:f8:90:30)[0m
+[0;32mI (1031) wifi:enable tsf[0m
+[0;32mI (1031) WifiBoard: WiFi scanning[0m
+[0;32mI (3441) WifiStation: Found AP: VHM-OCP-GUEST, BSSID: dc:b7:ac:02:b6:e0, RSSI: -76, Channel: 11, Authmode: 3[0m
+[0;32mI (3441) WifiBoard: WiFi connecting to VHM-OCP-GUEST[0m
+[0;33mW (3441) wifi:Password length matches WPA2 standards, authmode threshold changes from OPEN to WPA2[0m
+[0;32mI (4721) wifi:new:<11,0>, old:<1,0>, ap:<255,255>, sta:<11,0>, prof:1, snd_ch_cfg:0x0[0m
+[0;32mI (4721) wifi:state: init -> auth (0xb0)[0m
+[0;32mI (4721) wifi:state: auth -> assoc (0x0)[0m
+[0;32mI (4721) wifi:state: assoc -> run (0x10)[0m
+[0;32mI (4741) wifi:connected with VHM-OCP-GUEST, aid = 2, channel 11, BW20, bssid = dc:b7:ac:02:b6:e0[0m
+[0;32mI (4741) wifi:security: WPA2-PSK, phy: bgn, rssi: -75[0m
+[0;32mI (4741) wifi:pm start, type: 1[0m
+
+[0;32mI (4741) wifi:dp: 1, bi: 102400, li: 10, scale listen interval from 1024000 us to 1024000 us[0m
+[0;32mI (4751) wifi:set rx beacon pti, rx_bcn_pti: 0, bcn_timeout: 25000, mt_pti: 0, mt_time: 10000[0m
+[0;32mI (4751) wifi:<ba-add>idx:0 (ifx:0, dc:b7:ac:02:b6:e0), tid:7, ssn:0, winSize:64[0m
+[0;32mI (4831) wifi:AP's beacon interval = 102400 us, DTIM period = 1[0m
+[0;32mI (5761) esp_netif_handlers: sta ip: 172.16.0.74, mask: 255.255.252.0, gw: 172.16.0.1[0m
+[0;32mI (5761) WifiStation: Got IP: 172.16.0.74[0m
+[0;32mI (5761) WifiBoard: Connected to WiFi: VHM-OCP-GUEST[0m
+[0;32mI (5761) Application: Network connected[0m
+[0;32mI (5761) StateMachine: State: starting -> activating[0m
+create static modelsI (5761) MODEL_LOADER: Successfully load srmodels
+[1;31mE (5761) AudioService: CONFIG_USE_AFE_WAKE_WORD is enabled, but no wakenet model found[0m
+[0;32mI (5761) Assets: Refreshing display theme...[0m
+[0;32mI (5771) EyeDisplay: SetTheme: forced black background[0m
+[0;32mI (5771) EyeDisplay: SetEmotion: microchip_ai[0m
+[0;32mI (5771) Ota: Current version: 2.2.4[0m
+[0;32mI (5781) wifi:<ba-add>idx:1 (ifx:0, dc:b7:ac:02:b6:e0), tid:0, ssn:2, winSize:64[0m
+[0;32mI (6291) esp-x509-crt-bundle: Certificate validated[0m
+[0;32mI (6721) HttpClient: Established new connection to api.tenclass.net:443[0m
+[0;32mI (6951) HttpClient: HTTP connection closed[0m
+[0;32mI (6951) Ota: Current is the latest version[0m
+[0;32mI (6951) Ota: Running partition: ota_0[0m
+[0;32mI (6951) MQTT: Connecting to endpoint mqtt.xiaozhi.me[0m
+[0;32mI (7141) esp-x509-crt-bundle: Certificate validated[0m
+[0;32mI (7481) MQTT: Connected to endpoint[0m
+[0;32mI (7481) Application: Activation done[0m
+[0;32mI (7481) SystemInfo: free sram: 103867 minimal sram: 95615[0m
+[0;32mI (7481) StateMachine: State: activating -> idle[0m
+[0;32mI (7501) WifiStation: Setting WiFi power save level: LOW_POWER (MAX_MODEM)[0m
+[0;32mI (7501) wifi:Set ps type: 2, coexist: 0[0m
+
+[0;32mI (7501) AudioCodec: Set output enable to true[0m
+[0;32mI (7501) AudioService: Resampling audio from 16000 to 24000[0m
+[0;32mI (11801) Esp32S3RoundI80Board: [Touch] TAP at (89,133) dur=ldms drift=1070273024[0m
+[0;32mI (11801) WifiStation: Setting WiFi power save level: BALANCED (MIN_MODEM)[0m
+[0;32mI (11801) wifi:Set ps type: 1, coexist: 0[0m
+
+[0;32mI (11801) Esp32S3RoundI80Board: Eye tap -> toggle conversation[0m
+[0;32mI (11801) StateMachine: State: idle -> connecting[0m
+[0;32mI (11801) WifiStation: Setting WiFi power save level: PERFORMANCE (NONE)[0m
+[0;32mI (11801) wifi:Set ps type: 0, coexist: 0[0m
+
+[0;32mI (11921) MQTT: Session ID: 00b21ac8[0m
+[0;32mI (11921) WifiStation: Setting WiFi power save level: PERFORMANCE (NONE)[0m
+[0;32mI (11921) wifi:Set ps type: 0, coexist: 0[0m
+
+[0;32mI (11921) StateMachine: State: connecting -> listening[0m
+[0;32mI (11921) WifiStation: Setting WiFi power save level: PERFORMANCE (NONE)[0m
+[0;32mI (11921) wifi:Set ps type: 0, coexist: 0[0m
+
+[0;33mW (11941) AFE_CONFIG: wakenet model not found. please load wakenet model...[0m
+[0;32mI (11941) AFE: AFE Version: (1MIC_V251128)[0m
+[0;32mI (11941) AFE: Input PCM Config: total 1 channels(1 microphone, 0 playback), sample rate:16000[0m
+[0;32mI (11941) AFE: AFE Pipeline: [input] -> |VAD(WebRTC)| -> [output][0m
+[0;32mI (11941) AfeAudioProcessor: Audio communication task started, feed size: 512 fetch size: 512[0m
+[0;32mI (12061) AudioCodec: Set input enable to true[0m
+[0;32mI (17321) Esp32S3RoundI80Board: [Touch] TAP at (75,146) dur=ldms drift=1070273024[0m
+[0;32mI (17321) WifiStation: Setting WiFi power save level: BALANCED (MIN_MODEM)[0m
+[0;32mI (17321) wifi:Set ps type: 1, coexist: 0[0m
+
+[0;32mI (17321) Esp32S3RoundI80Board: Eye tap -> toggle conversation[0m
+[0;32mI (17331) StateMachine: State: listening -> idle[0m
+[0;32mI (17751) StateMachine: State: idle -> speaking[0m
+[0;32mI (17751) Application: >> Đăng nhờ tôi uống thuốc vào lúc 16h55.[0m
+[0;32mI (18251) EyeDisplay: SetEmotion: happy[0m
+[0;32mI (18671) Application: << Dạ được ạ,[0m
+[0;32mI (18681) EyeDisplay: SetEmotion: cool[0m
+[0;32mI (19411) Application: << Bubu sẽ nhắc Đăng uống thuốc vào lúc 16h55 nhé! Đã lên lịch xong rồi đây[0m
+[0;33mW (20311) MQTT: Received audio packet with wrong sequence: 31, expected: 28[0m
+[0;33mW (20811) MQTT: Received audio packet with wrong sequence: 40, expected: 39[0m
+[0;32mI (25011) Application: << % self.create_reminder...[0m
+[0;32mI (25321) EyeDisplay: SetEmotion: cool[0m
+[0;32mI (25731) Application: << Nhắc nhở đã được thiết lập rồi nha![0m
+[0;33mW (26561) MQTT: Received audio packet with wrong sequence: 127, expected: 126[0m
+[0;32mI (27711) SystemInfo: free sram: 91315 minimal sram: 85891[0m
+[0;32mI (27711) Application: << 2 phút nữa Bubu gọi Đăng uống thuốc đó, nhớ chuẩn bị sẵn ly nước nha![0m
+[0;32mI (32791) StateMachine: State: speaking -> idle[0m
+[0;32mI (33101) AudioCodec: Set input enable to false[0m
+[0;32mI (42711) SystemInfo: free sram: 91743 minimal sram: 85891[0m
+[0;32mI (52711) SystemInfo: free sram: 96491 minimal sram: 85891[0m
+[0;32mI (54481) Esp32S3RoundI80Board: [Touch] TAP at (149,223) dur=ldms drift=1070273024[0m
+[0;32mI (54491) Esp32S3RoundI80Board: Touch outside eyes → open menu[0m
+[0;32mI (55141) Esp32S3RoundI80Board: [Touch] TAP at (135,202) dur=ldms drift=1070273024[0m
+[0;32mI (55151) Esp32S3RoundI80Board: Tap on menu next button[0m
+[0;32mI (55561) Esp32S3RoundI80Board: [Touch] TAP at (112,207) dur=ldms drift=1070273024[0m
+[0;32mI (55591) Esp32S3RoundI80Board: Tap on menu next button[0m
+[0;32mI (56401) Esp32S3RoundI80Board: [Touch] TAP at (134,126) dur=ldms drift=1070273024[0m
+[0;32mI (56421) Esp32S3RoundI80Board: Tap on selected item -> Activate[0m
+[0;32mI (57601) Esp32S3RoundI80Board: [Touch] TAP at (138,228) dur=ldms drift=1070273024[0m
+[0;32mI (57611) Esp32S3RoundI80Board: Tap on menu next button[0m
+[0;32mI (58561) Esp32S3RoundI80Board: [Touch] LONG_PRESS at (205,78) held=ldms drift=1070273024[0m
+[0;32mI (58591) Esp32S3RoundI80Board: Long press → close menu[0m
+[0;32mI (62721) SystemInfo: free sram: 96283 minimal sram: 83071[0m
+[0;32mI (72721) SystemInfo: free sram: 96247 minimal sram: 83071[0m
+[0;32mI (82721) SystemInfo: free sram: 96283 minimal sram: 83071[0m
+[0;32mI (92061) AudioCodec: Set output enable to false[0m
+[0;32mI (92591) MQTT: Received goodbye message, session_id: 00b21ac8[0m
+[0;32mI (92591) MQTT: Closing audio channel, send_goodbye: 0[0m
+[0;32mI (92591) WifiStation: Setting WiFi power save level: LOW_POWER (MAX_MODEM)[0m
+[0;32mI (92591) wifi:Set ps type: 2, coexist: 0[0m
+
+[0;32mI (92711) SystemInfo: free sram: 101619 minimal sram: 83071[0m
+[0;32mI (92791) Esp32S3RoundI80Board: WiFi idle timeout → LOW_POWER[0m
+[0;32mI (92791) WifiStation: Setting WiFi power save level: LOW_POWER (MAX_MODEM)[0m
+[0;32mI (92791) wifi:Set ps type: 2, coexist: 0[0m
+
+[0;32mI (97741) AudioCodec: Set output enable to true[0m
+[0;32mI (102711) SystemInfo: free sram: 101491 minimal sram: 83071[0m
+[0;32mI (103721) ReminderSystem: Reminder fired: id=5 at 16:55 (spoken=off)[0m
+[0;32mI (103721) AudioService: Resampling audio from 16000 to 24000[0m
+[0;32mI (112711) SystemInfo: free sram: 101367 minimal sram: 83071[0m
+[0;32mI (118971) AudioService: Resampling audio from 16000 to 24000[0m
+[0;32mI (122721) SystemInfo: free sram: 101383 minimal sram: 83071[0m
+[0;32mI (128721) AudioService: Resampling audio from 16000 to 24000[0m
+[0;32mI (129421) Esp32S3RoundI80Board: [Touch] TAP at (96,200) dur=ldms drift=1070273024[0m
+[0;32mI (129471) ReminderSystem: Reminder dismissed: id=5 at 2026-05-04 16:55:26[0m
+[0;32mI (129471) Esp32S3RoundI80Board: Message board dismissed reminder id=5[0m
+[0;32mI (129471) Esp32S3RoundI80Board: Tap consumed by message board[0m
+[0;32mI (132721) SystemInfo: free sram: 101519 minimal sram: 83071[0m
+[0;32mI (142721) SystemInfo: free sram: 101519 minimal sram: 83071[0m
+[0;32mI (152721) SystemInfo: free sram: 101519 minimal sram: 83071[0m
+[0;32mI (162721) SystemInfo: free sram: 101519 minimal sram: 83071[0m
+[0;32mI (172711) SystemInfo: free sram: 101523 minimal sram: 83071[0m
+[0;32mI (180711) CareSystem: Saved: hunger=0 mood=0 energy=0 clean=0[0m
+[0;32mI (182711) SystemInfo: free sram: 101523 minimal sram: 83071[0m
+[0;32mI (192711) SystemInfo: free sram: 101519 minimal sram: 83071[0m
+[0;32mI (197741) AudioCodec: Set output enable to false[0m
+[0;32mI (202711) SystemInfo: free sram: 101519 minimal sram: 83071[0m
+[0;32mI (212711) SystemInfo: free sram: 101511 minimal sram: 83071[0m
+[0;32mI (221911) AudioCodec: Set output enable to true[0m
+[0;32mI (222711) SystemInfo: free sram: 100503 minimal sram: 83071[0m
+[0;32mI (232711) SystemInfo: free sram: 101519 minimal sram: 83071[0m
+[0;32mI (237911) AudioCodec: Set output enable to false[0m
+[0;32mI (242711) SystemInfo: free sram: 101519 minimal sram: 83071[0m
+[0;32mI (252711) SystemInfo: free sram: 101519 minimal sram: 83071[0m
+[0;32mI (256931) AudioCodec: Set output enable to true[0m
+[0;32mI (262721) SystemInfo: free sram: 101519 minimal sram: 83071[0m
+[0;32mI (272711) SystemInfo: free sram: 101519 minimal sram: 83071[0m
+[0;32mI (282711) SystemInfo: free sram: 101515 minimal sram: 83071[0m
+[0;32mI (285931) AudioCodec: Set output enable to false[0m
+[0;32mI (287961) AudioCodec: Set output enable to true[0m
+[0;32mI (292711) SystemInfo: free sram: 101519 minimal sram: 83071[0m
+[0;32mI (302711) SystemInfo: free sram: 101519 minimal sram: 83071[0m
+[0;32mI (303961) AudioCodec: Set output enable to false[0m
+[0;32mI (304281) AudioCodec: Set output enable to true[0m
+[0;32mI (304281) AudioService: Resampling audio from 16000 to 24000[0m
+[0;32mI (312721) SystemInfo: free sram: 101519 minimal sram: 83071[0m
+[0;32mI (322721) SystemInfo: free sram: 101519 minimal sram: 83071[0m
+[0;32mI (323281) AudioCodec: Set output enable to false[0m
+[0;32mI (324001) AudioCodec: Set output enable to true[0m
+[0;32mI (332721) SystemInfo: free sram: 101519 minimal sram: 83071[0m
+[0;32mI (340001) AudioCodec: Set output enable to false[0m
+[0;32mI (341501) AudioCodec: Set output enable to true[0m
+[0;32mI (342711) SystemInfo: free sram: 101519 minimal sram: 83071[0m
+[0;32mI (352711) SystemInfo: free sram: 101523 minimal sram: 83071[0m
+[0;32mI (360711) CareSystem: Saved: hunger=0 mood=0 energy=0 clean=0[0m
+[0;32mI (362721) SystemInfo: free sram: 101519 minimal sram: 83071[0m
+[0;32mI (372721) SystemInfo: free sram: 101519 minimal sram: 83071[0m
+[0;32mI (382721) SystemInfo: free sram: 101523 minimal sram: 83071[0m

@@ -1,0 +1,7 @@
+Command: /Users/judes/.espressif/python_env/idf5.5_py3.9_env/bin/python /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/tools/idf_monitor.py -p /dev/cu.wchusbserial1120 -b 115200 --toolchain-prefix xtensa-esp32s3-elf- --target esp32s3 --revision 0 /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/build/xiaozhi.elf /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/build/bootloader/bootloader.elf -m '/Users/judes/.espressif/python_env/idf5.5_py3.9_env/bin/python' '/Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/tools/idf.py' '-p' '/dev/cu.wchusbserial1120'
+[0;33m--- esp-idf-monitor 1.9.0 on /dev/cu.wchusbserial1120 115200[0m
+[0;33m--- Quit: Ctrl+] | Menu: Ctrl+T | Help: Ctrl+T followed by Ctrl+H[0m
+[0m--- 0x403c8700: [0;33m_stext[0m[0m at [0;32m??[0m[0m:[1;31m?[0m
+[0m--- 0x403c8908: [0;33mcall_start_cpu0[0m[0m at [0;32m/Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/bootloader/subproject/main/bootloader_start.c[0m[0m:[1;31m25[0m
+[0;33m--- Warning: Checksum mismatch between flashed and built applications. Checksum of built application is ff7e973998331fa3b981644aea160d81c554371ba16fa76918a9e901e6cdcbd9[0m
+[0m

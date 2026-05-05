@@ -13,8 +13,8 @@ end
 
 # Load bootloader symbols
 set confirm off
-    add-symbol-file /Users/judes/Downloads/xiaozhi-main/xiaozhi-doremon/xiaozhi-esp32/build/bootloader/bootloader.elf
+    add-symbol-file /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/build/bootloader/bootloader.elf
 set confirm on
 
 # Load application symbols
-file /Users/judes/Downloads/xiaozhi-main/xiaozhi-doremon/xiaozhi-esp32/build/xiaozhi.elf
+file /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/build/xiaozhi.elf

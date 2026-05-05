@@ -4,6 +4,6 @@
 
 method=source_dir
 command=
-source_dir=/Users/judes/Downloads/xiaozhi-main/esp/esp-idf/components/bootloader/subproject
+source_dir=/Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/bootloader/subproject
 work_dir=
 

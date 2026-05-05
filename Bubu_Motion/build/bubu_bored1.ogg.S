@@ -1,4 +1,4 @@
-/* * Data converted from /Users/judes/Downloads/xiaozhi-main/xiaozhi-doremon/xiaozhi-esp32/main/assets/common/bubu_bored1.ogg
+/* * Data converted from /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/main/assets/common/bubu_bored1.ogg
  */
 .data
 #if !defined (__APPLE__) && !defined (__linux__)

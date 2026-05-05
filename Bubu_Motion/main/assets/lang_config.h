@@ -323,6 +323,13 @@ namespace Lang {
         static_cast<size_t>(ogg_low_battery_end - ogg_low_battery_start)
         };
 
+        extern const char ogg_notification_start[] asm("_binary_notification_ogg_start");
+        extern const char ogg_notification_end[] asm("_binary_notification_ogg_end");
+        static const std::string_view OGG_NOTIFICATION {
+        static_cast<const char*>(ogg_notification_start),
+        static_cast<size_t>(ogg_notification_end - ogg_notification_start)
+        };
+
         extern const char ogg_popup_start[] asm("_binary_popup_ogg_start");
         extern const char ogg_popup_end[] asm("_binary_popup_ogg_end");
         static const std::string_view OGG_POPUP {

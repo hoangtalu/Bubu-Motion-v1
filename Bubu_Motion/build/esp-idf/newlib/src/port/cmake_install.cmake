@@ -1,4 +1,4 @@
-# Install script for directory: /Users/judes/Downloads/xiaozhi-main/esp/esp-idf/components/newlib/src/port
+# Install script for directory: /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/newlib/src/port
 
 # Set the install prefix
 if(NOT DEFINED CMAKE_INSTALL_PREFIX)
@@ -40,6 +40,6 @@ endif()
 string(REPLACE ";" "\n" CMAKE_INSTALL_MANIFEST_CONTENT
        "${CMAKE_INSTALL_MANIFEST_FILES}")
 if(CMAKE_INSTALL_LOCAL_ONLY)
-  file(WRITE "/Users/judes/Downloads/xiaozhi-main/xiaozhi-doremon/xiaozhi-esp32/build/esp-idf/newlib/src/port/install_local_manifest.txt"
+  file(WRITE "/Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/build/esp-idf/newlib/src/port/install_local_manifest.txt"
      "${CMAKE_INSTALL_MANIFEST_CONTENT}")
 endif()

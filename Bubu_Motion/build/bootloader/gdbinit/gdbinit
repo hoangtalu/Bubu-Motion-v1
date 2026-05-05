@@ -1,2 +1,2 @@
-source /Users/judes/Downloads/xiaozhi-main/xiaozhi-doremon/xiaozhi-esp32/build/bootloader/gdbinit/symbols
-source /Users/judes/Downloads/xiaozhi-main/xiaozhi-doremon/xiaozhi-esp32/build/bootloader/gdbinit/connect
+source /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/build/bootloader/gdbinit/symbols
+source /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/build/bootloader/gdbinit/connect

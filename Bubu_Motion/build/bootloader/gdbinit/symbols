@@ -17,4 +17,4 @@ set confirm off
 set confirm on
 
 # Load application symbols
-file /Users/judes/Downloads/xiaozhi-main/xiaozhi-doremon/xiaozhi-esp32/build/bootloader/bootloader.elf
+file /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/build/bootloader/bootloader.elf

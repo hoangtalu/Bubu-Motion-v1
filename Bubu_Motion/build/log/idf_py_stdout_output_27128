@@ -1,0 +1,611 @@
+Command: ninja flash
+[0/1] Re-running CMake...
+-- Minimal build - ON
+-- Building ESP-IDF components for target esp32s3
+NOTICE: Skipping optional dependency: espressif/esp_h264
+NOTICE: Skipping optional dependency: espressif/esp_ipa
+NOTICE: Skipping optional dependency: espressif/usb
+NOTICE: Skipping optional dependency: espressif/esp_lcd_jd9365
+NOTICE: Skipping optional dependency: waveshare/esp_lcd_st7703
+NOTICE: Skipping optional dependency: espressif/esp32_p4_function_ev_board
+NOTICE: Skipping optional dependency: espressif/esp_lcd_ili9881c
+NOTICE: Skipping optional dependency: espressif/esp_lcd_ek79007
+NOTICE: Skipping optional dependency: espressif/esp_hosted
+NOTICE: Skipping optional dependency: espressif/esp_wifi_remote
+NOTICE: Skipping optional dependency: espfriends/servo_dog_ctrl
+NOTICE: Skipping optional dependency: llgok/cpp_bus_driver
+NOTICE: Skipping optional dependency: espressif/esp_lcd_touch_st7123
+NOTICE: Skipping optional dependency: espressif/cjson
+NOTICE: 
+Following dependencies have new versions available:
+Dependency "78/esp-wifi-connect": "3.1.1" -> "3.1.3"
+Dependency "78/uart-eth-modem": "0.3.4" -> "0.3.5"
+Dependency "espressif/adc_mic": "0.2.1" -> "0.2.3"
+Dependency "espressif/esp32-camera": "2.1.5" -> "2.1.6"
+Dependency "espressif/esp_io_expander": "1.2.0" -> "1.2.1"
+Dependency "espressif/esp_lcd_touch_cst816s": "1.1.1" -> "1.1.1~1"
+Dependency "espressif/esp_lcd_touch_gt1151": "1.1.0" -> "1.1.0~1"
+Dependency "espressif/esp_lcd_touch_gt911": "1.2.0~1" -> "1.2.0~2"
+Dependency "espressif/i2c_bus": "1.5.0" -> "1.5.1"
+Dependency "tny-robotics/sh1106-esp-idf": "1.0.0" -> "1.0.1"
+Consider running "idf.py update-dependencies" to update your lock file.
+NOTICE: Processing 64 dependencies:
+NOTICE: [1/64] 78/esp-ml307 (3.6.5)
+NOTICE: [2/64] 78/esp-wifi-connect (3.1.1)
+NOTICE: [3/64] 78/esp_lcd_nv3023 (1.0.0)
+NOTICE: [4/64] 78/uart-eth-modem (0.3.4)
+NOTICE: [5/64] 78/uart-uhci (0.2.1)
+NOTICE: [6/64] 78/xiaozhi-fonts (1.6.0)
+NOTICE: [7/64] espressif/adc_battery_estimation (0.2.1)
+NOTICE: [8/64] espressif/adc_mic (0.2.1)
+NOTICE: [9/64] espressif/bmi270_sensor (0.1.1)
+NOTICE: [10/64] espressif/button (4.1.6)
+NOTICE: [11/64] espressif/cmake_utilities (0.5.3)
+NOTICE: [12/64] espressif/dl_fft (0.3.1)
+NOTICE: [13/64] espressif/esp-dsp (1.7.0)
+NOTICE: [14/64] espressif/esp-sr (2.3.1)
+NOTICE: [15/64] espressif/esp32-camera (2.1.5)
+NOTICE: [16/64] espressif/esp_audio_codec (2.4.1)
+NOTICE: [17/64] espressif/esp_audio_effects (1.2.1)
+NOTICE: [18/64] espressif/esp_cam_sensor (1.5.2)
+NOTICE: [19/64] espressif/esp_codec_dev (1.5.4)
+NOTICE: [20/64] espressif/esp_image_effects (1.0.1)
+NOTICE: [21/64] espressif/esp_io_expander (1.2.0)
+NOTICE: [22/64] espressif/esp_io_expander_tca9554 (2.0.0)
+NOTICE: [23/64] espressif/esp_io_expander_tca95xx_16bit (2.0.2)
+NOTICE: [24/64] espressif/esp_jpeg (1.3.1)
+NOTICE: [25/64] espressif/esp_lcd_axs15231b (1.0.1~1)
+NOTICE: [26/64] espressif/esp_lcd_co5300 (2.0.3)
+NOTICE: [27/64] espressif/esp_lcd_gc9a01 (2.0.1)
+NOTICE: [28/64] espressif/esp_lcd_ili9341 (1.2.0)
+NOTICE: [29/64] espressif/esp_lcd_panel_io_additions (1.0.1)
+NOTICE: [30/64] espressif/esp_lcd_spd2010 (1.0.2)
+NOTICE: [31/64] espressif/esp_lcd_st7701 (1.1.5)
+NOTICE: [32/64] espressif/esp_lcd_st77916 (1.0.1)
+NOTICE: [33/64] espressif/esp_lcd_st7796 (1.3.5)
+NOTICE: [34/64] espressif/esp_lcd_touch (1.2.1)
+NOTICE: [35/64] espressif/esp_lcd_touch_cst816s (1.1.1)
+NOTICE: [36/64] espressif/esp_lcd_touch_ft5x06 (1.0.7)
+NOTICE: [37/64] espressif/esp_lcd_touch_gt1151 (1.1.0)
+NOTICE: [38/64] espressif/esp_lcd_touch_gt911 (1.2.0~1)
+NOTICE: [39/64] espressif/esp_lvgl_port (2.7.2)
+NOTICE: [40/64] espressif/esp_mmap_assets (1.4.0)
+NOTICE: [41/64] espressif/esp_new_jpeg (0.6.1)
+NOTICE: [42/64] espressif/esp_sccb_intf (0.0.8)
+NOTICE: [43/64] espressif/esp_video (1.3.1)
+NOTICE: [44/64] espressif/freetype (2.14.2)
+NOTICE: [45/64] espressif/i2c_bus (1.5.0)
+NOTICE: [46/64] espressif/iot_eth (0.1.0)
+NOTICE: [47/64] espressif/iot_usbh_cdc (3.0.0)
+NOTICE: [48/64] espressif/iot_usbh_rndis (0.3.1)
+NOTICE: [49/64] espressif/knob (1.0.2)
+NOTICE: [50/64] espressif/led_strip (3.0.3)
+NOTICE: [51/64] espressif/usb_host_uvc (2.3.1)
+NOTICE: [52/64] espressif2022/esp_emote_assets (0.1.2)
+NOTICE: [53/64] espressif2022/esp_emote_expression (0.1.0~3)
+NOTICE: [54/64] espressif2022/esp_emote_gfx (2.1.0)
+NOTICE: [55/64] espressif2022/image_player (1.1.1)
+NOTICE: [56/64] laride/heatshrink (0.4.1)
+NOTICE: [57/64] lvgl/lvgl (9.4.0)
+NOTICE: [58/64] tny-robotics/sh1106-esp-idf (1.0.0)
+NOTICE: [59/64] txp666/otto-emoji-gif-component (1.1.1)
+NOTICE: [60/64] waveshare/custom_io_expander_ch32v003 (1.0.1)
+NOTICE: [61/64] waveshare/esp_lcd_sh8601 (1.0.2)
+NOTICE: [62/64] waveshare/esp_lcd_touch_cst9217 (1.0.4)
+NOTICE: [63/64] wvirgil123/sscma_client (1.0.2)
+NOTICE: [64/64] idf (5.5.2)
+-- Using esp_driver_i2c (SRC_FILE=i2c_bus_v2.c, REQ=esp_driver_i2c driver)
+-- ESP-TEE is currently supported only on the esp32c6;esp32h2;esp32c5 SoCs
+NOTICE: Skipping optional dependency: espressif/esp_lcd_jd9365
+NOTICE: Skipping optional dependency: waveshare/esp_lcd_st7703
+NOTICE: Skipping optional dependency: espressif/esp32_p4_function_ev_board
+NOTICE: Skipping optional dependency: espressif/esp_lcd_ili9881c
+NOTICE: Skipping optional dependency: espressif/esp_lcd_ek79007
+NOTICE: Skipping optional dependency: espressif/esp_hosted
+NOTICE: Skipping optional dependency: espressif/esp_wifi_remote
+NOTICE: Skipping optional dependency: espfriends/servo_dog_ctrl
+NOTICE: Skipping optional dependency: llgok/cpp_bus_driver
+NOTICE: Skipping optional dependency: espressif/esp_lcd_touch_st7123
+NOTICE: Skipping optional dependency: espressif/esp_h264
+NOTICE: Skipping optional dependency: espressif/esp_ipa
+NOTICE: Skipping optional dependency: espressif/usb
+-- Project sdkconfig file /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/sdkconfig
+Loading defaults file /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/sdkconfig.defaults...
+/Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/sdkconfig.defaults:32 CONFIG_NEWLIB_NANO_FORMAT was replaced with CONFIG_LIBC_NEWLIB_NANO_FORMAT 
+Loading defaults file /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/sdkconfig.defaults.esp32s3...
+-- Compiler supported targets: xtensa-esp-elf
+-- USING O3
+-- App "xiaozhi" version: 2.2.4
+-- Adding linker script /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/build/esp-idf/esp_system/ld/memory.ld
+-- Adding linker script /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/build/esp-idf/esp_system/ld/sections.ld.in
+-- Adding linker script /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/esp_rom/esp32s3/ld/esp32s3.rom.ld
+-- Adding linker script /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/esp_rom/esp32s3/ld/esp32s3.rom.api.ld
+-- Adding linker script /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/esp_rom/esp32s3/ld/esp32s3.rom.bt_funcs.ld
+-- Adding linker script /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/esp_rom/esp32s3/ld/esp32s3.rom.libgcc.ld
+-- Adding linker script /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/esp_rom/esp32s3/ld/esp32s3.rom.wdt.ld
+-- Adding linker script /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/esp_rom/esp32s3/ld/esp32s3.rom.version.ld
+-- Adding linker script /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/esp_rom/esp32s3/ld/esp32s3.rom.ble_master.ld
+-- Adding linker script /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/esp_rom/esp32s3/ld/esp32s3.rom.ble_50.ld
+-- Adding linker script /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/esp_rom/esp32s3/ld/esp32s3.rom.ble_smp.ld
+-- Adding linker script /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/esp_rom/esp32s3/ld/esp32s3.rom.ble_dtm.ld
+-- Adding linker script /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/esp_rom/esp32s3/ld/esp32s3.rom.ble_test.ld
+-- Adding linker script /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/esp_rom/esp32s3/ld/esp32s3.rom.ble_scan.ld
+-- Adding linker script /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/esp_rom/esp32s3/ld/esp32s3.rom.libc.ld
+-- Adding linker script /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/esp_rom/esp32s3/ld/esp32s3.rom.newlib.ld
+-- Adding linker script /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/soc/esp32s3/ld/esp32s3.peripherals.ld
+-- ESP_LCD_NV3023: 1.0.0
+-- IOT_ETH: 0.1.0
+-- ADC_BATTERY_ESTIMATION: 0.2.1
+-- ADC_MIC: 0.2.1
+-- Using esp_driver_i2c (SRC_FILE=i2c_bus_v2.c, REQ=esp_driver_i2c driver)
+-- I2C_BUS: 1.5.0
+-- BUTTON: 4.1.6
+-- ESP_LCD_AXS15231B: 1.0.1
+-- ESP_LCD_CO5300: 2.0.3
+-- ESP_LCD_GC9A01: 2.0.1
+-- ESP_LCD_ILI9341: 1.2.0
+-- ESP_LCD_PANEL_IO_ADDITIONS: 1.0.1
+-- ESP_LCD_SPD2010: 1.0.2
+-- ESP_LCD_ST7701: 1.1.5
+-- ESP_LCD_ST77916: 1.0.1
+-- ESP_LCD_ST7796: 1.3.5
+-- LVGL version: 9.4.0
+-- ESP_MMAP_ASSETS: 1.4.0
+-- ESP_CAM_SENSOR: 1.5.2
+-- ESP_VIDEO: 1.3.1
+-- IOT_USBH_CDC: 3.0.0
+-- IOT_USBH_RNDIS: 0.3.1
+-- KNOB: 1.0.2
+-- Could NOT find PkgConfig (missing: PKG_CONFIG_EXECUTABLE) 
+-- ESP_EMOTE_EXPRESSION: 0.1.0
+-- Otto Emoji GIF Component: gifs only at /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/managed_components/txp666__otto-emoji-gif-component/gifs
+-- ESP_LCD_SH8601: 1.0.2
+-- Using assets file: /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/main/assets.bin
+-- Custom assets flash configured: /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/main/assets.bin -> assets partition
+-- Component idf::espressif2022__esp_emote_expression will be linked with -Wl,--whole-archive
+-- Component idf::main will be linked with -Wl,--whole-archive
+-- Components: 78__esp-ml307 78__esp-wifi-connect 78__esp_lcd_nv3023 78__uart-eth-modem 78__uart-uhci 78__xiaozhi-fonts app_update bootloader bootloader_support bt console cxx driver efuse esp-tls esp_adc esp_app_format esp_bootloader_format esp_coex esp_common esp_driver_ana_cmpr esp_driver_bitscrambler esp_driver_cam esp_driver_dac esp_driver_gpio esp_driver_gptimer esp_driver_i2c esp_driver_i2s esp_driver_isp esp_driver_jpeg esp_driver_ledc esp_driver_mcpwm esp_driver_parlio esp_driver_pcnt esp_driver_ppa esp_driver_rmt esp_driver_sdio esp_driver_sdm esp_driver_sdmmc esp_driver_sdspi esp_driver_spi esp_driver_tsens esp_driver_twai esp_driver_uart esp_driver_usb_serial_jtag esp_event esp_gdbstub esp_http_server esp_hw_support esp_lcd esp_mm esp_netif esp_netif_stack esp_partition esp_phy esp_pm esp_psram esp_ringbuf esp_rom esp_security esp_system esp_timer esp_vfs_console esp_wifi espressif2022__esp_emote_assets espressif2022__esp_emote_expression espressif2022__esp_emote_gfx espressif2022__image_player espressif__adc_battery_estimation espressif__adc_mic espressif__bmi270_sensor espressif__button espressif__cmake_utilities espressif__dl_fft espressif__esp-dsp espressif__esp-sr espressif__esp32-camera espressif__esp_audio_codec espressif__esp_audio_effects espressif__esp_cam_sensor espressif__esp_codec_dev espressif__esp_image_effects espressif__esp_io_expander espressif__esp_io_expander_tca9554 espressif__esp_io_expander_tca95xx_16bit espressif__esp_jpeg espressif__esp_lcd_axs15231b espressif__esp_lcd_co5300 espressif__esp_lcd_gc9a01 espressif__esp_lcd_ili9341 espressif__esp_lcd_panel_io_additions espressif__esp_lcd_spd2010 espressif__esp_lcd_st7701 espressif__esp_lcd_st77916 espressif__esp_lcd_st7796 espressif__esp_lcd_touch espressif__esp_lcd_touch_cst816s espressif__esp_lcd_touch_ft5x06 espressif__esp_lcd_touch_gt1151 espressif__esp_lcd_touch_gt911 espressif__esp_lvgl_port espressif__esp_mmap_assets espressif__esp_new_jpeg espressif__esp_sccb_intf espressif__esp_video espressif__freetype espressif__i2c_bus espressif__iot_eth espressif__iot_usbh_cdc espressif__iot_usbh_rndis espressif__knob espressif__led_strip espressif__usb_host_uvc esptool_py fatfs freertos hal heap http_parser json laride__heatshrink log lvgl__lvgl lwip main mbedtls mqtt newlib nvs_flash partition_table pthread sdmmc soc spi_flash spiffs tcp_transport tny-robotics__sh1106-esp-idf txp666__otto-emoji-gif-component usb vfs waveshare__custom_io_expander_ch32v003 waveshare__esp_lcd_sh8601 waveshare__esp_lcd_touch_cst9217 wear_levelling wpa_supplicant wvirgil123__sscma_client xtensa
+-- Component paths: /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/managed_components/78__esp-ml307 /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/managed_components/78__esp-wifi-connect /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/managed_components/78__esp_lcd_nv3023 /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/managed_components/78__uart-eth-modem /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/managed_components/78__uart-uhci /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/managed_components/78__xiaozhi-fonts /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/app_update /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/bootloader /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/bootloader_support /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/bt /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/console /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/cxx /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/driver /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/efuse /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/esp-tls /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/esp_adc /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/esp_app_format /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/esp_bootloader_format /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/esp_coex /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/esp_common /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/esp_driver_ana_cmpr /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/esp_driver_bitscrambler /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/esp_driver_cam /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/esp_driver_dac /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/esp_driver_gpio /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/esp_driver_gptimer /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/esp_driver_i2c /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/esp_driver_i2s /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/esp_driver_isp /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/esp_driver_jpeg /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/esp_driver_ledc /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/esp_driver_mcpwm /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/esp_driver_parlio /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/esp_driver_pcnt /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/esp_driver_ppa /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/esp_driver_rmt /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/esp_driver_sdio /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/esp_driver_sdm /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/esp_driver_sdmmc /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/esp_driver_sdspi /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/esp_driver_spi /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/esp_driver_tsens /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/esp_driver_twai /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/esp_driver_uart /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/esp_driver_usb_serial_jtag /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/esp_event /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/esp_gdbstub /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/esp_http_server /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/esp_hw_support /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/esp_lcd /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/esp_mm /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/esp_netif /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/esp_netif_stack /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/esp_partition /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/esp_phy /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/esp_pm /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/esp_psram /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/esp_ringbuf /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/esp_rom /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/esp_security /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/esp_system /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/esp_timer /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/esp_vfs_console /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/esp_wifi /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/managed_components/espressif2022__esp_emote_assets /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/managed_components/espressif2022__esp_emote_expression /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/managed_components/espressif2022__esp_emote_gfx /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/managed_components/espressif2022__image_player /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/managed_components/espressif__adc_battery_estimation /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/managed_components/espressif__adc_mic /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/managed_components/espressif__bmi270_sensor /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/managed_components/espressif__button /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/managed_components/espressif__cmake_utilities /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/managed_components/espressif__dl_fft /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/managed_components/espressif__esp-dsp /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/managed_components/espressif__esp-sr /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/managed_components/espressif__esp32-camera /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/managed_components/espressif__esp_audio_codec /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/managed_components/espressif__esp_audio_effects /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/managed_components/espressif__esp_cam_sensor /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/managed_components/espressif__esp_codec_dev /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/managed_components/espressif__esp_image_effects /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/managed_components/espressif__esp_io_expander /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/managed_components/espressif__esp_io_expander_tca9554 /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/managed_components/espressif__esp_io_expander_tca95xx_16bit /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/managed_components/espressif__esp_jpeg /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/managed_components/espressif__esp_lcd_axs15231b /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/managed_components/espressif__esp_lcd_co5300 /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/managed_components/espressif__esp_lcd_gc9a01 /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/managed_components/espressif__esp_lcd_ili9341 /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/managed_components/espressif__esp_lcd_panel_io_additions /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/managed_components/espressif__esp_lcd_spd2010 /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/managed_components/espressif__esp_lcd_st7701 /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/managed_components/espressif__esp_lcd_st77916 /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/managed_components/espressif__esp_lcd_st7796 /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/managed_components/espressif__esp_lcd_touch /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/managed_components/espressif__esp_lcd_touch_cst816s /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/managed_components/espressif__esp_lcd_touch_ft5x06 /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/managed_components/espressif__esp_lcd_touch_gt1151 /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/managed_components/espressif__esp_lcd_touch_gt911 /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/managed_components/espressif__esp_lvgl_port /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/managed_components/espressif__esp_mmap_assets /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/managed_components/espressif__esp_new_jpeg /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/managed_components/espressif__esp_sccb_intf /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/managed_components/espressif__esp_video /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/managed_components/espressif__freetype /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/managed_components/espressif__i2c_bus /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/managed_components/espressif__iot_eth /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/managed_components/espressif__iot_usbh_cdc /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/managed_components/espressif__iot_usbh_rndis /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/managed_components/espressif__knob /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/managed_components/espressif__led_strip /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/managed_components/espressif__usb_host_uvc /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/esptool_py /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/fatfs /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/freertos /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/hal /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/heap /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/http_parser /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/json /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/managed_components/laride__heatshrink /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/log /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/managed_components/lvgl__lvgl /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/lwip /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/main /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/mbedtls /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/mqtt /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/newlib /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/nvs_flash /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/partition_table /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/pthread /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/sdmmc /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/soc /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/spi_flash /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/spiffs /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/tcp_transport /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/managed_components/tny-robotics__sh1106-esp-idf /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/managed_components/txp666__otto-emoji-gif-component /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/usb /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/vfs /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/managed_components/waveshare__custom_io_expander_ch32v003 /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/managed_components/waveshare__esp_lcd_sh8601 /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/managed_components/waveshare__esp_lcd_touch_cst9217 /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/wear_levelling /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/wpa_supplicant /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/managed_components/wvirgil123__sscma_client /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/xtensa
+-- Configuring done (21.5s)
+-- Generating done (1.2s)
+-- Build files have been written to: /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/build
+[1/33] Generating ../../notification.ogg.S
+[2/33] Generating vi-VN language config
+Processing language: vi-VN
+Input file path: /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/main/assets/locales/vi-VN/language.json
+Output file path: /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/main/assets/lang_config.h
+Loaded base language en-US with 52 strings
+Language vi-VN string statistics:
+  - Base language (en-US): 52 strings
+  - User language: 52 strings
+  - Total: 52 strings
+Language vi-VN sound statistics:
+  - Base language (en-US): 16 sounds
+  - User language: 16 sounds
+  - Common sounds: 27 sounds
+Successfully generated language config file: /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/main/assets/lang_config.h
+[3/33] Performing build step for 'bootloader'
+[1/1] cd /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/build/bootloader/esp-idf/esptool_py && /Users/judes/.espressif/python_env/idf5.5_py3.9_env/bin/python /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/partition_table/check_sizes.py --offset 0x8000 bootloader 0x0 /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/build/bootloader/bootloader.bin
+Bootloader binary size 0x4030 bytes. 0x3fd0 bytes (50%) free.
+[4/33] Building ASM object esp-idf/main/CMakeFiles/__idf_main.dir/__/__/notification.ogg.S.obj
+[5/33] Building CXX object esp-idf/main/CMakeFiles/__idf_main.dir/audio/bubu_interaction_voice.cc.obj
+[6/33] Building CXX object esp-idf/main/CMakeFiles/__idf_main.dir/audio/emotion_voice_map.cc.obj
+[7/33] Building CXX object esp-idf/main/CMakeFiles/__idf_main.dir/display/emote_display.cc.obj
+[8/33] Building CXX object esp-idf/main/CMakeFiles/__idf_main.dir/display/oled_display.cc.obj
+[9/33] Building CXX object esp-idf/main/CMakeFiles/__idf_main.dir/display/display.cc.obj
+[10/33] Building CXX object esp-idf/main/CMakeFiles/__idf_main.dir/display/lcd_display.cc.obj
+[11/33] Building CXX object esp-idf/main/CMakeFiles/__idf_main.dir/message_board.cc.obj
+[12/33] Building CXX object esp-idf/main/CMakeFiles/__idf_main.dir/display/lvgl_display/lvgl_display.cc.obj
+In file included from /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/managed_components/espressif__esp_video/include/linux/videodev2.h:62,
+                 from /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/main/display/lvgl_display/jpg/image_to_jpeg.h:12,
+                 from /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/main/display/lvgl_display/lvgl_display.cc:14:
+/Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/managed_components/espressif__esp_video/include/linux/ioctl.h:54:9: warning: "_IO" redefined
+   54 | #define _IO(type,nr)        _IOC(_IOC_NONE,(type),(nr),0)
+      |         ^~~
+In file included from /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/lwip/include/lwip/sockets.h:8,
+                 from /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/lwip/port/esp32xx/include/sys/socket.h:15,
+                 from /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/main/audio/processors/audio_debugger.h:7,
+                 from /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/main/audio/audio_service.h:23,
+                 from /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/main/application.h:17,
+                 from /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/main/display/lvgl_display/lvgl_display.cc:10:
+/Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/lwip/lwip/src/include/lwip/sockets.h:419:9: note: this is the location of the previous definition
+  419 | #define _IO(x,y)        ((long)(IOC_VOID|((x)<<8)|(y)))
+      |         ^~~
+/Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/managed_components/espressif__esp_video/include/linux/ioctl.h:55:9: warning: "_IOR" redefined
+   55 | #define _IOR(type,nr,size)  _IOC(_IOC_READ,(type),(nr),(_IOC_TYPECHECK(size)))
+      |         ^~~~
+/Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/lwip/lwip/src/include/lwip/sockets.h:421:9: note: this is the location of the previous definition
+  421 | #define _IOR(x,y,t)     ((long)(IOC_OUT|((sizeof(t)&IOCPARM_MASK)<<16)|((x)<<8)|(y)))
+      |         ^~~~
+/Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/managed_components/espressif__esp_video/include/linux/ioctl.h:56:9: warning: "_IOW" redefined
+   56 | #define _IOW(type,nr,size)  _IOC(_IOC_WRITE,(type),(nr),(_IOC_TYPECHECK(size)))
+      |         ^~~~
+/Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/lwip/lwip/src/include/lwip/sockets.h:423:9: note: this is the location of the previous definition
+  423 | #define _IOW(x,y,t)     ((long)(IOC_IN|((sizeof(t)&IOCPARM_MASK)<<16)|((x)<<8)|(y)))
+      |         ^~~~
+[13/33] Building CXX object esp-idf/main/CMakeFiles/__idf_main.dir/reminder_system.cc.obj
+[14/33] Building CXX object esp-idf/main/CMakeFiles/__idf_main.dir/display/eye_display.cc.obj
+[15/33] Building CXX object esp-idf/main/CMakeFiles/__idf_main.dir/protocols/mqtt_protocol.cc.obj
+[16/33] No install step for 'bootloader'
+[17/33] Completed 'bootloader'
+[18/33] Building CXX object esp-idf/main/CMakeFiles/__idf_main.dir/protocols/websocket_protocol.cc.obj
+[19/33] Building CXX object esp-idf/main/CMakeFiles/__idf_main.dir/ota.cc.obj
+[20/33] Building CXX object esp-idf/main/CMakeFiles/__idf_main.dir/boards/common/board.cc.obj
+[21/33] Building CXX object esp-idf/main/CMakeFiles/__idf_main.dir/boards/common/dual_network_board.cc.obj
+[22/33] Building CXX object esp-idf/main/CMakeFiles/__idf_main.dir/boards/common/wifi_board.cc.obj
+[23/33] Building CXX object esp-idf/main/CMakeFiles/__idf_main.dir/boards/common/rndis_board.cc.obj
+[24/33] Building CXX object esp-idf/main/CMakeFiles/__idf_main.dir/application.cc.obj
+[25/33] Building CXX object esp-idf/main/CMakeFiles/__idf_main.dir/boards/esp32s3-1.28-round-i80/esp32s3_round_i80_board.cc.obj
+[26/33] Building CXX object esp-idf/main/CMakeFiles/__idf_main.dir/mcp_server.cc.obj
+[27/33] Linking C static library esp-idf/main/libmain.a
+[28/33] Generating esp-idf/esp_system/ld/sections.ld
+[29/33] Linking CXX executable xiaozhi.elf
+[30/33] Generating binary image from built executable
+esptool.py v4.12.dev1
+Creating esp32s3 image...
+Merged 2 ELF sections
+Successfully created esp32s3 image.
+Generated /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/build/xiaozhi.bin
+[31/33] cd /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/build/esp-idf/esptool_py && /Users/judes/.espressif/python_env/idf5.5_py3.9_env/bin/python /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/partition_table/check_sizes.py --offset 0x8000 partition --type app /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/build/partition_table/partition-table.bin /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/build/xiaozhi.bin
+xiaozhi.bin binary size 0x3675f0 bytes. Smallest app partition is 0x580000 bytes. 0x218a10 bytes (38%) free.
+[31/33] cd /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/esptool_py && /opt/homebrew/bin/cmake -D IDF_PATH=/Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf -D "SERIAL_TOOL=/Users/judes/.espressif/python_env/idf5.5_py3.9_env/bin/python;;/Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/esptool_py/esptool/esptool.py;--chip;esp32s3" -D "SERIAL_TOOL_ARGS=--before=default_reset;--after=hard_reset;write_flash;@flash_args" -D WORKING_DIRECTORY=/Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/build -P /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/esptool_py/run_serial_tool.cmake
+esptool.py --chip esp32s3 -p /dev/cu.usbmodem11201 -b 460800 --before=default_reset --after=hard_reset write_flash --flash_mode dio --flash_freq 80m --flash_size 16MB 0x0 bootloader/bootloader.bin 0x20000 xiaozhi.bin 0x8000 partition_table/partition-table.bin 0xd000 ota_data_initial.bin 0xb20000 ../main/assets.bin
+esptool.py v4.12.dev1
+Serial port /dev/cu.usbmodem11201
+Connecting...
+Chip is ESP32-S3 (QFN56) (revision v0.2)
+Features: WiFi, BLE, Embedded PSRAM 8MB (AP_3v3)
+Crystal is 40MHz
+USB mode: USB-Serial/JTAG
+MAC: b8:f8:62:f8:90:30
+Uploading stub...
+Running stub...
+Stub running...
+Changing baud rate to 460800
+Changed.
+Configuring flash size...
+Flash will be erased from 0x00000000 to 0x00004fff...
+Flash will be erased from 0x00020000 to 0x00387fff...
+Flash will be erased from 0x00008000 to 0x00008fff...
+Flash will be erased from 0x0000d000 to 0x0000efff...
+Flash will be erased from 0x00b20000 to 0x00ecffff...
+SHA digest in image updated
+Compressed 16432 bytes to 11413...
+Writing at 0x00000000... (100 %)
+Wrote 16432 bytes (11413 compressed) at 0x00000000 in 0.3 seconds (effective 376.8 kbit/s)...
+Hash of data verified.
+Compressed 3569136 bytes to 2125961...
+Writing at 0x00020000... (0 %)
+Writing at 0x0002b6f6... (1 %)
+Writing at 0x00039bb2... (2 %)
+Writing at 0x00046772... (3 %)
+Writing at 0x00053332... (3 %)
+Writing at 0x0005c8a5... (4 %)
+Writing at 0x0006304a... (5 %)
+Writing at 0x0006b6f4... (6 %)
+Writing at 0x00078711... (6 %)
+Writing at 0x000867a3... (7 %)
+Writing at 0x00093ef4... (8 %)
+Writing at 0x0009fc13... (9 %)
+Writing at 0x000a4152... (10 %)
+Writing at 0x000a84cc... (10 %)
+Writing at 0x000ac62f... (11 %)
+Writing at 0x000b0699... (12 %)
+Writing at 0x000b477f... (13 %)
+Writing at 0x000b87d3... (13 %)
+Writing at 0x000bc832... (14 %)
+Writing at 0x000c087b... (15 %)
+Writing at 0x000c4953... (16 %)
+Writing at 0x000c89a4... (16 %)
+Writing at 0x000cc9aa... (17 %)
+Writing at 0x000d0a01... (18 %)
+Writing at 0x000d4a0c... (19 %)
+Writing at 0x000d8a65... (20 %)
+Writing at 0x000dca4f... (20 %)
+Writing at 0x000e0ad7... (21 %)
+Writing at 0x000e4abb... (22 %)
+Writing at 0x000e8bbc... (23 %)
+Writing at 0x000eccc1... (23 %)
+Writing at 0x000f0d84... (24 %)
+Writing at 0x000f4e78... (25 %)
+Writing at 0x000f8ee3... (26 %)
+Writing at 0x000fcfe7... (26 %)
+Writing at 0x0010103f... (27 %)
+Writing at 0x00105117... (28 %)
+Writing at 0x00115657... (29 %)
+Writing at 0x0011e6a9... (30 %)
+Writing at 0x0012a0c6... (30 %)
+Writing at 0x0012fddf... (31 %)
+Writing at 0x001351b2... (32 %)
+Writing at 0x0013e841... (33 %)
+Writing at 0x00151730... (33 %)
+Writing at 0x001566a5... (34 %)
+Writing at 0x0015b3c6... (35 %)
+Writing at 0x00160423... (36 %)
+Writing at 0x00165bcd... (36 %)
+Writing at 0x0016ed11... (37 %)
+Writing at 0x0017798e... (38 %)
+Writing at 0x0018600e... (39 %)
+Writing at 0x0019b820... (40 %)
+Writing at 0x001a3f63... (40 %)
+Writing at 0x001a9875... (41 %)
+Writing at 0x001af9de... (42 %)
+Writing at 0x001b58db... (43 %)
+Writing at 0x001bc3b4... (43 %)
+Writing at 0x001c2a24... (44 %)
+Writing at 0x001c9588... (45 %)
+Writing at 0x001cf9ad... (46 %)
+Writing at 0x001d5c5b... (46 %)
+Writing at 0x001db243... (47 %)
+Writing at 0x001e1197... (48 %)
+Writing at 0x001e6f86... (49 %)
+Writing at 0x001eced8... (50 %)
+Writing at 0x001f3070... (50 %)
+Writing at 0x001f9146... (51 %)
+Writing at 0x001fe4c5... (52 %)
+Writing at 0x0020442e... (53 %)
+Writing at 0x0020b3b7... (53 %)
+Writing at 0x002274c7... (54 %)
+Writing at 0x00231c59... (55 %)
+Writing at 0x00236c59... (56 %)
+Writing at 0x0023bbb9... (56 %)
+Writing at 0x00240a9d... (57 %)
+Writing at 0x00245b4b... (58 %)
+Writing at 0x0024b025... (59 %)
+Writing at 0x002500f4... (60 %)
+Writing at 0x00255084... (60 %)
+Writing at 0x0025a9a3... (61 %)
+Writing at 0x002603e3... (62 %)
+Writing at 0x00265de6... (63 %)
+Writing at 0x0026b01e... (63 %)
+Writing at 0x00270ad7... (64 %)
+Writing at 0x00275f22... (65 %)
+Writing at 0x0027b2ee... (66 %)
+Writing at 0x002807b6... (66 %)
+Writing at 0x00286dd9... (67 %)
+Writing at 0x0028cf60... (68 %)
+Writing at 0x00292211... (69 %)
+Writing at 0x00297dba... (70 %)
+Writing at 0x0029dd00... (70 %)
+Writing at 0x002a37f8... (71 %)
+Writing at 0x002a8821... (72 %)
+Writing at 0x002adc59... (73 %)
+Writing at 0x002b2e70... (73 %)
+Writing at 0x002b8558... (74 %)
+Writing at 0x002bdff1... (75 %)
+Writing at 0x002c35b5... (76 %)
+Writing at 0x002c887c... (76 %)
+Writing at 0x002cdef1... (77 %)
+Writing at 0x002d35de... (78 %)
+Writing at 0x002d8926... (79 %)
+Writing at 0x002dda8d... (80 %)
+Writing at 0x002e2b71... (80 %)
+Writing at 0x002e8629... (81 %)
+Writing at 0x002edbfe... (82 %)
+Writing at 0x002f3159... (83 %)
+Writing at 0x002f862d... (83 %)
+Writing at 0x002fe173... (84 %)
+Writing at 0x0030371d... (85 %)
+Writing at 0x00308820... (86 %)
+Writing at 0x0030db0c... (86 %)
+Writing at 0x00315823... (87 %)
+Writing at 0x0031d093... (88 %)
+Writing at 0x003246c2... (89 %)
+Writing at 0x0032c7c5... (90 %)
+Writing at 0x00332453... (90 %)
+Writing at 0x00337ee6... (91 %)
+Writing at 0x0033d5ff... (92 %)
+Writing at 0x00342eaa... (93 %)
+Writing at 0x0034adbc... (93 %)
+Writing at 0x003563ff... (94 %)
+Writing at 0x0035cb6f... (95 %)
+Writing at 0x00362fb0... (96 %)
+Writing at 0x00368571... (96 %)
+Writing at 0x0036ed2e... (97 %)
+Writing at 0x00374d22... (98 %)
+Writing at 0x0037c871... (99 %)
+Writing at 0x00382b6c... (100 %)
+Wrote 3569136 bytes (2125961 compressed) at 0x00020000 in 28.7 seconds (effective 994.8 kbit/s)...
+Hash of data verified.
+Compressed 3072 bytes to 143...
+Writing at 0x00008000... (100 %)
+Wrote 3072 bytes (143 compressed) at 0x00008000 in 0.1 seconds (effective 380.1 kbit/s)...
+Hash of data verified.
+Compressed 8192 bytes to 31...
+Writing at 0x0000d000... (100 %)
+Wrote 8192 bytes (31 compressed) at 0x0000d000 in 0.1 seconds (effective 522.5 kbit/s)...
+Hash of data verified.
+Compressed 3865164 bytes to 3076065...
+Writing at 0x00b20000... (0 %)
+Writing at 0x00b26201... (1 %)
+Writing at 0x00b2ae0c... (1 %)
+Writing at 0x00b2fd67... (2 %)
+Writing at 0x00b35700... (2 %)
+Writing at 0x00b3afc2... (3 %)
+Writing at 0x00b40693... (3 %)
+Writing at 0x00b4513a... (4 %)
+Writing at 0x00b49bd4... (4 %)
+Writing at 0x00b4f286... (5 %)
+Writing at 0x00b53d31... (5 %)
+Writing at 0x00b58527... (6 %)
+Writing at 0x00b5d075... (6 %)
+Writing at 0x00b61ca8... (7 %)
+Writing at 0x00b66949... (7 %)
+Writing at 0x00b6b18b... (8 %)
+Writing at 0x00b6fc6c... (9 %)
+Writing at 0x00b747e0... (9 %)
+Writing at 0x00b79271... (10 %)
+Writing at 0x00b7ddd9... (10 %)
+Writing at 0x00b828d4... (11 %)
+Writing at 0x00b87570... (11 %)
+Writing at 0x00b8c252... (12 %)
+Writing at 0x00b90e21... (12 %)
+Writing at 0x00b957dd... (13 %)
+Writing at 0x00b9a276... (13 %)
+Writing at 0x00b9ed7b... (14 %)
+Writing at 0x00ba3868... (14 %)
+Writing at 0x00ba84cd... (15 %)
+Writing at 0x00bad20f... (15 %)
+Writing at 0x00bb2022... (16 %)
+Writing at 0x00bb6d60... (17 %)
+Writing at 0x00bbba97... (17 %)
+Writing at 0x00bc08cf... (18 %)
+Writing at 0x00bc5620... (18 %)
+Writing at 0x00bcb34c... (19 %)
+Writing at 0x00bd0bc9... (19 %)
+Writing at 0x00bd63c4... (20 %)
+Writing at 0x00bdbc8d... (20 %)
+Writing at 0x00be168d... (21 %)
+Writing at 0x00be70df... (21 %)
+Writing at 0x00beca12... (22 %)
+Writing at 0x00bf24e5... (22 %)
+Writing at 0x00bf746c... (23 %)
+Writing at 0x00bfc1cc... (23 %)
+Writing at 0x00c0104a... (24 %)
+Writing at 0x00c05ece... (25 %)
+Writing at 0x00c0a812... (25 %)
+Writing at 0x00c0f19f... (26 %)
+Writing at 0x00c13bd3... (26 %)
+Writing at 0x00c18621... (27 %)
+Writing at 0x00c1cfdf... (27 %)
+Writing at 0x00c2196d... (28 %)
+Writing at 0x00c2653f... (28 %)
+Writing at 0x00c2b0cd... (29 %)
+Writing at 0x00c32009... (29 %)
+Writing at 0x00c3801b... (30 %)
+Writing at 0x00c3e02e... (30 %)
+Writing at 0x00c441f8... (31 %)
+Writing at 0x00c4a2d9... (31 %)
+Writing at 0x00c503ea... (32 %)
+Writing at 0x00c55c34... (32 %)
+Writing at 0x00c5aef0... (33 %)
+Writing at 0x00c6019f... (34 %)
+Writing at 0x00c65588... (34 %)
+Writing at 0x00c6a1b7... (35 %)
+Writing at 0x00c6f10b... (35 %)
+Writing at 0x00c73db8... (36 %)
+Writing at 0x00c7883b... (36 %)
+Writing at 0x00c7d5b1... (37 %)
+Writing at 0x00c8252d... (37 %)
+Writing at 0x00c87541... (38 %)
+Writing at 0x00c8c58d... (38 %)
+Writing at 0x00c92538... (39 %)
+Writing at 0x00c9789a... (39 %)
+Writing at 0x00c9c548... (40 %)
+Writing at 0x00ca110d... (40 %)
+Writing at 0x00ca5cbf... (41 %)
+Writing at 0x00caa790... (42 %)
+Writing at 0x00caf271... (42 %)
+Writing at 0x00cb3e2e... (43 %)
+Writing at 0x00cb8c65... (43 %)
+Writing at 0x00cbda41... (44 %)
+Writing at 0x00cc2823... (44 %)
+Writing at 0x00cc777c... (45 %)
+Writing at 0x00ccc610... (45 %)
+Writing at 0x00cd158e... (46 %)
+Writing at 0x00cd6523... (46 %)
+Writing at 0x00cdb4bf... (47 %)
+Writing at 0x00ce0114... (47 %)
+Writing at 0x00ce4ac3... (48 %)
+Writing at 0x00ce959e... (48 %)
+Writing at 0x00cee76e... (49 %)
+Writing at 0x00cf3b54... (50 %)
+Writing at 0x00cf90e5... (50 %)
+Writing at 0x00cfdf5d... (51 %)
+Writing at 0x00d02f8d... (51 %)
+Writing at 0x00d07e87... (52 %)
+Writing at 0x00d0d383... (52 %)
+Writing at 0x00d12a22... (53 %)
+Writing at 0x00d17f51... (53 %)
+Writing at 0x00d1ca8c... (54 %)
+Writing at 0x00d21322... (54 %)
+Writing at 0x00d25c09... (55 %)
+Writing at 0x00d2a5af... (55 %)
+Writing at 0x00d2f334... (56 %)
+Writing at 0x00d34352... (56 %)
+Writing at 0x00d392ea... (57 %)
+Writing at 0x00d3e23d... (57 %)
+Writing at 0x00d42fce... (58 %)
+Writing at 0x00d47f64... (59 %)
+Writing at 0x00d4cf38... (59 %)
+Writing at 0x00d51e10... (60 %)
+Writing at 0x00d572bb... (60 %)
+Writing at 0x00d5be14... (61 %)
+Writing at 0x00d60a64... (61 %)
+Writing at 0x00d65d52... (62 %)
+Writing at 0x00d6ad96... (62 %)
+Writing at 0x00d6fb88... (63 %)
+Writing at 0x00d74ab3... (63 %)
+Writing at 0x00d79b07... (64 %)
+Writing at 0x00d7e9f6... (64 %)
+Writing at 0x00d83906... (65 %)
+Writing at 0x00d887ce... (65 %)
+Writing at 0x00d8d77d... (66 %)
+Writing at 0x00d9279b... (67 %)
+Writing at 0x00d977a7... (67 %)
+Writing at 0x00d9c409... (68 %)
+Writing at 0x00da0d6c... (68 %)
+Writing at 0x00da5a28... (69 %)
+Writing at 0x00daac7f... (69 %)
+Writing at 0x00dafc63... (70 %)
+Writing at 0x00db4b70... (70 %)
+Writing at 0x00db99ac... (71 %)
+Writing at 0x00dbeccd... (71 %)
+Writing at 0x00dc4038... (72 %)
+Writing at 0x00dc9391... (72 %)
+Writing at 0x00dce2d1... (73 %)
+Writing at 0x00dd3020... (73 %)
+Writing at 0x00dd7d76... (74 %)
+Writing at 0x00ddccfb... (75 %)
+Writing at 0x00de1d60... (75 %)
+Writing at 0x00de6da4... (76 %)
+Writing at 0x00deb8f8... (76 %)
+Writing at 0x00df0510... (77 %)
+Writing at 0x00df4f15... (77 %)
+Writing at 0x00df9b5a... (78 %)
+Writing at 0x00dfe847... (78 %)
+Writing at 0x00e0348b... (79 %)
+Writing at 0x00e080b8... (79 %)
+Writing at 0x00e0ce5a... (80 %)
+Writing at 0x00e11d20... (80 %)
+Writing at 0x00e16a37... (81 %)
+Writing at 0x00e1b1e5... (81 %)
+Writing at 0x00e1fb48... (82 %)
+Writing at 0x00e24df5... (82 %)
+Writing at 0x00e2a205... (83 %)
+Writing at 0x00e2f6b8... (84 %)
+Writing at 0x00e34cd1... (84 %)
+Writing at 0x00e39a4d... (85 %)
+Writing at 0x00e3e900... (85 %)
+Writing at 0x00e4321f... (86 %)
+Writing at 0x00e47c2a... (86 %)
+Writing at 0x00e4c5b6... (87 %)
+Writing at 0x00e50ff6... (87 %)
+Writing at 0x00e55d1a... (88 %)
+Writing at 0x00e5b6f1... (88 %)
+Writing at 0x00e5ffbd... (89 %)
+Writing at 0x00e64928... (89 %)
+Writing at 0x00e699f0... (90 %)
+Writing at 0x00e6f024... (90 %)
+Writing at 0x00e74558... (91 %)
+Writing at 0x00e795fc... (92 %)
+Writing at 0x00e7df1e... (92 %)
+Writing at 0x00e82903... (93 %)
+Writing at 0x00e8731f... (93 %)
+Writing at 0x00e8bc6b... (94 %)
+Writing at 0x00e90899... (94 %)
+Writing at 0x00e95437... (95 %)
+Writing at 0x00e9a1e1... (95 %)
+Writing at 0x00e9f19f... (96 %)
+Writing at 0x00ea42d3... (96 %)
+Writing at 0x00ea9143... (97 %)
+Writing at 0x00ead9d3... (97 %)
+Writing at 0x00eb2315... (98 %)
+Writing at 0x00eb6d70... (98 %)
+Writing at 0x00ebc7ea... (99 %)
+Writing at 0x00ec3051... (100 %)
+Wrote 3865164 bytes (3076065 compressed) at 0x00b20000 in 31.9 seconds (effective 969.1 kbit/s)...
+Hash of data verified.
+
+Leaving...
+Hard resetting via RTS pin...

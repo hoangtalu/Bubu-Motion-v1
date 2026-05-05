@@ -66,6 +66,7 @@ public:
     void Run();
 
     DeviceState GetDeviceState() const { return state_machine_.GetState(); }
+    bool IsProtocolReady() const { return protocol_ != nullptr; }
     int AddStateChangeListener(DeviceStateMachine::StateCallback cb) { return state_machine_.AddStateChangeListener(std::move(cb)); }
     void RemoveStateChangeListener(int id) { state_machine_.RemoveStateChangeListener(id); }
     bool IsVoiceDetected() const { return audio_service_.IsVoiceDetected(); }
@@ -146,6 +147,7 @@ private:
     std::unique_ptr<Protocol> protocol_;
     EventGroupHandle_t event_group_ = nullptr;
     esp_timer_handle_t clock_timer_handle_ = nullptr;
+    esp_timer_handle_t proactive_watchdog_timer_handle_ = nullptr;
     DeviceStateMachine state_machine_;
     ListeningMode listening_mode_ = kListeningModeAutoStop;
     AecMode aec_mode_ = kAecOff;
@@ -162,6 +164,14 @@ private:
     std::mutex proactive_mutex_;
     std::mutex response_policy_mutex_;
     std::string suppressed_hidden_stt_text_;
+    std::string pending_proactive_seed_prompt_;
+    std::string active_proactive_seed_prompt_;
+    std::string proactive_debug_session_id_;
+    uint64_t proactive_debug_window_until_ms_ = 0;
+    bool proactive_waiting_tts_start_ = false;
+    bool proactive_retry_pending_reconnect_ = false;
+    bool proactive_fallback_in_progress_ = false;
+    int proactive_retry_count_ = 0;
     bool pending_silent_command_reply_ = false;
     bool suppress_current_tts_reply_ = false;
     std::atomic<bool> last_vad_speaking_{false};
@@ -181,8 +191,14 @@ private:
     void HandleWakeWordDetectedEvent();
     void ContinueOpenAudioChannel(ListeningMode mode);
     void ContinueWakeWordInvoke(const std::string& wake_word);
-    void ContinueInitiateConversation(const std::string& seed_prompt);
+    void ContinueInitiateConversation();
     void CheckListeningInactivityTimeout();
+    void ArmProactiveWatchdog();
+    void StopProactiveWatchdogLocked();
+    void HandleProactiveWatchdogTimeout();
+    void HandleProactiveRetryLocked(const char* reason);
+    void HandleProactiveFallbackLocked(const char* reason);
+    void LogProactiveIncomingType(const char* type);
 
     // Activation task (runs in background)
     void ActivationTask();

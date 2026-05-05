@@ -1,4 +1,4 @@
-# Install script for directory: /Users/judes/Downloads/xiaozhi-main/esp/esp-idf/components/mbedtls/mbedtls/library
+# Install script for directory: /Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/components/mbedtls/mbedtls/library
 
 # Set the install prefix
 if(NOT DEFINED CMAKE_INSTALL_PREFIX)
@@ -38,20 +38,20 @@ if(NOT DEFINED CMAKE_OBJDUMP)
 endif()
 
 if(CMAKE_INSTALL_COMPONENT STREQUAL "Unspecified" OR NOT CMAKE_INSTALL_COMPONENT)
-  file(INSTALL DESTINATION "${CMAKE_INSTALL_PREFIX}/lib" TYPE STATIC_LIBRARY FILES "/Users/judes/Downloads/xiaozhi-main/xiaozhi-doremon/xiaozhi-esp32/build/esp-idf/mbedtls/mbedtls/library/libmbedcrypto.a")
+  file(INSTALL DESTINATION "${CMAKE_INSTALL_PREFIX}/lib" TYPE STATIC_LIBRARY FILES "/Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/build/esp-idf/mbedtls/mbedtls/library/libmbedcrypto.a")
 endif()
 
 if(CMAKE_INSTALL_COMPONENT STREQUAL "Unspecified" OR NOT CMAKE_INSTALL_COMPONENT)
-  file(INSTALL DESTINATION "${CMAKE_INSTALL_PREFIX}/lib" TYPE STATIC_LIBRARY FILES "/Users/judes/Downloads/xiaozhi-main/xiaozhi-doremon/xiaozhi-esp32/build/esp-idf/mbedtls/mbedtls/library/libmbedx509.a")
+  file(INSTALL DESTINATION "${CMAKE_INSTALL_PREFIX}/lib" TYPE STATIC_LIBRARY FILES "/Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/build/esp-idf/mbedtls/mbedtls/library/libmbedx509.a")
 endif()
 
 if(CMAKE_INSTALL_COMPONENT STREQUAL "Unspecified" OR NOT CMAKE_INSTALL_COMPONENT)
-  file(INSTALL DESTINATION "${CMAKE_INSTALL_PREFIX}/lib" TYPE STATIC_LIBRARY FILES "/Users/judes/Downloads/xiaozhi-main/xiaozhi-doremon/xiaozhi-esp32/build/esp-idf/mbedtls/mbedtls/library/libmbedtls.a")
+  file(INSTALL DESTINATION "${CMAKE_INSTALL_PREFIX}/lib" TYPE STATIC_LIBRARY FILES "/Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/build/esp-idf/mbedtls/mbedtls/library/libmbedtls.a")
 endif()
 
 string(REPLACE ";" "\n" CMAKE_INSTALL_MANIFEST_CONTENT
        "${CMAKE_INSTALL_MANIFEST_FILES}")
 if(CMAKE_INSTALL_LOCAL_ONLY)
-  file(WRITE "/Users/judes/Downloads/xiaozhi-main/xiaozhi-doremon/xiaozhi-esp32/build/esp-idf/mbedtls/mbedtls/library/install_local_manifest.txt"
+  file(WRITE "/Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/build/esp-idf/mbedtls/mbedtls/library/install_local_manifest.txt"
      "${CMAKE_INSTALL_MANIFEST_CONTENT}")
 endif()

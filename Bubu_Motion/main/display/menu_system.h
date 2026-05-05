@@ -10,7 +10,8 @@ enum MenuState {
     MENU_FEEDING,
     MENU_CONNECT_OPEN,
     MENU_KEYBOARD_OPEN,
-    MENU_MESSAGE_OPEN,
+    MENU_REMINDERS_OPEN,
+    MENU_REMINDER_DETAIL_OPEN,
     MENU_STATS_OPEN,
     MENU_OPTIONS_OPEN,
     MENU_GAMES_OPEN,
@@ -27,7 +28,7 @@ enum MenuState {
 enum MenuItem {
     MENU_CARE,
     MENU_CONNECT,
-    MENU_MESSAGE,
+    MENU_REMINDERS,
     MENU_NOTES,
     MENU_SETTINGS,
     MENU_ITEM_COUNT
@@ -68,8 +69,14 @@ bool HandleKeyboardTap(uint16_t x, uint16_t y);
 void CloseConnectToMenu();
 void CloseKeyboardToConnect();
 
-// Message
-void CloseMessageToMenu();
+// Reminders
+void SelectRemindersNext();
+void SelectRemindersPrev();
+void ActivateRemindersSelected();
+void CloseRemindersToMenu();
+void CloseReminderDetailToReminders();
+void RemindersDetailNext();
+void RemindersDetailPrev();
 
 // Stats
 void ShowStats();
@@ -133,6 +140,7 @@ bool IsTapOnStatsTitle(uint16_t x, uint16_t y);
 bool IsTapOnStatsNav(uint16_t x, uint16_t y);
 bool IsTapOnSleepSelected(uint16_t x, uint16_t y);
 bool IsTapOnNotesSelected(uint16_t x, uint16_t y);
+bool IsTapOnRemindersSelected(uint16_t x, uint16_t y);
 
 // Clean animation trigger
 void StartCleanAnimation();

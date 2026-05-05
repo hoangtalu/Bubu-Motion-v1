@@ -1,6 +1,7 @@
 #include "protocol.h"
 
 #include <esp_log.h>
+#include <esp_timer.h>
 #include <memory>
 
 #define TAG "Protocol"
@@ -16,6 +17,30 @@ std::string BuildListenDetectMessage(const std::string& session_id, const std::s
     cJSON_AddStringToObject(root.get(), "session_id", session_id.c_str());
     cJSON_AddStringToObject(root.get(), "type", "listen");
     cJSON_AddStringToObject(root.get(), "state", "detect");
+    cJSON_AddStringToObject(root.get(), "text", text.c_str());
+
+    char* json = cJSON_PrintUnformatted(root.get());
+    if (json == nullptr) {
+        return {};
+    }
+
+    std::string message(json);
+    cJSON_free(json);
+    return message;
+}
+
+std::string BuildHiddenTextPromptMessage(const std::string& session_id, const std::string& text) {
+    std::unique_ptr<cJSON, decltype(&cJSON_Delete)> root(cJSON_CreateObject(), cJSON_Delete);
+    if (!root) {
+        return {};
+    }
+
+    cJSON_AddStringToObject(root.get(), "session_id", session_id.c_str());
+    cJSON_AddStringToObject(root.get(), "type", "listen");
+    cJSON_AddStringToObject(root.get(), "state", "start");
+    cJSON_AddStringToObject(root.get(), "mode", "auto");
+    cJSON_AddStringToObject(root.get(), "source", "proactive_hidden_prompt");
+    cJSON_AddBoolToObject(root.get(), "hidden", true);
     cJSON_AddStringToObject(root.get(), "text", text.c_str());
 
     char* json = cJSON_PrintUnformatted(root.get());
@@ -82,8 +107,11 @@ void Protocol::SendWakeWordDetected(const std::string& wake_word) {
 }
 
 void Protocol::SendHiddenTextPrompt(const std::string& text) {
-    auto message = BuildListenDetectMessage(session_id_, text);
+    auto message = BuildHiddenTextPromptMessage(session_id_, text);
     if (!message.empty()) {
+        const uint32_t now_ms = esp_log_timestamp();
+        ESP_LOGI(TAG, "Hidden seed tx now_ms=%u json=%s",
+                 static_cast<unsigned>(now_ms), message.c_str());
         SendText(message);
     }
 }

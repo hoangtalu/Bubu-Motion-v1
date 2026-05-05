@@ -1,4 +1,4 @@
-/* * Data converted from /Users/judes/Downloads/xiaozhi-main/xiaozhi-doremon/xiaozhi-esp32/managed_components/78__esp-wifi-connect/assets/wifi_configuration_done.html
+/* * Data converted from /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/managed_components/78__esp-wifi-connect/assets/wifi_configuration_done.html
  * (null byte appended)
  */
 .data

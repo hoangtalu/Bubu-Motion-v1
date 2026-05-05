@@ -3,7 +3,7 @@ set(CMAKE_HOST_SYSTEM_NAME "Darwin")
 set(CMAKE_HOST_SYSTEM_VERSION "25.4.0")
 set(CMAKE_HOST_SYSTEM_PROCESSOR "arm64")
 
-include("/Users/judes/Downloads/xiaozhi-main/esp/esp-idf/tools/cmake/toolchain-esp32s3.cmake")
+include("/Users/judes/Documents/Arduino/Bubu_Motion_V1/esp/esp-idf/tools/cmake/toolchain-esp32s3.cmake")
 
 set(CMAKE_SYSTEM "Generic")
 set(CMAKE_SYSTEM_NAME "Generic")

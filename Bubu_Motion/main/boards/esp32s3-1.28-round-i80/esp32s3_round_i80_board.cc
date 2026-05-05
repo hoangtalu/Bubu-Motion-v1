@@ -3,11 +3,13 @@
 #include "audio/codecs/no_audio_codec.h"
 #include "display/eye_display.h"
 #include "display/menu_system.h"
+#include "message_board.h"
 #include "application.h"
 #include "button.h"
 #include "config.h"
 #include "i2c_device.h"
 #include "qmi8658.h"
+#include "reminder_system.h"
 #include "assets/lang_config.h"
 #include <esp_log.h>
 #include <esp_vfs_fat.h>
@@ -398,6 +400,23 @@ private:
         auto display = GetDisplay();
         auto eye_display = dynamic_cast<EyeDisplay*>(display);
 
+        int32_t dismiss_reminder_id = 0;
+        if (MessageBoard::HandleTap(static_cast<uint16_t>(x), static_cast<uint16_t>(y),
+                                    &dismiss_reminder_id)) {
+            if (dismiss_reminder_id > 0) {
+                std::string error;
+                if (!ReminderSystem::Dismiss(dismiss_reminder_id, &error)) {
+                    ESP_LOGW(TAG, "Message board dismiss failed for reminder id=%d: %s",
+                             static_cast<int>(dismiss_reminder_id), error.c_str());
+                } else {
+                    ESP_LOGI(TAG, "Message board dismissed reminder id=%d",
+                             static_cast<int>(dismiss_reminder_id));
+                }
+            }
+            ESP_LOGI(TAG, "Tap consumed by message board");
+            return;
+        }
+
         if (MenuSystem::IsFeedingAnimationActive() && MenuSystem::HandleFeedingAnimationTap()) {
             ESP_LOGI(TAG, "Tap consumed: skip feeding animation");
             return;
@@ -453,6 +472,26 @@ private:
                         if (MenuSystem::HandleSettingsTap(x, y)) {
                             ESP_LOGI(TAG, "Tap on settings item -> Activate");
                         }
+                        break;
+                    case MENU_REMINDERS_OPEN:
+                        if (MenuSystem::IsTapOnRemindersSelected(x, y)) {
+                            MenuSystem::ActivateCurrent();
+                            ESP_LOGI(TAG, "Tap on selected reminder -> open detail");
+                        }
+                        break;
+                    case MENU_REMINDER_DETAIL_OPEN:
+                        MenuSystem::ActivateCurrent();
+                        ESP_LOGI(TAG, "Tap on reminder detail -> back to reminders list");
+                        break;
+                    case MENU_NOTES_OPEN:
+                        if (MenuSystem::IsTapOnNotesSelected(x, y)) {
+                            MenuSystem::ActivateCurrent();
+                            ESP_LOGI(TAG, "Tap on selected note -> open detail");
+                        }
+                        break;
+                    case MENU_NOTE_DETAIL_OPEN:
+                        MenuSystem::ActivateCurrent();
+                        ESP_LOGI(TAG, "Tap on note detail -> back to notes list");
                         break;
                     case MENU_VOLUME_OPEN:
                         if (MenuSystem::HandleVolumeTap(x, y)) {
@@ -812,6 +851,10 @@ private:
                         case MENU_CARE_OPEN:
                         case MENU_CONNECT_OPEN:
                         case MENU_SETTINGS_OPEN:
+                        case MENU_REMINDERS_OPEN:
+                        case MENU_REMINDER_DETAIL_OPEN:
+                        case MENU_NOTES_OPEN:
+                        case MENU_NOTE_DETAIL_OPEN:
                         case MENU_VOLUME_OPEN:
                         case MENU_STATS_OPEN:
                             MenuSystem::ActivateCurrent();

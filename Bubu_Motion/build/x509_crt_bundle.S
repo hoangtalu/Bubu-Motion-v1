@@ -1,4 +1,4 @@
-/* * Data converted from /Users/judes/Downloads/xiaozhi-main/xiaozhi-doremon/xiaozhi-esp32/build/esp-idf/mbedtls/x509_crt_bundle
+/* * Data converted from /Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/build/esp-idf/mbedtls/x509_crt_bundle
  */
 .data
 #if !defined (__APPLE__) && !defined (__linux__)
