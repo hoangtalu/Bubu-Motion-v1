@@ -1,5 +1,6 @@
 #include "eye_display.h"
 #include "menu_system.h"
+#include "message_board.h"
 #include "lvgl_display/lvgl_theme.h"
 #include "application.h"
 #include "care_system.h"
@@ -171,6 +172,7 @@ void EyeDisplay::SetupUI() {
 
     // Initialize menu system (overlays on top of eyes)
     MenuSystem::Begin(this);
+    MessageBoard::Begin(this);
 
     ESP_LOGI(TAG, "EyeDisplay UI setup complete (black background + animated eyes + menu)");
 }
@@ -315,6 +317,8 @@ void EyeDisplay::ApplyEmotionInternal(const char* emotion, bool is_external) {
     const char* safe_emotion = (emotion != nullptr && emotion[0] != '\0') ? emotion : "neutral";
     if (is_external) {
         last_external_emotion_ms_ = GetNowMs();
+        care_overlay_emotion_.clear();
+        care_overlay_until_ms_ = 0;
     }
     current_eye_emotion_ = safe_emotion;
 
@@ -740,13 +744,88 @@ const char* EyeDisplay::SelectCareDrivenEmotion() const {
     return kCareEmotionTable.back().emotion;
 }
 
+const char* EyeDisplay::SelectOverlayEmotionForBase(const std::string& base_emotion) const {
+    if (!care_emotion_config_.overlay_enabled || care_emotion_config_.overlay_duration_ms == 0) {
+        return nullptr;
+    }
+    if ((esp_random() % 100U) >= care_emotion_config_.overlay_chance_pct) {
+        return nullptr;
+    }
+
+    struct OverlayWeight {
+        const char* emotion;
+        uint8_t weight;
+    };
+    const auto pick_weighted = [](const OverlayWeight* table, size_t count) -> const char* {
+        if (table == nullptr || count == 0) {
+            return nullptr;
+        }
+        uint32_t total = 0;
+        for (size_t i = 0; i < count; ++i) {
+            total += table[i].weight;
+        }
+        if (total == 0) {
+            return nullptr;
+        }
+        const uint32_t pick = esp_random() % total;
+        uint32_t acc = 0;
+        for (size_t i = 0; i < count; ++i) {
+            acc += table[i].weight;
+            if (pick < acc) {
+                return table[i].emotion;
+            }
+        }
+        return table[count - 1].emotion;
+    };
+
+    static constexpr std::array<OverlayWeight, 3> kHappyOverlays = {{
+        {"surprised", 45}, {"thinking", 35}, {"confused", 20},
+    }};
+    static constexpr std::array<OverlayWeight, 3> kSadOverlays = {{
+        {"thinking", 50}, {"confused", 35}, {"surprised", 15},
+    }};
+    static constexpr std::array<OverlayWeight, 3> kAngryOverlays = {{
+        {"confused", 45}, {"thinking", 40}, {"surprised", 15},
+    }};
+
+    const int mood = CareSystem::GetMood();
+    const int energy = CareSystem::GetEnergy();
+    if (energy < 25) {
+        return "thinking";
+    }
+    if (base_emotion == "happy") {
+        return pick_weighted(kHappyOverlays.data(), kHappyOverlays.size());
+    }
+    if (base_emotion == "sad") {
+        return pick_weighted(kSadOverlays.data(), kSadOverlays.size());
+    }
+    if (base_emotion == "angry") {
+        return pick_weighted(kAngryOverlays.data(), kAngryOverlays.size());
+    }
+    if (mood < 30) {
+        return "confused";
+    }
+    return "thinking";
+}
+
 void EyeDisplay::UpdateCareEmotionScheduler(uint64_t now_ms) {
     if (!ShouldRunCareEmotionScheduler()) {
         care_next_emotion_change_ms_ = 0;
+        care_overlay_until_ms_ = 0;
+        care_overlay_emotion_.clear();
+        return;
+    }
+
+    const uint64_t external_hold_until = last_external_emotion_ms_ + care_emotion_config_.external_override_ms;
+    if (now_ms < external_hold_until) {
+        care_next_emotion_change_ms_ = external_hold_until;
+        care_overlay_until_ms_ = 0;
+        care_overlay_emotion_.clear();
         return;
     }
 
     if (care_next_emotion_change_ms_ == 0) {
+        care_base_emotion_ = current_eye_emotion_;
         care_next_emotion_change_ms_ = now_ms + RandomRangeU32(
             care_emotion_config_.min_duration_ms,
             care_emotion_config_.max_duration_ms);
@@ -754,27 +833,42 @@ void EyeDisplay::UpdateCareEmotionScheduler(uint64_t now_ms) {
     }
 
     if (now_ms < care_next_emotion_change_ms_) {
-        return;
-    }
-
-    const uint64_t external_hold_until = last_external_emotion_ms_ + care_emotion_config_.external_override_ms;
-    if (now_ms < external_hold_until) {
-        care_next_emotion_change_ms_ = external_hold_until;
+        if (!care_overlay_emotion_.empty() && now_ms >= care_overlay_until_ms_) {
+            care_overlay_emotion_.clear();
+            care_overlay_until_ms_ = 0;
+            if (!care_base_emotion_.empty() && current_eye_emotion_ != care_base_emotion_) {
+                ApplyEmotionInternal(care_base_emotion_.c_str(), false);
+            }
+        }
         return;
     }
 
     const char* selected = SelectCareDrivenEmotion();
     if (selected != nullptr) {
         // Avoid long streaks of identical emotion.
-        if (current_eye_emotion_ == selected) {
+        if (care_base_emotion_ == selected) {
             const char* retry = SelectCareDrivenEmotion();
             if (retry != nullptr) {
                 selected = retry;
             }
         }
-        ApplyEmotionInternal(selected, false);
-        ESP_LOGD(TAG, "Care emotion pick: %s (H:%d M:%d E:%d C:%d)",
-                 selected,
+        care_base_emotion_ = selected;
+        care_overlay_emotion_.clear();
+        care_overlay_until_ms_ = 0;
+        ApplyEmotionInternal(care_base_emotion_.c_str(), false);
+
+        const char* overlay = SelectOverlayEmotionForBase(care_base_emotion_);
+        if (overlay != nullptr && overlay[0] != '\0') {
+            care_overlay_emotion_ = overlay;
+            care_overlay_until_ms_ = now_ms + care_emotion_config_.overlay_duration_ms;
+            if (care_overlay_emotion_ != care_base_emotion_) {
+                ApplyEmotionInternal(care_overlay_emotion_.c_str(), false);
+            }
+        }
+
+        ESP_LOGD(TAG, "Care emotion pick: base=%s overlay=%s (H:%d M:%d E:%d C:%d)",
+                 care_base_emotion_.c_str(),
+                 care_overlay_emotion_.empty() ? "-" : care_overlay_emotion_.c_str(),
                  CareSystem::GetHunger(),
                  CareSystem::GetMood(),
                  CareSystem::GetEnergy(),

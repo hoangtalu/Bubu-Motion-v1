@@ -115,6 +115,9 @@ private:
         bool enabled = true;
         uint32_t min_duration_ms = 1000;
         uint32_t max_duration_ms = 3000;
+        bool overlay_enabled = true;
+        uint32_t overlay_duration_ms = 1300;
+        uint8_t overlay_chance_pct = 45;
         uint32_t external_override_ms = 4000;
     };
 
@@ -130,7 +133,10 @@ private:
     static constexpr uint32_t kClockIdleTimeoutMs = 5 * 60 * 1000;
     CareEmotionConfig care_emotion_config_;
     uint64_t care_next_emotion_change_ms_ = 0;
+    uint64_t care_overlay_until_ms_ = 0;
     uint64_t last_external_emotion_ms_ = 0;
+    std::string care_base_emotion_ = "neutral";
+    std::string care_overlay_emotion_;
     std::string current_eye_emotion_ = "neutral";
 
     void CreateClockScreensaver(lv_obj_t* parent);
@@ -145,6 +151,7 @@ private:
     void UpdateCareEmotionScheduler(uint64_t now_ms);
     bool ShouldRunCareEmotionScheduler() const;
     const char* SelectCareDrivenEmotion() const;
+    const char* SelectOverlayEmotionForBase(const std::string& base_emotion) const;
     void ApplyEmotionInternal(const char* emotion, bool is_external);
     static uint64_t GetNowMs();
 

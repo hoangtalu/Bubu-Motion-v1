@@ -202,6 +202,7 @@ private:
     // Eye scale (happy grow effect)
     float eye_scale_        = 1.0f;
     float target_eye_scale_ = 1.0f;
+    float angry_bounce_off_y_ = 0.0f;
 
     // ---- Blink ----
     bool     blink_active_   = false;
@@ -323,6 +324,7 @@ private:
     // One-shot durations
     static constexpr uint32_t CONFUSED_DURATION_MS = 500;
     static constexpr uint32_t LAUGH_DURATION_MS    = 500;
+    static constexpr uint32_t ANGRY_BOUNCE_PERIOD_MS = 300;
 
     // IMU
     static constexpr float IMU_SENSITIVITY = 14.0f;
@@ -343,6 +345,7 @@ private:
     void UpdateBlink(uint32_t now_ms);
     void UpdateIdleLook(uint32_t now_ms);
     void UpdateCuriousMode();
+    void UpdateAngryBounce(uint32_t now_ms);
     void UpdateFlicker();
     void UpdateConfused(uint32_t now_ms);
     void UpdateLaugh(uint32_t now_ms);

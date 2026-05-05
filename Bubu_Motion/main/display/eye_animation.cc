@@ -597,6 +597,7 @@ void EyeAnimation::Update(uint32_t now_ms) {
     UpdateBlink(now_ms);
     UpdateIdleLook(now_ms);
     UpdateCuriousMode();
+    UpdateAngryBounce(now_ms);
     UpdateFlicker();
     UpdateConfused(now_ms);
     UpdateLaugh(now_ms);
@@ -766,6 +767,23 @@ void EyeAnimation::UpdateCuriousMode() {
     // When offset_x is positive (looking right), right eye is outer → boost right
     eye_l_h_offset_ = (off_x_ <= -CURIOUS_THRESHOLD) ? CURIOUS_H_BOOST : 0;
     eye_r_h_offset_ = (off_x_ >=  CURIOUS_THRESHOLD) ? CURIOUS_H_BOOST : 0;
+}
+
+// ---- Angry pulse: lively up/down movement while angry mood is active ----
+void EyeAnimation::UpdateAngryBounce(uint32_t now_ms) {
+    if (!angry_ || tired_ || skeptic_) {
+        angry_bounce_off_y_ = 0.0f;
+        return;
+    }
+
+    float phase = static_cast<float>(now_ms % ANGRY_BOUNCE_PERIOD_MS) /
+                  static_cast<float>(ANGRY_BOUNCE_PERIOD_MS);
+    float triangle_01 = (phase < 0.5f) ? (phase * 2.0f) : (2.0f - phase * 2.0f);
+    float signed_wave = triangle_01 * 2.0f - 1.0f;  // -1..1
+
+    // Match esp32-eyes intent: larger pulse for "angry", shallower for "annoyed".
+    float amplitude_px = 1.0f + (angry_lid_strength_ * 2.0f);
+    angry_bounce_off_y_ = signed_wave * amplitude_px;
 }
 
 // ---- Flicker: alternating ± offset each frame ----
@@ -1180,7 +1198,7 @@ void EyeAnimation::RenderFrame() {
 
     // Eye center (all offsets combined)
     int cx = screen_w_ / 2 + RoundToInt(off_x_ + touch_off_x_ + imu_off_x_) + flicker_off_x_;
-    int cy = screen_h_ / 2 + RoundToInt(off_y_ + bounce_y_ + touch_off_y_ + imu_off_y_) + flicker_off_y_;
+    int cy = screen_h_ / 2 + RoundToInt(off_y_ + bounce_y_ + touch_off_y_ + imu_off_y_ + angry_bounce_off_y_) + flicker_off_y_;
 
     // Eye Y positions (blink shifts top edge down)
     int left_base_top    = cy - left_eye_h / 2;
