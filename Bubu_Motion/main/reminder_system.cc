@@ -3,8 +3,6 @@
 #include "application.h"
 #include "confirmation_evaluator.h"
 #include "message_board.h"
-#include "prompt_library.h"
-#include "speaker_profile.h"
 #include "settings.h"
 
 #include <algorithm>
@@ -21,8 +19,6 @@ static const char* TAG = "ReminderSystem";
 static const char* kNamespace = "reminders";
 
 static constexpr size_t kMaxReminders = 32;
-static constexpr bool kEnableSpokenReminderFlow = false;
-
 std::mutex s_mutex;
 bool s_initialized = false;
 std::vector<ReminderSystem::Reminder> s_reminders;
@@ -97,25 +93,43 @@ bool SaveLocked(std::string* error_out) {
     }
 
     Settings settings(kNamespace, true);
-    settings.SetInt("count", static_cast<int32_t>(s_reminders.size()));
     settings.SetInt("next_id", s_next_id);
 
+    // Write the slots before the count, so a write that fails partway leaves a
+    // smaller-but-consistent list rather than a count pointing at empty slots.
+    size_t written = 0;
+    bool truncated = false;
     for (size_t i = 0; i < s_reminders.size(); ++i) {
         const auto normalized = NormalizeReminder(s_reminders[i], static_cast<int32_t>(i + 1));
         s_reminders[i] = normalized;
 
-        settings.SetInt(SlotKey('i', i), normalized.id);
-        settings.SetString(SlotKey('m', i), normalized.message);
-        settings.SetInt(SlotKey('h', i), normalized.target_hour);
-        settings.SetInt(SlotKey('n', i), normalized.target_minute);
-        settings.SetString(SlotKey('p', i), normalized.confirmation_phrase);
-        settings.SetInt(SlotKey('z', i), normalized.snooze_interval_min);
-        settings.SetInt(SlotKey('c', i), normalized.snooze_count);
-        settings.SetInt(SlotKey('s', i), static_cast<int>(normalized.state));
-        settings.SetString(SlotKey('t', i), normalized.target_speaker);
+        esp_err_t err = ESP_OK;
+        auto put = [&](esp_err_t e) { if (err == ESP_OK) err = e; };
+        put(settings.SetInt(SlotKey('i', i), normalized.id));
+        put(settings.SetString(SlotKey('m', i), normalized.message));
+        put(settings.SetInt(SlotKey('h', i), normalized.target_hour));
+        put(settings.SetInt(SlotKey('n', i), normalized.target_minute));
+        put(settings.SetString(SlotKey('p', i), normalized.confirmation_phrase));
+        put(settings.SetInt(SlotKey('z', i), normalized.snooze_interval_min));
+        put(settings.SetInt(SlotKey('c', i), normalized.snooze_count));
+        put(settings.SetInt(SlotKey('s', i), static_cast<int>(normalized.state)));
+        put(settings.SetString(SlotKey('t', i), normalized.target_speaker));
+
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to persist reminder %zu of %zu; truncating stored list",
+                     i + 1, s_reminders.size());
+            if (error_out != nullptr) {
+                *error_out = "failed to save reminders to flash";
+            }
+            truncated = true;
+            break;
+        }
+        ++written;
     }
 
-    for (size_t i = s_reminders.size(); i < kMaxReminders; ++i) {
+    settings.SetInt("count", static_cast<int32_t>(written));
+
+    for (size_t i = written; i < kMaxReminders; ++i) {
         settings.EraseKey(SlotKey('i', i));
         settings.EraseKey(SlotKey('m', i));
         settings.EraseKey(SlotKey('h', i));
@@ -127,7 +141,7 @@ bool SaveLocked(std::string* error_out) {
         settings.EraseKey(SlotKey('t', i));
     }
 
-    return true;
+    return !truncated;
 }
 
 bool ShouldEvaluateState(ReminderSystem::ReminderState state) {
@@ -153,43 +167,12 @@ int32_t FindActiveFiringReminderIdLocked() {
     return 0;
 }
 
-std::string ResolveReminderName(const ReminderSystem::Reminder& reminder) {
-    const std::string target = Trim(reminder.target_speaker);
-    if (!target.empty()) {
-        return target;
-    }
-
-    const std::string owner = SpeakerProfile::Identify();
-    if (owner != "unknown") {
-        return owner;
-    }
-    return "";
-}
-
 bool FireLocked(size_t index) {
     if (index >= s_reminders.size()) {
         return false;
     }
 
     auto& reminder = s_reminders[index];
-    bool spoken_started = false;
-    if (kEnableSpokenReminderFlow) {
-        PromptContext context;
-        context.name = ResolveReminderName(reminder);
-        context.reminder_message = reminder.message;
-        context.confirm_phrase = reminder.confirmation_phrase.empty()
-                                     ? kDefaultConfirmPhrase
-                                     : reminder.confirmation_phrase;
-
-        const std::string seed_prompt = PromptLibrary::Get(PromptCategory::kReminderFire, context);
-        if (!seed_prompt.empty()) {
-            spoken_started = Application::GetInstance().InitiateConversation(seed_prompt);
-        }
-        if (!spoken_started) {
-            ESP_LOGW(TAG, "Reminder %d spoken flow unavailable, using local message board only",
-                     static_cast<int>(reminder.id));
-        }
-    }
 
     reminder.state = ReminderSystem::ReminderState::kFiring;
     std::string save_error;
@@ -198,8 +181,8 @@ bool FireLocked(size_t index) {
                  save_error.c_str());
     }
     MessageBoard::OpenReminder(reminder.id, reminder.message, reminder.target_hour, reminder.target_minute);
-    ESP_LOGI(TAG, "Reminder fired: id=%d at %02d:%02d (spoken=%s)", static_cast<int>(reminder.id),
-             reminder.target_hour, reminder.target_minute, spoken_started ? "on" : "off");
+    ESP_LOGI(TAG, "Reminder fired: id=%d at %02d:%02d", static_cast<int>(reminder.id),
+             reminder.target_hour, reminder.target_minute);
     return true;
 }
 

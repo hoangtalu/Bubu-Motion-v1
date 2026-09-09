@@ -2,27 +2,26 @@
 
 #include <cstdint>
 #include "display/display.h"
+#include "screen_manager.h"
 
 enum MenuState {
     MENU_CLOSED,
     MENU_OPEN,
     MENU_CARE_OPEN,
-    MENU_FEEDING,
     MENU_CONNECT_OPEN,
     MENU_KEYBOARD_OPEN,
     MENU_REMINDERS_OPEN,
     MENU_REMINDER_DETAIL_OPEN,
     MENU_STATS_OPEN,
-    MENU_OPTIONS_OPEN,
     MENU_GAMES_OPEN,
     MENU_GAME_ACTIVE,
+    MENU_FORTUNE_OPEN,
     MENU_LEVEL_OPEN,
     MENU_NOTES_OPEN,
     MENU_NOTE_DETAIL_OPEN,
     MENU_SETTINGS_OPEN,
     MENU_VOLUME_OPEN,
-    MENU_EYE_EDITOR_OPEN,
-    MENU_SLEEP_OPEN
+    MENU_POMODORO_OPEN
 };
 
 enum MenuItem {
@@ -30,7 +29,9 @@ enum MenuItem {
     MENU_CONNECT,
     MENU_REMINDERS,
     MENU_NOTES,
+    MENU_POMODORO,
     MENU_SETTINGS,
+    MENU_FORTUNE,
     MENU_ITEM_COUNT
 };
 
@@ -44,9 +45,17 @@ void Open();
 void Close();
 
 // State queries
-bool IsOpen();
 bool IsAnyOpen();  // true if any menu/sub-panel is visible
+// True while a full-screen game owns input; callers suppress incidental
+// feedback (tap voice, idle nudges) during play.
+// True while the level-up overlay owns the screen.
+bool IsCelebrationActive();
+bool IsOpen();
 MenuState GetState();
+
+// ScreenId for the panel currently on screen. Only meaningful while a menu is
+// open; EyeDisplay owns the screen when the menu is closed.
+ScreenManager::ScreenId ActiveScreen();
 MenuItem GetSelected();
 
 // Main menu navigation
@@ -92,6 +101,18 @@ void OpenGamesMenu();
 void CloseGamesToStats();
 void StartTapTheGreens();
 void HandleGameFinished();
+bool HandleGameTap(uint16_t x, uint16_t y);
+void HandleGameLongPress();
+
+// Pomodoro (HỌC TẬP)
+void OpenPomodoro();
+void ClosePomodoroToMenu();
+bool HandlePomodoroTap(uint16_t x, uint16_t y);
+// Entry points for MCP. Both touch LVGL, so they must run on the main task --
+// callers on any other task hand them over with Application::Schedule.
+// focus_minutes snaps to the nearest preset (15 / 25 / 45).
+void StartPomodoroFromVoice(int focus_minutes);
+void StopPomodoro();
 
 // Level
 void CloseLevelToMenu();
@@ -102,10 +123,6 @@ bool HandleSettingsTap(uint16_t x, uint16_t y);
 bool HandleVolumeTap(uint16_t x, uint16_t y);
 void VolumeStep(bool increase);
 void VolumeBack();
-bool HandleEyeEditorTap(uint16_t x, uint16_t y);
-void EyeEditorCycleMode(bool forward);
-void EyeEditorApplyIncrement();
-void EyeEditorBack();
 
 // Sleep
 void SelectSleepNext();
@@ -122,12 +139,42 @@ void CloseNoteDetailToNotes();
 void NotesDetailNext();
 void NotesDetailPrev();
 
+// ---------------------------------------------------------------------------
+// Input entry points.
+//
+// These are the only functions input handling should need. Each takes a raw
+// user intent, resolves it against the current state internally, and reports
+// whether it was consumed. Callers must not switch on GetState() to decide
+// which per-screen handler to call -- that duplicates the state machine
+// outside this file and has to be updated in lockstep every time a screen is
+// added. Adding a screen should only require editing menu_system.cc.
+//
+// Each returns true if the input was consumed by the menu.
+// ---------------------------------------------------------------------------
+
+// A tap at a screen coordinate.
+bool HandleTap(uint16_t x, uint16_t y);
+
+// A long press. x/y are the touch point, or 0,0 for a physical button.
+// close_by_default controls the fallback for screens with no long-press
+// behaviour of their own: true closes the menu (touch gesture), false leaves
+// it untouched and returns false so the caller can do something else (the
+// power button, which opens Wi-Fi config from any state).
+bool HandleLongPress(uint16_t x, uint16_t y, bool close_by_default = true);
+
+// The confirm/select action (touch on the active item, or the power button).
+bool HandleActivate();
+
+// Directional navigation. forward=false is "previous"/up.
+bool HandleNavigate(bool forward);
+
 // Render (call from display update loop)
 void Render();
 
-// Feeding animation overlay
-bool IsFeedingAnimationActive();
-bool HandleFeedingAnimationTap();
+// Transient GIF overlay
+bool HandleCareAnimationTap();
+bool HandleCareAnimationScrub(int x, int y);
+void TriggerLevelUpAnimation(int level);
 
 // Hit-test helpers
 bool IsTapOnSelected(uint16_t x, uint16_t y);

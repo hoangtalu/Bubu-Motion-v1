@@ -66,7 +66,7 @@ bool Snooze(int32_t id, std::string* error_out = nullptr);
 // Dismiss active reminder by ID and persist immediately.
 bool Dismiss(int32_t id, std::string* error_out = nullptr);
 
-// Evaluate due reminders and trigger proactive reminder conversation when needed.
+// Evaluate due reminders and trigger local reminder UI when needed.
 void Tick();
 
 }  // namespace ReminderSystem

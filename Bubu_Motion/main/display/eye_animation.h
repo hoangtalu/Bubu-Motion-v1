@@ -31,6 +31,19 @@ public:
         Blink,
         Mischief,
     };
+
+    enum class LegacyEmotionMode : uint8_t {
+        None,
+        Love,
+        Cyclop,
+        Drunk,
+        Confuse,
+        Angry,
+        Furious,
+        BanhChung,
+        Deadpool,
+        Cry,
+    };
     using InteractionEventCallback = std::function<void(InteractionEvent)>;
 
     struct MischiefConfig {
@@ -63,6 +76,16 @@ public:
     void Init(lv_obj_t* parent, int screen_w, int screen_h);
     void SetVisible(bool visible);
 
+    // Render policy, driven by the active screen (see ScreenManager).
+    // fps == 0 pauses the render timer and hides the container, so both the CPU
+    // render and the LCD flush stop. static_pose freezes the idle float, bounce
+    // and flicker while leaving the sleep Z particles drifting.
+    void SetRenderPolicy(uint8_t fps, bool static_pose);
+    uint8_t GetRenderFps() const { return render_fps_; }
+
+    void StartHatching(uint32_t now_ms);
+    bool IsHatchingActive() const;
+
     // Touch
     void HandleTouch(int x, int y);
     bool IsTouchInsideEyes(int x, int y) const;
@@ -83,20 +106,24 @@ public:
     void SetEyeColor(uint8_t r, uint8_t g, uint8_t b);
     void SetLeftEyeColor(uint8_t r, uint8_t g, uint8_t b);
     void SetRightEyeColor(uint8_t r, uint8_t g, uint8_t b);
-    EyeShape GetBaseLeftShape() const;
-    EyeShape GetBaseRightShape() const;
+    void TriggerGamePlus(bool left_eye);
+    void SetGameMode(bool active);
+    bool IsGameMode() const { return game_mode_active_; }
+    void SetMoodColorAutoEnabled(bool enabled);
+    bool IsMoodColorAutoEnabled() const { return mood_color_auto_enabled_; }
     void SetBaseLeftShape(const EyeShape& shape);
     void SetBaseRightShape(const EyeShape& shape);
-    void PreviewLeftShape(const EyeShape& shape);
-    void PreviewRightShape(const EyeShape& shape);
-    void ClearPreviewToBase();
-    EyeBounds GetLeftEyeBounds() const;
-    EyeBounds GetRightEyeBounds() const;
     void SetMischiefEnabled(bool enabled);
     bool IsMischiefEnabled() const { return mischief_enabled_; }
     void SetMischiefConfig(const MischiefConfig& config);
     const MischiefConfig& GetMischiefConfig() const { return mischief_config_; }
     void TriggerMischief();
+    // Extends the current mischief cycle's Holding-phase duration to at
+    // least min_hold_ms, so the pose doesn't retreat while a voice line it
+    // just triggered is still playing. Takes effect once the Changing phase
+    // (the transition into the pose) finishes and Holding's duration is
+    // picked; a no-op if that has already happened for this cycle.
+    void ExtendMischiefHold(uint32_t min_hold_ms);
     bool ConsumePendingInteractionEvent(InteractionEvent event);
     void SetInteractionEventCallback(InteractionEventCallback callback);
 
@@ -119,22 +146,41 @@ public:
     void SetSweat(bool active);
     void SetSurprised(bool active);
     void SetSkeptic(bool active, bool left_eye = false);
+    void SetLegacyEmotionMode(LegacyEmotionMode mode);
     void SetTiredLidStrength(float strength);
     void SetAngryLidStrength(float strength);
     void SetSkepticLidStrength(float strength);
+    void SetSleepMode(bool active);
+    bool IsSleepMode() const { return sleep_mode_; }
 
     // One-shot animations
     void AnimConfused();   // horizontal shake for 500ms
     void AnimLaugh();      // vertical shake for 500ms
 
+    // Bathing — scrub-to-clean sequence driven by the care menu.
+    void StartBathing(uint32_t now_ms);
+    bool IsBathingActive() const { return bath_.active; }
+    bool HandleBathScrub(int x, int y);   // finger drag; true when consumed
+    bool HandleBathTap();                 // swallow taps for the duration
+    bool ConsumeBathCompleted();          // one-shot: credit cleanliness
+    void CancelBathing();
+    // Persistent grime shown between baths; driven by the cleanliness stat.
+    void SetDirtyLevel(int cleanliness);
+
+    // Feeding — tap-to-chomp sequence driven by the care menu.
+    // hunger scales the pacing; hunger >= kFeedFullThreshold plays the refusal branch.
+    void StartFeeding(uint32_t now_ms, int hunger);
+    bool IsFeedingActive() const { return feed_.active; }
+    bool HandleFeedTap(uint32_t now_ms);   // true when the tap was consumed
+    int ConsumeFeedBites();                // pending bites for the care system to credit
+
 private:
     struct SweatDrop {
-        float x_initial = 0.0f;
         float x         = 0.0f;
-        float y         = 2.0f;
-        float y_max     = 12.0f;
-        float w         = 1.0f;
-        float h         = 2.0f;
+        float y         = 0.0f;
+        float w         = 2.0f;
+        float h         = 3.0f;
+        float speed     = 1.0f;
     };
 
     struct EyePose {
@@ -153,11 +199,139 @@ private:
         Retreating,
     };
 
+    struct HatchRuntime {
+        bool active = false;
+        uint8_t phase = 1;
+        uint32_t start_ms = 0;
+        uint32_t phase_start_ms = 0;
+        uint32_t tap_bob_start_ms = 0;
+        uint32_t tap_bob_duration_ms = 0;
+        float tap_bob_amp = 0.0f;
+        uint32_t phase2_boost_until_ms = 0;
+        bool moving = false;
+        uint32_t move_start_ms = 0;
+        uint32_t move_duration_ms = 0;
+        uint32_t stop_until_ms = 0;
+        float pos_x = 0.0f;
+        float pos_y = 0.0f;
+        float move_start_x = 0.0f;
+        float move_start_y = 0.0f;
+        float move_target_x = 0.0f;
+        float move_target_y = 0.0f;
+        uint32_t twitch_start_ms = 0;
+        uint32_t twitch_duration_ms = 0;
+        float twitch_x = 0.0f;
+        float twitch_y = 0.0f;
+        bool blink_started = false;
+        uint32_t blink_start_ms = 0;
+    };
+
+    struct GamePlusFx {
+        bool active = false;
+        bool left_eye = true;
+        float start_x = 0.0f;
+        float start_y = 0.0f;
+        uint32_t start_ms = 0;
+    };
+
+    enum class BathPhase : uint8_t {
+        Enter,
+        Scrub,
+        Rinse,
+        Clean,
+        Exit,
+    };
+
+    struct FoamBlob {
+        bool active = false;
+        float x = 0.0f;
+        float y = 0.0f;
+        float vy = 0.0f;
+        uint8_t r = 6;
+    };
+
+    struct BathDroplet {
+        float x = 0.0f;
+        float y = 0.0f;
+        float speed = 1.0f;
+        uint8_t len = 6;
+    };
+
+    struct BathRuntime {
+        bool active = false;
+        BathPhase phase = BathPhase::Enter;
+        uint32_t start_ms = 0;
+        uint32_t phase_start_ms = 0;
+        uint32_t phase_duration_ms = 0;
+        uint32_t last_scrub_ms = 0;
+        float head_y = 0.0f;
+        float head_from_y = 0.0f;
+        float head_to_y = 0.0f;
+        // Scrub bookkeeping: accumulated finger travel drives progress.
+        float scrub_progress = 0.0f;
+        float foam_debt = 0.0f;
+        float last_x = 0.0f;
+        float last_y = 0.0f;
+        bool has_last = false;
+        uint8_t smudges_hidden = 0;
+        bool completed_pending = false;
+    };
+
+    enum class FeedPhase : uint8_t {
+        Approach,
+        Waiting,
+        Chomp,
+        Refuse,
+        Savor,
+        Exit,
+    };
+
+    struct FeedCrumb {
+        bool active = false;
+        float x = 0.0f;
+        float y = 0.0f;
+        float vx = 0.0f;
+        float vy = 0.0f;
+        uint8_t size = 2;
+        uint32_t start_ms = 0;
+    };
+
+    struct FeedRuntime {
+        bool active = false;
+        FeedPhase phase = FeedPhase::Approach;
+        uint32_t start_ms = 0;
+        uint32_t phase_start_ms = 0;
+        uint32_t phase_duration_ms = 0;
+        uint32_t auto_chomp_ms = 0;
+        uint8_t kibble_left = 6;
+        uint8_t bites_pending = 0;
+        bool refuse = false;
+        // Dish position: eases from off-screen bottom up to the hover pose.
+        float food_y = 0.0f;
+        float food_from_y = 0.0f;
+        float food_to_y = 0.0f;
+        float squash = 1.0f;
+        // Pacing / intensity, picked from hunger at StartFeeding.
+        uint32_t approach_ms = 500;
+        float shake_px = 3.0f;
+        float squint = 0.55f;
+        // Pre-feed state restored on exit.
+        bool prev_tired = false;
+        bool prev_angry = false;
+        bool prev_happy = false;
+        bool prev_idle = true;
+        int prev_gap = 10;
+    };
+
     // LVGL objects
     lv_obj_t*    container_   = nullptr;
     lv_obj_t*    canvas_      = nullptr;
     lv_color_t*  canvas_buf_  = nullptr;
     lv_timer_t*  anim_timer_  = nullptr;
+
+    // Render policy (see SetRenderPolicy). Defaults match the timer created in Init().
+    uint8_t render_fps_   = 30;
+    bool    static_pose_  = false;
 
     int screen_w_ = 240;
     int screen_h_ = 240;
@@ -203,6 +377,19 @@ private:
     float eye_scale_        = 1.0f;
     float target_eye_scale_ = 1.0f;
     float angry_bounce_off_y_ = 0.0f;
+    struct ZParticle {
+        bool active = false;
+        float x = 0.0f;
+        float y = 0.0f;
+        float start_x = 0.0f;
+        float start_y = 0.0f;
+        uint32_t start_ms = 0;
+        uint32_t duration_ms = 0;
+        float x_drift = 0.0f;
+    };
+    static constexpr int NUM_Z_PARTICLES = 4;
+    ZParticle z_particles_[NUM_Z_PARTICLES];
+    uint32_t next_z_spawn_ms_ = 0;
 
     // ---- Blink ----
     bool     blink_active_   = false;
@@ -226,6 +413,8 @@ private:
     bool surprised_ = false;
     bool skeptic_ = false;
     bool skeptic_left_eye_ = false;
+    bool sleep_mode_ = false;
+    LegacyEmotionMode legacy_emotion_mode_ = LegacyEmotionMode::None;
     float tired_lid_strength_ = 0.5f;
     float angry_lid_strength_ = 0.5f;
     float skeptic_lid_strength_ = 0.35f;
@@ -255,7 +444,8 @@ private:
 
     // ---- Sweat drops ----
     bool      sweat_active_ = false;
-    SweatDrop sweat_drops_[8];
+    static constexpr int kSweatDropCount = 30;
+    SweatDrop sweat_drops_[kSweatDropCount];
 
     // ---- Touch reaction ----
     float    touch_off_x_    = 0.0f, touch_off_y_    = 0.0f;
@@ -280,6 +470,8 @@ private:
     float r_tr_ = 255.0f, r_tg_ = 255.0f, r_tb_ = 255.0f;  // target
     uint8_t l_base_red_ = 255, l_base_green_ = 255, l_base_blue_ = 255;
     uint8_t r_base_red_ = 255, r_base_green_ = 255, r_base_blue_ = 255;
+    bool mood_color_auto_enabled_ = true;
+    bool game_mode_active_ = false;
     uint32_t color_last_ms_ = 0;
 
     // ---- Mischief Engine ----
@@ -290,6 +482,7 @@ private:
     uint32_t mischief_phase_start_ms_ = 0;
     uint32_t mischief_phase_duration_ms_ = 0;
     uint32_t mischief_next_cycle_ms_ = 0;
+    uint32_t mischief_min_hold_extension_ms_ = 0;
     EyePose mischief_from_left_;
     EyePose mischief_from_right_;
     EyePose mischief_to_left_;
@@ -297,10 +490,31 @@ private:
     bool pending_blink_event_ = false;
     bool pending_mischief_event_ = false;
     InteractionEventCallback interaction_event_callback_;
+    HatchRuntime hatch_;
 
     // ---- Touch hit-test boxes ----
     EyeBounds left_eye_box_, right_eye_box_;
     EyeBounds left_touch_box_, right_touch_box_;
+    static constexpr int kGamePlusFxCount = 6;
+    GamePlusFx game_plus_fx_[kGamePlusFxCount];
+
+    // ---- Bathing ----
+    static constexpr int kBathFoamCount = 14;
+    static constexpr int kBathDropletCount = 22;
+    static constexpr int kSmudgeMaxCount = 6;
+    BathRuntime bath_;
+    FoamBlob bath_foam_[kBathFoamCount];
+    BathDroplet bath_droplets_[kBathDropletCount];
+    uint8_t dirty_count_ = 0;
+
+    // ---- Feeding ----
+    static constexpr int kFeedCrumbCount = 8;
+    FeedRuntime feed_;
+    FeedCrumb feed_crumbs_[kFeedCrumbCount];
+    float feed_squint_px_ = 0.0f;   // extra bottom-lid mask added during a chomp
+    float feed_shake_y_ = 0.0f;     // vertical chomp shake added to the eye centre
+
+    void DrawGamePlusFx(lv_layer_t* layer, uint32_t now_ms);
 
     // ---- Constants ----
     static constexpr int   CLOSED_HEIGHT  = 6;
@@ -325,6 +539,50 @@ private:
     static constexpr uint32_t CONFUSED_DURATION_MS = 500;
     static constexpr uint32_t LAUGH_DURATION_MS    = 500;
     static constexpr uint32_t ANGRY_BOUNCE_PERIOD_MS = 300;
+    static constexpr uint32_t SLEEP_BOUNCE_PERIOD_MS = ANGRY_BOUNCE_PERIOD_MS * 2;
+    static constexpr uint32_t SLEEP_ZZZ_PERIOD_MS = 2200;
+    static constexpr int SLEEP_ZZZ_RISE_PX = 32;
+    static constexpr uint32_t HATCH_TOTAL_MS = 300000;
+    static constexpr uint32_t HATCH_PHASE1_MS = 60000;
+    static constexpr uint32_t HATCH_PHASE2_MS = 90000;
+    static constexpr uint32_t HATCH_PHASE3_MS = 120000;
+    static constexpr uint32_t HATCH_PHASE4_MS = 30000;
+    static constexpr int16_t HATCH_BASE_SIZE = 90;
+
+    // ---- Bathing ----
+    static constexpr int kBathHeadY = 22;             // showerhead resting Y
+    static constexpr int kBathHeadW = 54;
+    static constexpr int kBathHeadH = 12;
+    static constexpr float kBathScrubTarget = 500.0f; // px of finger travel
+    static constexpr float kBathFoamEveryPx = 40.0f;
+    static constexpr uint32_t kBathEnterMs = 400;
+    static constexpr uint32_t kBathRinseMs = 1200;
+    static constexpr uint32_t kBathCleanMs = 900;
+    static constexpr uint32_t kBathExitMs = 300;
+    static constexpr uint32_t kBathIdleAdvanceMs = 6000;
+    static constexpr uint32_t kBathHardCapMs = 20000;
+    // Grime thresholds (cleanliness -> smudge count)
+    static constexpr int kDirtyHeavy = 20;
+    static constexpr int kDirtyMedium = 40;
+    static constexpr int kDirtyLight = 60;
+
+    // ---- Feeding ----
+    static constexpr int kFeedKibbleCount = 6;
+    static constexpr int kFeedBiteCount = 3;          // 2 kibble per bite
+    static constexpr int kFeedFullThreshold = 85;     // at/above this Bubu refuses
+    static constexpr int kFeedStarvingThreshold = 30;
+    static constexpr int kFeedDishY = 196;            // dish top edge, screen coords
+    static constexpr int kFeedDishW = 62;
+    static constexpr int kFeedDishH = 20;
+    static constexpr int kFeedDishRadius = 8;
+    static constexpr int kFeedConvergedGap = 7;
+    static constexpr float kFeedEyeScale = 1.10f;
+    static constexpr uint32_t kFeedChompMs = 260;
+    static constexpr uint32_t kFeedRefuseMs = 900;
+    static constexpr uint32_t kFeedSavorMs = 900;
+    static constexpr uint32_t kFeedExitMs = 300;
+    static constexpr uint32_t kFeedCrumbLifeMs = 380;
+    static constexpr uint32_t kFeedHardCapMs = 12000;
 
     // IMU
     static constexpr float IMU_SENSITIVITY = 14.0f;
@@ -353,6 +611,28 @@ private:
     void UpdateEyeColor(uint32_t now_ms);
     void UpdateMoodColor();
     void UpdateImuOffset();
+    void UpdateSleepMode(uint32_t now_ms);
+    void HatchEnterPhase(uint8_t phase, uint32_t now_ms);
+    void HatchHandleTap(uint32_t now_ms);
+    void HatchUpdatePhase3(uint32_t now_ms);
+    void HatchFinish(uint32_t now_ms);
+    void UpdateHatching(uint32_t now_ms);
+    void BathEnterPhase(BathPhase phase, uint32_t now_ms);
+    void UpdateBathing(uint32_t now_ms);
+    void BathSpawnFoam(float x, float y);
+    void BathFinish();
+    void DrawBathShower(lv_layer_t* layer) const;
+    void DrawBathWater(lv_layer_t* layer) const;
+    void DrawBathFoam(lv_layer_t* layer) const;
+    void DrawSmudges(lv_layer_t* layer) const;
+    void FeedEnterPhase(FeedPhase phase, uint32_t now_ms);
+    void UpdateFeeding(uint32_t now_ms);
+    void FeedTakeBite(uint32_t now_ms);
+    void FeedSpawnCrumbs(uint32_t now_ms);
+    void FeedFinish();
+    void DrawFeedFood(lv_layer_t* layer) const;
+    void DrawFeedCrumbs(lv_layer_t* layer, uint32_t now_ms) const;
+    void DrawFeedSparkles(lv_layer_t* layer, uint32_t now_ms) const;
     void UpdateMischief(uint32_t now_ms);
     void ApplyMischiefPose(const EyePose& left_pose, const EyePose& right_pose);
     void SyncBasePoseTargets();
@@ -366,8 +646,24 @@ private:
     void StartMischiefCycle(uint32_t now_ms);
     void FinishMischiefCycle();
     void RenderFrame();
+    void RenderHatchingFrame(uint32_t now_ms);
+    void DrawHatchEgg(lv_layer_t* layer, float cx, float cy, float w, float h,
+                      float radius, float lobe, bool glow) const;
+    void DrawHatchEyes(lv_layer_t* layer, float cx, float cy, float split_t,
+                       float base_size, float base_radius,
+                       float blink_scale) const;
     void ScheduleNextBlink();
     void DrawSweatDrops(lv_layer_t* layer);
+    void DrawSleepZzz(lv_layer_t* layer, uint32_t now_ms, int anchor_y) const;
+    void DrawLegacyLove(lv_layer_t* layer, uint32_t now_ms) const;
+    void DrawLegacyCyclop(lv_layer_t* layer, uint32_t now_ms) const;
+    void DrawLegacyDrunk(lv_layer_t* layer, uint32_t now_ms) const;
+    void DrawLegacyConfuse(lv_layer_t* layer, uint32_t now_ms) const;
+    void DrawLegacyAngry(lv_layer_t* layer, uint32_t now_ms) const;
+    void DrawLegacyFurious(lv_layer_t* layer, uint32_t now_ms) const;
+    void DrawLegacyBanhChung(lv_layer_t* layer, uint32_t now_ms) const;
+    void DrawLegacyDeadpool(lv_layer_t* layer, uint32_t now_ms) const;
+    void DrawLegacyCry(lv_layer_t* layer, uint32_t now_ms) const;
 
     static void TimerCallback(lv_timer_t* timer);
 };

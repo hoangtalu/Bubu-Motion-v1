@@ -4,6 +4,7 @@
 #include "lcd_display.h"
 #include "eye_animation.h"
 #include "bubu_interaction_voice.h"
+#include "screen_manager.h"
 #include <memory>
 #include <string>
 
@@ -22,7 +23,6 @@ class EyeDisplay : public SpiLcdDisplay {
 public:
     using MischiefConfig = EyeAnimation::MischiefConfig;
     using EyeShape = EyeAnimation::EyeShape;
-    using EyeBounds = EyeAnimation::EyeBounds;
 
     EyeDisplay(esp_lcd_panel_io_handle_t io_handle,
                esp_lcd_panel_handle_t panel_handle,
@@ -51,9 +51,20 @@ public:
     // Handle raw touch coordinates directly
     virtual void HandleTouch(int x, int y) override;
     bool IsTouchOnEyes(int x, int y) const;
+    bool IsHatchingActive() const;
+    bool HandleHatchingTap(int x, int y);
     void NotifyUserInteraction();
+
+    // Re-derive which screen is active and publish it to ScreenManager, which
+    // applies the screen's render policy. Called from the main event loop after
+    // input handlers run and on the 1 Hz clock tick; cheap and idempotent.
+    void RefreshScreen() override;
+
     bool DismissClockScreensaver();
     bool IsClockScreensaverActive() const;
+    bool StartSleepMode();
+    void StopSleepMode();
+    bool IsSleepModeActive() const { return sleep_mode_active_; }
 
     // Feed IMU accelerometer data (in g) to drive real-time eye movement
     void SetImuAccel(float ax, float ay);
@@ -71,15 +82,11 @@ public:
     void SetEyeColor(uint8_t r, uint8_t g, uint8_t b);
     void SetLeftEyeColor(uint8_t r, uint8_t g, uint8_t b);
     void SetRightEyeColor(uint8_t r, uint8_t g, uint8_t b);
-    EyeShape GetBaseLeftEyeShape() const;
-    EyeShape GetBaseRightEyeShape() const;
+    void TriggerEyeGamePlus(bool left_eye);
+    void SetEyeGameMode(bool active);
+    void SetEyeMoodColorAuto(bool enabled);
     void SetBaseLeftEyeShape(const EyeShape& shape);
     void SetBaseRightEyeShape(const EyeShape& shape);
-    void PreviewLeftEyeShape(const EyeShape& shape);
-    void PreviewRightEyeShape(const EyeShape& shape);
-    void ClearEyePreviewToBase();
-    EyeBounds GetLeftEyeBounds() const;
-    EyeBounds GetRightEyeBounds() const;
     void SetEyeMischiefEnabled(bool enabled);
     bool IsEyeMischiefEnabled() const;
     void SetEyeMischiefConfig(const MischiefConfig& config);
@@ -110,11 +117,25 @@ public:
     void EyeAnimConfused();   // horizontal shake for 500ms
     void EyeAnimLaugh();      // vertical shake for 500ms
 
+    // Feeding (tap-to-chomp); pacing scales with the current hunger stat.
+    void StartFeeding();
+    bool IsFeedingActive() const;
+    bool HandleFeedTap();
+
+    // Bathing (scrub-to-clean).
+    void StartBathing();
+    bool IsBathingActive() const;
+    bool HandleBathScrub(int x, int y);
+    bool HandleBathTap();
+    void CancelBathing();
+
 private:
     struct CareEmotionConfig {
         bool enabled = true;
         uint32_t min_duration_ms = 1000;
         uint32_t max_duration_ms = 3000;
+        uint32_t legacy_min_duration_ms = 3000;
+        uint32_t legacy_max_duration_ms = 8000;
         bool overlay_enabled = true;
         uint32_t overlay_duration_ms = 1300;
         uint8_t overlay_chance_pct = 45;
@@ -135,17 +156,34 @@ private:
     uint64_t care_next_emotion_change_ms_ = 0;
     uint64_t care_overlay_until_ms_ = 0;
     uint64_t last_external_emotion_ms_ = 0;
+    uint64_t sleep_last_energy_tick_ms_ = 0;
     std::string care_base_emotion_ = "neutral";
     std::string care_overlay_emotion_;
     std::string current_eye_emotion_ = "neutral";
+    std::string sleep_resume_emotion_ = "neutral";
+    bool hatch_was_active_ = false;
+    bool hatch_marked_done_ = false;
+    bool sleep_mode_active_ = false;
+    uint8_t sleep_restore_brightness_ = 75;
+    // ---- Status chrome (top-of-screen state readout) ----
+    lv_obj_t* status_arc_ = nullptr;   // state indicator hugging the top bezel
+    lv_obj_t* bottom_icons_ = nullptr; // wifi / mute / battery row
+    lv_timer_t* status_chrome_timer_ = nullptr;
+    std::string status_base_text_;
+    bool status_busy_ = false;        // append animated waiting dots
+    uint8_t status_ellipsis_phase_ = 0;
 
     void CreateClockScreensaver(lv_obj_t* parent);
     void UpdateClockScreensaver(uint64_t now_ms);
     void UpdateClockLabels(uint64_t now_ms);
+    void UpdateSleepMode(uint64_t now_ms);
     void ShowClockScreensaver();
     void HideClockScreensaver();
     bool CanShowClockScreensaver() const;
     void UpdateMischiefEngineState();
+    ScreenManager::ScreenId DeriveScreen() const;
+    void ApplyScreenPolicy(ScreenManager::ScreenId screen);
+    int screen_listener_id_ = -1;
     void HandlePendingInteractionVoices();
     void MaybePlayInteractionVoice(BubuInteractionEvent event);
     void UpdateCareEmotionScheduler(uint64_t now_ms);
@@ -153,9 +191,27 @@ private:
     const char* SelectCareDrivenEmotion() const;
     const char* SelectOverlayEmotionForBase(const std::string& base_emotion) const;
     void ApplyEmotionInternal(const char* emotion, bool is_external);
+    void UpdateHatchingPersistence();
+  void DrainFeedBites();
+  void UpdateBathState();
+    void SetupStatusChrome();
+    void RenderStatusText();
+    void UpdateStatusArcColor();
+    void StatusChromeTick();
+    static void StatusChromeTimerCb(lv_timer_t* timer);
     static uint64_t GetNowMs();
 
     BubuInteractionVoice interaction_voice_;
+
+    static constexpr uint32_t kSleepIdleTimeoutMs = 15 * 60 * 1000;
+    static constexpr uint32_t kSleepEnergyTickMs = 60 * 1000;
+    static constexpr uint8_t kSleepBrightnessPct = 50;
+    static constexpr uint32_t kStatusChromeTickMs = 250;
+    static constexpr int kStatusArcSize = 210;   // radius ~103, clears the bezel
+    static constexpr int kStatusArcWidth = 4;
+    static constexpr int kStatusArcStart = 250;  // degrees; 270 = top of screen
+    static constexpr int kStatusArcEnd = 290;
+    static constexpr int kStatusBarTopY = 40;  // measured: keeps the row inside the bezel
 
 protected:
     virtual bool AllowIdleClockStatus() const override { return false; }

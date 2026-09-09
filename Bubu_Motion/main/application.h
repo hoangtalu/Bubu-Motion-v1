@@ -3,6 +3,7 @@
 
 #include <freertos/FreeRTOS.h>
 #include <freertos/event_groups.h>
+#include <freertos/queue.h>
 #include <freertos/task.h>
 #include <esp_timer.h>
 
@@ -41,6 +42,11 @@ enum AecMode {
     kAecOnServerSide,
 };
 
+struct AiChatQueueItem {
+    cJSON* root = nullptr;
+    uint64_t enqueued_ms = 0;
+};
+
 class Application {
 public:
     static Application& GetInstance() {
@@ -60,7 +66,7 @@ public:
 
     /**
      * Run the main event loop
-     * This function runs in the main task and never returns.
+     * This function runs on the main task and never returns.
      * It handles all events including network, state changes, and user interactions.
      */
     void Run();
@@ -114,12 +120,6 @@ public:
      */
     void EndConversation();
 
-    /**
-     * Start a proactive conversation without waiting for a wake word.
-     * The seed prompt is internal guidance and must stay hidden from the UI.
-     */
-    bool InitiateConversation(const std::string& seed_prompt);
-
     void Reboot();
     void WakeWordInvoke(const std::string& wake_word);
     bool UpgradeFirmware(const std::string& url, const std::string& version = "");
@@ -128,6 +128,8 @@ public:
     void SetAecMode(AecMode mode);
     AecMode GetAecMode() const { return aec_mode_; }
     void PlaySound(const std::string_view& sound);
+    void PlayOverlaySound(const std::string_view& sound);
+    void PlayEmotionalVoice(const std::string& emotion);
     void InterruptAudioPlaybackForUserInput();
     AudioService& GetAudioService() { return audio_service_; }
     
@@ -147,7 +149,6 @@ private:
     std::unique_ptr<Protocol> protocol_;
     EventGroupHandle_t event_group_ = nullptr;
     esp_timer_handle_t clock_timer_handle_ = nullptr;
-    esp_timer_handle_t proactive_watchdog_timer_handle_ = nullptr;
     DeviceStateMachine state_machine_;
     ListeningMode listening_mode_ = kListeningModeAutoStop;
     AecMode aec_mode_ = kAecOff;
@@ -161,22 +162,21 @@ private:
     bool play_popup_on_listening_ = false;  // Flag to play popup sound after state changes to listening
     int clock_ticks_ = 0;
     TaskHandle_t activation_task_handle_ = nullptr;
-    std::mutex proactive_mutex_;
+    TaskHandle_t ai_chat_task_handle_ = nullptr;
+    QueueHandle_t ai_chat_queue_ = nullptr;
     std::mutex response_policy_mutex_;
-    std::string suppressed_hidden_stt_text_;
-    std::string pending_proactive_seed_prompt_;
-    std::string active_proactive_seed_prompt_;
-    std::string proactive_debug_session_id_;
-    uint64_t proactive_debug_window_until_ms_ = 0;
-    bool proactive_waiting_tts_start_ = false;
-    bool proactive_retry_pending_reconnect_ = false;
-    bool proactive_fallback_in_progress_ = false;
-    int proactive_retry_count_ = 0;
     bool pending_silent_command_reply_ = false;
     bool suppress_current_tts_reply_ = false;
     std::atomic<bool> last_vad_speaking_{false};
     std::atomic<bool> listening_voice_detected_{false};
     std::atomic<uint64_t> listening_started_ms_{0};
+    std::atomic<uint64_t> listening_server_loading_ms_{0};
+    std::atomic<uint64_t> listening_diag_last_log_ms_{0};
+    std::atomic<uint32_t> ai_chat_drop_count_{0};
+    bool pending_ai_chat_mood_reward_ = false;
+    std::string bind_required_message_;
+    std::string bind_required_code_;
+    bool has_bind_required_payload_ = false;
 
 
     // Event handlers
@@ -191,23 +191,25 @@ private:
     void HandleWakeWordDetectedEvent();
     void ContinueOpenAudioChannel(ListeningMode mode);
     void ContinueWakeWordInvoke(const std::string& wake_word);
-    void ContinueInitiateConversation();
     void CheckListeningInactivityTimeout();
-    void ArmProactiveWatchdog();
-    void StopProactiveWatchdogLocked();
-    void HandleProactiveWatchdogTimeout();
-    void HandleProactiveRetryLocked(const char* reason);
-    void HandleProactiveFallbackLocked(const char* reason);
-    void LogProactiveIncomingType(const char* type);
+    void LogListeningDebugReport(uint64_t now_ms, const AudioDebugSnapshot& snapshot);
 
     // Activation task (runs in background)
     void ActivationTask();
 
     // Helper methods
+    void StartAiChatRuntime();
+    void EnqueueIncomingJson(const cJSON* root);
+    void AiChatRuntimeTask();
+    void ProcessIncomingJsonMessage(const cJSON* root, uint64_t queue_wait_ms);
     void CheckAssetsVersion();
     void CheckNewVersion();
     void InitializeProtocol();
+    void RewardMoodForAiChatUse();
     void ShowActivationCode(const std::string& code, const std::string& message);
+    void UpdateBindRequiredState(const std::string& message, const std::string& code);
+    void ClearBindRequiredState();
+    bool CanPlayIdleOnlySfx();
     void SetListeningMode(ListeningMode mode);
     ListeningMode GetDefaultListeningMode() const;
     

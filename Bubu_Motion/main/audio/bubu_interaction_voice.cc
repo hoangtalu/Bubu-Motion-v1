@@ -1,7 +1,35 @@
 #include "bubu_interaction_voice.h"
 
 #include "assets/lang_config.h"
+#include <array>
 #include <chrono>
+
+namespace {
+
+struct VoiceDuration {
+    std::string_view sound;
+    uint32_t duration_ms;
+};
+
+// Measured clip lengths (ffprobe) for the mischief mumbling/singing pool -
+// the only voices GetVoiceForEvent can return that are long enough to
+// outlast the mischief pose's own random hold (see GetOccasionalMumblingVoice
+// and MischiefConfig::min_stay_ms/max_stay_ms).
+const std::array<VoiceDuration, 8>& GetVoiceDurationTable() {
+    static const std::array<VoiceDuration, 8> table = {{
+        {Lang::Sounds::OGG_BUBU_MUMBLING_1, 4761},
+        {Lang::Sounds::OGG_BUBU_MUMBLING_2, 5571},
+        {Lang::Sounds::OGG_BUBU_MUMBLING_3, 4996},
+        {Lang::Sounds::OGG_BUBU_MUMBLING_4, 5571},
+        {Lang::Sounds::OGG_BUBU_SING1, 3246},
+        {Lang::Sounds::OGG_BUBU_SING2, 2697},
+        {Lang::Sounds::OGG_BUBU_SING3, 15314},
+        {Lang::Sounds::OGG_BUBU_SING4, 17091},
+    }};
+    return table;
+}
+
+}  // namespace
 
 BubuInteractionVoice::BubuInteractionVoice() {
     auto seed = std::chrono::high_resolution_clock::now().time_since_epoch().count();
@@ -42,16 +70,24 @@ std::string_view BubuInteractionVoice::GetOccasionalMumblingVoice() {
 void BubuInteractionVoice::MarkPlayed(BubuInteractionEvent event, uint64_t now_ms) {
     switch (event) {
         case BubuInteractionEvent::EyeTap:
-            break;
         case BubuInteractionEvent::Blink:
-            last_any_bubu_voice_ms_ = now_ms;
-            last_blink_voice_ms_ = now_ms;
             break;
         case BubuInteractionEvent::Mischief:
             last_any_bubu_voice_ms_ = now_ms;
             last_mischief_voice_ms_ = now_ms;
             break;
     }
+}
+
+uint32_t BubuInteractionVoice::GetVoiceDurationMs(std::string_view voice) const {
+    for (const auto& entry : GetVoiceDurationTable()) {
+        // Compare by pointer: each clip is a distinct embedded-file symbol,
+        // so identity (not content) is what tells them apart here.
+        if (entry.sound.data() == voice.data()) {
+            return entry.duration_ms;
+        }
+    }
+    return 0;
 }
 
 std::string_view BubuInteractionVoice::GetVoiceForEvent(BubuInteractionEvent event, uint64_t now_ms, bool allow_playback) {
@@ -61,20 +97,12 @@ std::string_view BubuInteractionVoice::GetVoiceForEvent(BubuInteractionEvent eve
 
     switch (event) {
         case BubuInteractionEvent::EyeTap:
-            return Lang::Sounds::OGG_BUBU_TAP;
+            // Tapping is silent by design; no voice line is associated with it.
+            return {};
 
         case BubuInteractionEvent::Blink:
-            if (!CooldownElapsed(now_ms, last_any_bubu_voice_ms_, kGlobalCooldownMs)) {
-                return {};
-            }
-            if (!CooldownElapsed(now_ms, last_blink_voice_ms_, kBlinkCooldownMs)) {
-                return {};
-            }
-            if (std::uniform_int_distribution<int>(0, 2)(rng_) != 0) {
-                return {};
-            }
-            MarkPlayed(event, now_ms);
-            return Lang::Sounds::OGG_BUBU_BLINK;
+            // Blinking is silent by design; no voice line is associated with it.
+            return {};
 
         case BubuInteractionEvent::Mischief:
             if (!CooldownElapsed(now_ms, last_any_bubu_voice_ms_, kGlobalCooldownMs)) {

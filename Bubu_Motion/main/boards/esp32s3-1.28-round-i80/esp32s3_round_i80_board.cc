@@ -3,13 +3,16 @@
 #include "audio/codecs/no_audio_codec.h"
 #include "display/eye_display.h"
 #include "display/menu_system.h"
+#include "screen_manager.h"
 #include "message_board.h"
 #include "application.h"
 #include "button.h"
 #include "config.h"
 #include "i2c_device.h"
 #include "qmi8658.h"
+#include "adc_battery_monitor.h"
 #include "reminder_system.h"
+#include "settings.h"
 #include "assets/lang_config.h"
 #include <esp_log.h>
 #include <esp_vfs_fat.h>
@@ -156,12 +159,14 @@ private:
     Qmi8658* imu_ = nullptr;
     esp_timer_handle_t touch_timer_ = nullptr;
     esp_timer_handle_t wifi_power_timer_ = nullptr;
+    AdcBatteryMonitor* battery_monitor_ = nullptr;
     sdmmc_card_t* sd_card_ = nullptr;
     bool sd_spi_initialized_ = false;
     bool sd_card_mounted_ = false;
     bool speaker_test_running_ = false;
     size_t speaker_test_file_index_ = 0;
     std::mutex speaker_test_mutex_;
+    std::mutex sim_battery_mutex_;
     // Touch gesture state (bubu_ota-style TAP/LONG_PRESS classifier)
     bool touch_active_ = false;
     int64_t touch_down_ms_ = 0;
@@ -172,12 +177,45 @@ private:
     bool long_press_fired_ = false;
     int64_t touch_last_read_ms_ = 0;  // Fix 1: release timeout tracking
 
+    int scrub_last_x_ = -1;
+    int scrub_last_y_ = -1;
+
     static constexpr int64_t TOUCH_LONG_PRESS_MS = 400;
     static constexpr int     TOUCH_TAP_MAX_DRIFT  = 35;
+    static constexpr int     TOUCH_SCRUB_MIN_DELTA = 4;   // px before a scrub sample is sent
     static constexpr int64_t TOUCH_TAP_MIN_MS     = 20;
     static constexpr int TOUCH_MAX_X = DISPLAY_WIDTH - 1;
     static constexpr int TOUCH_MAX_Y = DISPLAY_HEIGHT - 1;
     static constexpr size_t SPEAKER_TEST_MAX_FILE_BYTES = 2 * 1024 * 1024;
+    static constexpr int SIM_BATTERY_DEFAULT_RUNTIME_MIN = 9 * 60;
+    static constexpr int SIM_BATTERY_MIN_RUNTIME_MIN = 30;
+    static constexpr int64_t SIM_BATTERY_PERSIST_INTERVAL_US = 60LL * 1000000LL;
+    static constexpr int64_t SIM_BATTERY_REPORT_INTERVAL_US = 30LL * 1000000LL;
+    // Use main-board USB detect for charging/discharging status reporting.
+    static constexpr bool USE_MAINBOARD_USB_DET_CHARGE_STATE = true;
+    static constexpr int BATTERY_VALID_MIN_MV_1S = 2800;
+    static constexpr int BATTERY_VALID_MAX_MV_1S = 4350;
+    // Prefer adc_battery_estimation's own capacity (outlier-rejecting ADC filter +
+    // EMA low-pass on the percent + charge/discharge monotonicity, see
+    // adc_battery_estimation.c get_capacity()) over EstimateSingleCellPercentFromMv's
+    // bare instantaneous OCV lookup below. Flip to false to revert to the old
+    // raw-mV-only behavior if this misbehaves on hardware — no other code path
+    // changes, it only changes which already-computed value GetBatteryLevel() uses.
+    static constexpr bool USE_LIBRARY_BATTERY_CAPACITY_ESTIMATE = false;
+
+    int sim_battery_runtime_min_ = SIM_BATTERY_DEFAULT_RUNTIME_MIN;
+    float sim_battery_level_ = 100.0f;
+    int sim_battery_last_saved_level_ = 100;
+    int battery_last_valid_adc_level_ = -1;
+    int64_t sim_battery_last_update_us_ = 0;
+    int64_t sim_battery_last_persist_us_ = 0;
+    int sim_battery_last_reported_level_ = -1;
+    bool sim_battery_last_reported_charging_ = false;
+    bool sim_battery_last_reported_discharging_ = false;
+    bool sim_battery_last_reported_fallback_ = true;
+    esp_err_t sim_battery_last_reported_capacity_err_ = ESP_FAIL;
+    esp_err_t sim_battery_last_reported_voltage_err_ = ESP_FAIL;
+    int64_t sim_battery_last_report_us_ = 0;
 
     static bool HasAudioExtension(const std::string& path) {
         auto dot = path.find_last_of('.');
@@ -193,6 +231,107 @@ private:
     static std::string BaseName(const std::string& path) {
         auto pos = path.find_last_of('/');
         return pos == std::string::npos ? path : path.substr(pos + 1);
+    }
+
+    static int ClampPercent(int value) {
+        return std::max(0, std::min(100, value));
+    }
+
+    static bool IsValidSingleCellBatteryMv(int battery_mv) {
+        return battery_mv >= BATTERY_VALID_MIN_MV_1S && battery_mv <= BATTERY_VALID_MAX_MV_1S;
+    }
+
+    static int EstimateSingleCellPercentFromMv(int battery_mv) {
+        struct OcvPoint {
+            int mv;
+            int pct;
+        };
+        static constexpr OcvPoint kOcvPoints[] = {
+            {4160, 100},
+            {4070, 90},
+            {3990, 80},
+            {3900, 70},
+            {3820, 60},
+            {3720, 50},
+            {3610, 40},
+            {3530, 30},
+            {3380, 20},
+            {3200, 10},
+            {2850, 0},
+        };
+
+        if (battery_mv >= kOcvPoints[0].mv) {
+            return 100;
+        }
+        constexpr size_t kPointsCount = sizeof(kOcvPoints) / sizeof(kOcvPoints[0]);
+        if (battery_mv <= kOcvPoints[kPointsCount - 1].mv) {
+            return 0;
+        }
+
+        for (size_t i = 0; i + 1 < kPointsCount; ++i) {
+            const OcvPoint& hi = kOcvPoints[i];
+            const OcvPoint& lo = kOcvPoints[i + 1];
+            if (battery_mv <= hi.mv && battery_mv >= lo.mv) {
+                const int dv = hi.mv - lo.mv;
+                if (dv <= 0) {
+                    return ClampPercent(lo.pct);
+                }
+                const int dp = hi.pct - lo.pct;
+                const int num = (battery_mv - lo.mv) * dp;
+                return ClampPercent(lo.pct + (num + (dv / 2)) / dv);
+            }
+        }
+        return 0;
+    }
+
+    void InitializeSimulatedBattery() {
+        Settings settings("battery", true);
+        sim_battery_runtime_min_ = settings.GetInt("sim_runtime_min", SIM_BATTERY_DEFAULT_RUNTIME_MIN);
+        if (sim_battery_runtime_min_ < SIM_BATTERY_MIN_RUNTIME_MIN) {
+            sim_battery_runtime_min_ = SIM_BATTERY_MIN_RUNTIME_MIN;
+        }
+
+        sim_battery_last_saved_level_ = ClampPercent(settings.GetInt("sim_level", 100));
+        sim_battery_level_ = static_cast<float>(sim_battery_last_saved_level_);
+        sim_battery_last_update_us_ = esp_timer_get_time();
+        sim_battery_last_persist_us_ = sim_battery_last_update_us_;
+
+        ESP_LOGI(TAG, "Sim battery init: level=%d%% runtime=%d min",
+                 sim_battery_last_saved_level_, sim_battery_runtime_min_);
+    }
+
+    void SaveSimulatedBatteryLevelIfNeeded(int level, int64_t now_us) {
+        if (level == sim_battery_last_saved_level_) {
+            return;
+        }
+        if ((now_us - sim_battery_last_persist_us_) < SIM_BATTERY_PERSIST_INTERVAL_US) {
+            return;
+        }
+        Settings settings("battery", true);
+        settings.SetInt("sim_level", level);
+        sim_battery_last_saved_level_ = level;
+        sim_battery_last_persist_us_ = now_us;
+    }
+
+    void UpdateSimulatedBatteryLocked() {
+        const int64_t now_us = esp_timer_get_time();
+        if (sim_battery_last_update_us_ <= 0) {
+            sim_battery_last_update_us_ = now_us;
+            return;
+        }
+
+        const int64_t elapsed_us = now_us - sim_battery_last_update_us_;
+        if (elapsed_us <= 0) {
+            return;
+        }
+
+        const double runtime_us = static_cast<double>(sim_battery_runtime_min_) * 60.0 * 1000000.0;
+        const double drain = (100.0 * static_cast<double>(elapsed_us)) / runtime_us;
+        sim_battery_level_ = static_cast<float>(std::max(0.0, static_cast<double>(sim_battery_level_) - drain));
+        sim_battery_last_update_us_ = now_us;
+
+        const int level_int = ClampPercent(static_cast<int>(sim_battery_level_ + 0.5f));
+        SaveSimulatedBatteryLevelIfNeeded(level_int, now_us);
     }
 
     void ScheduleNotification(std::string message, int duration_ms = 2500) {
@@ -382,17 +521,21 @@ private:
         return display_tp;
     }
 
-    void HandleConversationTrigger() {
+    bool HandleConversationTrigger() {
         if (eye_display_) {
             eye_display_->NotifyUserInteraction();
+            if (eye_display_->IsSleepModeActive()) {
+                eye_display_->StopSleepMode();
+            }
         }
         auto& app = Application::GetInstance();
         auto state = app.GetDeviceState();
         if (state == kDeviceStateListening || state == kDeviceStateAudioTesting) {
             app.StopListening();
-            return;
+            return true;
         }
         app.StartListening();
+        return false;
     }
 
     // Dispatched on TAP (quick touch & release, drift ≤ 35px, duration ≥ 20ms)
@@ -417,115 +560,80 @@ private:
             return;
         }
 
-        if (MenuSystem::IsFeedingAnimationActive() && MenuSystem::HandleFeedingAnimationTap()) {
-            ESP_LOGI(TAG, "Tap consumed: skip feeding animation");
-            return;
+        using ScreenId = ScreenManager::ScreenId;
+        const ScreenId screen = ScreenManager::Current();
+
+        // Scripted care sequences own the canvas. They get the tap before the
+        // audio interrupt below, because a chomp or a scrub is interaction with
+        // the pet, not a request to stop what it is saying.
+        switch (screen) {
+        case ScreenId::Feeding:
+        case ScreenId::Bathing:
+        case ScreenId::Celebration:
+            if (MenuSystem::HandleCareAnimationTap()) {
+                ESP_LOGI(TAG, "Tap consumed by care animation");
+                return;
+            }
+            break;
+        default:
+            break;
         }
 
         Application::GetInstance().InterruptAudioPlaybackForUserInput();
 
-        const bool dismissed_screensaver = eye_display && eye_display->DismissClockScreensaver();
-        if (eye_display) {
-            eye_display->PlayTapVoice();
-        }
-
-        if (dismissed_screensaver) {
+        // Screens whose whole job is to be dismissed by the next touch.
+        switch (screen) {
+        case ScreenId::Clock:
+            if (eye_display) eye_display->DismissClockScreensaver();
             ESP_LOGI(TAG, "Touch dismissed clock screensaver");
             return;
+        case ScreenId::Sleep:
+            if (eye_display) eye_display->StopSleepMode();
+            ESP_LOGI(TAG, "Touch exited sleep mode");
+            return;
+        case ScreenId::Hatching:
+            if (eye_display) eye_display->HandleHatchingTap(x, y);
+            ESP_LOGI(TAG, "Touch consumed by hatching animation");
+            return;
+        default:
+            break;
         }
-        if (eye_display) {
+
+        // Games drive the eyes themselves; the pet's own tap reactions fight them.
+        const bool game_active =
+            screen == ScreenId::EyeTapGame || screen == ScreenId::CheckerGame;
+        if (!game_active && eye_display) {
+            eye_display->PlayTapVoice();
             eye_display->NotifyUserInteraction();
         }
 
-        if (MenuSystem::IsAnyOpen()) {
-            if (MenuSystem::IsTapOnPrevButton(x, y)) {
-                MenuSystem::NavigatePrev();
-                ESP_LOGI(TAG, "Tap on menu prev button");
-            } else if (MenuSystem::IsTapOnNextButton(x, y)) {
-                MenuSystem::NavigateNext();
-                ESP_LOGI(TAG, "Tap on menu next button");
-            } else {
-                switch (MenuSystem::GetState()) {
-                    case MENU_OPEN:
-                        if (MenuSystem::IsTapOnSelected(x, y)) {
-                            MenuSystem::ActivateSelected();
-                            ESP_LOGI(TAG, "Tap on selected item -> Activate");
-                        }
-                        break;
-                    case MENU_CARE_OPEN:
-                        if (MenuSystem::IsTapOnCareSelected(x, y)) {
-                            MenuSystem::ActivateCareSelected();
-                            ESP_LOGI(TAG, "Tap on selected care item -> Activate");
-                        }
-                        break;
-                    case MENU_CONNECT_OPEN:
-                        if (MenuSystem::HandleConnectTap(x, y)) {
-                            ESP_LOGI(TAG, "Tap on connect option -> Activate");
-                        }
-                        break;
-                    case MENU_KEYBOARD_OPEN:
-                        if (MenuSystem::HandleKeyboardTap(x, y)) {
-                            ESP_LOGI(TAG, "Tap on keyboard key");
-                        }
-                        break;
-                    case MENU_SETTINGS_OPEN:
-                        if (MenuSystem::HandleSettingsTap(x, y)) {
-                            ESP_LOGI(TAG, "Tap on settings item -> Activate");
-                        }
-                        break;
-                    case MENU_REMINDERS_OPEN:
-                        if (MenuSystem::IsTapOnRemindersSelected(x, y)) {
-                            MenuSystem::ActivateCurrent();
-                            ESP_LOGI(TAG, "Tap on selected reminder -> open detail");
-                        }
-                        break;
-                    case MENU_REMINDER_DETAIL_OPEN:
-                        MenuSystem::ActivateCurrent();
-                        ESP_LOGI(TAG, "Tap on reminder detail -> back to reminders list");
-                        break;
-                    case MENU_NOTES_OPEN:
-                        if (MenuSystem::IsTapOnNotesSelected(x, y)) {
-                            MenuSystem::ActivateCurrent();
-                            ESP_LOGI(TAG, "Tap on selected note -> open detail");
-                        }
-                        break;
-                    case MENU_NOTE_DETAIL_OPEN:
-                        MenuSystem::ActivateCurrent();
-                        ESP_LOGI(TAG, "Tap on note detail -> back to notes list");
-                        break;
-                    case MENU_VOLUME_OPEN:
-                        if (MenuSystem::HandleVolumeTap(x, y)) {
-                            ESP_LOGI(TAG, "Tap on volume control");
-                        }
-                        break;
-                    case MENU_EYE_EDITOR_OPEN:
-                        if (MenuSystem::HandleEyeEditorTap(x, y)) {
-                            ESP_LOGI(TAG, "Tap on eye editor control");
-                        }
-                        break;
-                    case MENU_STATS_OPEN:
-                        if (MenuSystem::IsTapOnStatsTitle(x, y)) {
-                            MenuSystem::ActivateCurrentOption();
-                            ESP_LOGI(TAG, "Tap on stats center -> Apply care action");
-                        }
-                        break;
-                    default:
-                        break;
-                }
-            }
-        } else {
-            // Layer 0: menu closed
-            bool on_eyes = eye_display && eye_display->IsTouchOnEyes(x, y);
+        switch (screen) {
+        case ScreenId::Boot:
+        case ScreenId::Main:
+        case ScreenId::Feeding:
+        case ScreenId::Bathing:
+        case ScreenId::Celebration: {
+            // The eyes own the screen: tap them to talk, tap around them for the menu.
+            const bool on_eyes = eye_display && eye_display->IsTouchOnEyes(x, y);
             if (on_eyes) {
-                // Eye tap -> trigger AI conversation (same path as talk button)
-                HandleConversationTrigger();
-                SetPowerSaveLevel(PowerSaveLevel::BALANCED);
+                const bool stop_requested = HandleConversationTrigger();
+                // Keep Wi-Fi in performance while waiting server-side loading/turn finalization.
+                SetPowerSaveLevel(stop_requested ? PowerSaveLevel::PERFORMANCE
+                                                 : PowerSaveLevel::BALANCED);
                 ResetWifiPowerTimer();
                 ESP_LOGI(TAG, "Eye tap -> toggle conversation");
             } else {
                 MenuSystem::Open();
                 ESP_LOGI(TAG, "Touch outside eyes → open menu");
             }
+            return;
+        }
+        default:
+            // Every remaining screen is a menu panel.
+            if (MenuSystem::HandleTap(x, y)) {
+                ESP_LOGI(TAG, "Tap consumed by menu");
+            }
+            return;
         }
     }
 
@@ -533,27 +641,45 @@ private:
     void DispatchLongPress(int x, int y) {
         Application::GetInstance().InterruptAudioPlaybackForUserInput();
 
-        if (eye_display_ && eye_display_->DismissClockScreensaver()) {
+        using ScreenId = ScreenManager::ScreenId;
+        const ScreenId screen = ScreenManager::Current();
+
+        switch (screen) {
+        case ScreenId::Clock:
+            if (eye_display_) eye_display_->DismissClockScreensaver();
             ESP_LOGI(TAG, "Long press dismissed clock screensaver");
             return;
+        case ScreenId::Hatching:
+            // Hatching only answers taps.
+            ESP_LOGI(TAG, "Long press ignored during hatching");
+            return;
+        case ScreenId::Sleep:
+            if (eye_display_) eye_display_->StopSleepMode();
+            ESP_LOGI(TAG, "Long press exited sleep mode");
+            return;
+        default:
+            break;
         }
+
         if (eye_display_) {
             eye_display_->NotifyUserInteraction();
         }
-        if (MenuSystem::IsAnyOpen()) {
-            if (MenuSystem::GetState() == MENU_EYE_EDITOR_OPEN) {
-                MenuSystem::EyeEditorBack();
-                ESP_LOGI(TAG, "Long press -> eye editor back");
-            } else if (MenuSystem::GetState() == MENU_VOLUME_OPEN) {
-                MenuSystem::VolumeBack();
-                ESP_LOGI(TAG, "Long press -> volume back");
-            } else {
-                // Long press in any menu layer → back / close
-                MenuSystem::Close();
-                ESP_LOGI(TAG, "Long press → close menu");
+
+        switch (screen) {
+        case ScreenId::Boot:
+        case ScreenId::Main:
+        case ScreenId::Feeding:
+        case ScreenId::Bathing:
+        case ScreenId::Celebration:
+            // Long press on the eyes: no-op for now.
+            return;
+        default:
+            if (MenuSystem::HandleLongPress(static_cast<uint16_t>(x),
+                                            static_cast<uint16_t>(y))) {
+                ESP_LOGI(TAG, "Long press consumed by menu");
             }
+            return;
         }
-        // Layer 0 long press on eyes: no-op for now
     }
 
     // IO expander button handles & drivers
@@ -694,11 +820,23 @@ private:
             .callback = [](void* arg) {
                 auto self = (Esp32S3RoundI80Board*)arg;
 
-                // IMU accel read — drives real-time eye tilt animation
-                if (self->imu_ && self->eye_display_) {
+                // IMU accel read — its one live consumer is the shake gesture
+                // that fires AnimConfused, so it is only worth polling on
+                // screens that claim it. The timer itself must keep running:
+                // it also drives the TAP/LONG_PRESS classifier below.
+                //
+                // The read stays on this timer task; the write into
+                // EyeAnimation's shared state is handed to the main task
+                // (same as every other input path here) so it can't race
+                // with the LVGL animation timer that reads it back.
+                if (self->imu_ && self->eye_display_ &&
+                    ScreenManager::Policy().imu) {
                     float ax, ay, az;
                     self->imu_->ReadAccel(ax, ay, az);
-                    self->eye_display_->SetImuAccel(ax, ay);
+                    auto eye_display = self->eye_display_;
+                    Application::GetInstance().Schedule([eye_display, ax, ay]() {
+                        eye_display->SetImuAccel(ax, ay);
+                    });
                 }
 
                 // ── TCA bit 0 poll (mirrors bubu_clean update() TCA read) ───
@@ -751,9 +889,31 @@ private:
                         self->touch_down_x_     = display_tp.x;
                         self->touch_down_y_     = display_tp.y;
                         self->long_press_fired_ = false;
+                        self->scrub_last_x_     = display_tp.x;
+                        self->scrub_last_y_     = display_tp.y;
                         ESP_LOGD(TAG, "[Touch] DOWN at (%d,%d) gesture=0x%02X",
                                  display_tp.x, display_tp.y, tp.gesture);
-                    } else if (!self->long_press_fired_) {
+                    } else {
+                        // ── Scrub (drag) ──────────────────────────────────────
+                        // Throttled by distance: a per-poll Schedule() would
+                        // allocate a lambda for every touch sample.
+                        int moved = abs(self->touch_cur_x_ - self->scrub_last_x_)
+                                  + abs(self->touch_cur_y_ - self->scrub_last_y_);
+                        // Only bathing consumes a scrub, and this runs on the
+                        // touch timer -- an atomic screen read beats the
+                        // dynamic_cast the old care-animation check did here.
+                        if (moved >= TOUCH_SCRUB_MIN_DELTA &&
+                            ScreenManager::Current() == ScreenManager::ScreenId::Bathing) {
+                            self->scrub_last_x_ = self->touch_cur_x_;
+                            self->scrub_last_y_ = self->touch_cur_y_;
+                            const int scrub_x = self->touch_cur_x_;
+                            const int scrub_y = self->touch_cur_y_;
+                            Application::GetInstance().Schedule([scrub_x, scrub_y]() {
+                                MenuSystem::HandleCareAnimationScrub(scrub_x, scrub_y);
+                            });
+                        }
+                    }
+                    if (!self->long_press_fired_) {
                         // ── Check LONG_PRESS while held ───────────────────────
                         // Mirrors bubu_clean checkLongPress():
                         //   held ≥ 400 ms && drift ≤ 35 px → fire once
@@ -762,8 +922,8 @@ private:
                                       + abs(self->touch_cur_y_ - self->touch_down_y_);
                         if (held >= TOUCH_LONG_PRESS_MS && drift <= TOUCH_TAP_MAX_DRIFT) {
                             self->long_press_fired_ = true;
-                            ESP_LOGI(TAG, "[Touch] LONG_PRESS at (%d,%d) held=%" PRId64 "ms drift=%d",
-                                     self->touch_down_x_, self->touch_down_y_, held, drift);
+                            ESP_LOGI(TAG, "[Touch] LONG_PRESS at (%d,%d) held=%ldms drift=%d",
+                                     self->touch_down_x_, self->touch_down_y_, static_cast<long>(held), drift);
                             const int long_press_x = self->touch_down_x_;
                             const int long_press_y = self->touch_down_y_;
                             Application::GetInstance().Schedule([self, long_press_x, long_press_y]() {
@@ -783,17 +943,17 @@ private:
                             int64_t dur   = now_ms - self->touch_down_ms_;
                             int     drift = abs(self->touch_cur_x_ - self->touch_down_x_)
                                           + abs(self->touch_cur_y_ - self->touch_down_y_);
-                            ESP_LOGD(TAG, "[Touch] RELEASE dur=%" PRId64 "ms drift=%d", dur, drift);
+                            ESP_LOGD(TAG, "[Touch] RELEASE dur=%ldms drift=%d", static_cast<long>(dur), drift);
                             if (dur >= TOUCH_TAP_MIN_MS && drift <= TOUCH_TAP_MAX_DRIFT) {
-                                ESP_LOGI(TAG, "[Touch] TAP at (%d,%d) dur=%" PRId64 "ms drift=%d",
-                                         self->touch_down_x_, self->touch_down_y_, dur, drift);
+                                ESP_LOGI(TAG, "[Touch] TAP at (%d,%d) dur=%ldms drift=%d",
+                                         self->touch_down_x_, self->touch_down_y_, static_cast<long>(dur), drift);
                                 const int tap_x = self->touch_down_x_;
                                 const int tap_y = self->touch_down_y_;
                                 Application::GetInstance().Schedule([self, tap_x, tap_y]() {
                                     self->DispatchTap(tap_x, tap_y);
                                 });
                             } else {
-                                ESP_LOGD(TAG, "[Touch] IGNORED dur=%" PRId64 "ms drift=%d", dur, drift);
+                                ESP_LOGD(TAG, "[Touch] IGNORED dur=%ldms drift=%d", static_cast<long>(dur), drift);
                             }
                         }
                         self->long_press_fired_ = false;
@@ -837,67 +997,47 @@ private:
         iot_button_register_cb(btn_power_, BUTTON_SINGLE_CLICK, nullptr,
             [](void* handle, void* usr) {
                 auto self = static_cast<Esp32S3RoundI80Board*>(usr);
-                if (self->eye_display_) {
-                    self->eye_display_->NotifyUserInteraction();
-                }
-                auto& app = Application::GetInstance();
-                if (app.GetDeviceState() == kDeviceStateStarting) {
-                    self->EnterWifiConfigMode();
-                    return;
-                }
-                if (MenuSystem::IsAnyOpen()) {
-                    switch (MenuSystem::GetState()) {
-                        case MENU_OPEN:
-                        case MENU_CARE_OPEN:
-                        case MENU_CONNECT_OPEN:
-                        case MENU_SETTINGS_OPEN:
-                        case MENU_REMINDERS_OPEN:
-                        case MENU_REMINDER_DETAIL_OPEN:
-                        case MENU_NOTES_OPEN:
-                        case MENU_NOTE_DETAIL_OPEN:
-                        case MENU_VOLUME_OPEN:
-                        case MENU_STATS_OPEN:
-                            MenuSystem::ActivateCurrent();
-                            break;
-                        case MENU_EYE_EDITOR_OPEN:
-                            MenuSystem::EyeEditorApplyIncrement();
-                            break;
-                        case MENU_KEYBOARD_OPEN:
-                            break;
-                        default:
-                            // In unsupported sub-panels for this phase, close back out.
-                            MenuSystem::Close();
-                            break;
+                Application::GetInstance().Schedule([self]() {
+                    if (self->eye_display_) {
+                        self->eye_display_->NotifyUserInteraction();
                     }
-                    return;
-                }
-                self->HandleConversationTrigger();
+                    auto& app = Application::GetInstance();
+                    if (app.GetDeviceState() == kDeviceStateStarting) {
+                        self->EnterWifiConfigMode();
+                        return;
+                    }
+                    if (MenuSystem::IsAnyOpen()) {
+                        MenuSystem::HandleActivate();
+                        return;
+                    }
+                    self->HandleConversationTrigger();
+                });
             }, this);
 
         // Long press: enter WiFi config from any state
         iot_button_register_cb(btn_power_, BUTTON_LONG_PRESS_START, nullptr,
             [](void* handle, void* usr) {
                 auto self = static_cast<Esp32S3RoundI80Board*>(usr);
-                if (self->eye_display_) {
-                    self->eye_display_->NotifyUserInteraction();
-                }
-                if (MenuSystem::GetState() == MENU_EYE_EDITOR_OPEN) {
-                    ESP_LOGI(TAG, "Power long press -> EyeEditorBack");
-                    MenuSystem::EyeEditorBack();
-                    return;
-                }
-                if (MenuSystem::GetState() == MENU_VOLUME_OPEN) {
-                    ESP_LOGI(TAG, "Power long press -> VolumeBack");
-                    MenuSystem::VolumeBack();
-                    return;
-                }
-                ESP_LOGI(TAG, "Power long press -> EnterWifiConfigMode");
-                self->EnterWifiConfigMode();
+                Application::GetInstance().Schedule([self]() {
+                    if (self->eye_display_) {
+                        self->eye_display_->NotifyUserInteraction();
+                    }
+                    // Screens that treat a long press as "back" handle it
+                    // themselves; anything else falls through to Wi-Fi config,
+                    // which must stay reachable from any state.
+                    if (MenuSystem::IsAnyOpen() &&
+                        MenuSystem::HandleLongPress(0, 0, /*close_by_default=*/false)) {
+                        ESP_LOGI(TAG, "Power long press consumed by menu");
+                        return;
+                    }
+                    ESP_LOGI(TAG, "Power long press -> EnterWifiConfigMode");
+                    self->EnterWifiConfigMode();
+                });
             }, this);
 
         // --- UP button (IO expander pin XIO_KEY_UP) ---
         button_config_t up_cfg = {
-            .long_press_time = 1000,
+            .long_press_time = 2000,
             .short_press_time = 0,
         };
         btn_up_driver_ = (button_driver_t*)calloc(1, sizeof(button_driver_t));
@@ -915,13 +1055,9 @@ private:
                     if (self->eye_display_) {
                         self->eye_display_->NotifyUserInteraction();
                     }
-                    ESP_LOGI(TAG, "UP button pressed, menu open: %d, state: %d", MenuSystem::IsAnyOpen(), MenuSystem::GetState());
+                    ESP_LOGI(TAG, "UP button pressed, menu open: %d", MenuSystem::IsAnyOpen());
                     if (MenuSystem::IsAnyOpen()) {
-                        if (MenuSystem::GetState() == MENU_EYE_EDITOR_OPEN) {
-                            MenuSystem::EyeEditorCycleMode(false);
-                        } else {
-                            MenuSystem::NavigatePrev();
-                        }
+                        MenuSystem::HandleNavigate(/*forward=*/false);
                         return;
                     }
                     auto codec = self->GetAudioCodec();
@@ -934,6 +1070,22 @@ private:
                     if (auto* display = self->GetDisplay(); display != nullptr) {
                         display->ShowNotification(Lang::Strings::VOLUME + std::to_string(volume));
                     }
+                });
+            }, this);
+
+        // Long press: reboot system
+        iot_button_register_cb(btn_up_, BUTTON_LONG_PRESS_START, nullptr,
+            [](void* handle, void* usr) {
+                auto self = static_cast<Esp32S3RoundI80Board*>(usr);
+                if (self->eye_display_) {
+                    self->eye_display_->NotifyUserInteraction();
+                }
+                ESP_LOGI(TAG, "UP long press -> reboot");
+                Application::GetInstance().Schedule([self]() {
+                    if (auto* display = self->GetDisplay(); display != nullptr) {
+                        display->ShowNotification("Rebooting...");
+                    }
+                    Application::GetInstance().Reboot();
                 });
             }, this);
 
@@ -957,13 +1109,9 @@ private:
                     if (self->eye_display_) {
                         self->eye_display_->NotifyUserInteraction();
                     }
-                    ESP_LOGI(TAG, "DOWN button pressed, menu open: %d, state: %d", MenuSystem::IsAnyOpen(), MenuSystem::GetState());
+                    ESP_LOGI(TAG, "DOWN button pressed, menu open: %d", MenuSystem::IsAnyOpen());
                     if (MenuSystem::IsAnyOpen()) {
-                        if (MenuSystem::GetState() == MENU_EYE_EDITOR_OPEN) {
-                            MenuSystem::EyeEditorCycleMode(true);
-                        } else {
-                            MenuSystem::NavigateNext();
-                        }
+                        MenuSystem::HandleNavigate(/*forward=*/true);
                         return;
                     }
                     auto codec = self->GetAudioCodec();
@@ -1014,6 +1162,16 @@ private:
         }
     }
 
+    void InitializeBatteryMonitor() {
+#if CONFIG_SOC_ADC_SUPPORTED
+        // Board manual: battery divider is 2x100k to ADC IO1 (ADC1 channel 0).
+        battery_monitor_ = new AdcBatteryMonitor(ADC_UNIT_1, ADC_CHANNEL_0, 100000.0f, 100000.0f, GPIO_NUM_NC);
+        ESP_LOGI(TAG, "Battery ADC monitor ready on GPIO1 (ADC1_CH0)");
+#else
+        ESP_LOGW(TAG, "ADC not supported on this target; battery level falls back to simulated value");
+#endif
+    }
+
 public:
     Esp32S3RoundI80Board() {
         ESP_LOGI(TAG, "Initializing Esp32S3RoundI80Board (V2 - Fixed I2C & IO Expander)");
@@ -1023,10 +1181,22 @@ public:
         InitializeDisplay();
         InitializeImu();
         InitializeTouch();
+        InitializeBatteryMonitor();
+        InitializeSimulatedBattery();
         InitializeWifiPowerTimer();
-        // WiFi power save: PERFORMANCE when active, BALANCED on tap, LOW_POWER after 1 min idle
+        // WiFi power save: PERFORMANCE when active, BALANCED on tap, LOW_POWER after 1 min idle.
+        //
+        // Upgrading and Activating must hold the timer off. Both are long network
+        // operations with no audio, so the idle timer would otherwise expire
+        // mid-transfer and drop the radio to LOW_POWER underneath them. That was
+        // observed to cut an assets download from ~74 KB/s to ~13 KB/s and then
+        // stall it outright: the download fails, "applied_url" is never written
+        // (see Application::CheckAssetsVersion), and the device retries the same
+        // 4.5 MB download on every boot forever without ever reaching Idle.
+        // The same stall produced SSL read resets during activation.
         Application::GetInstance().AddStateChangeListener([this](DeviceState, DeviceState to) {
-            if (to == kDeviceStateListening || to == kDeviceStateConnecting) {
+            if (to == kDeviceStateListening || to == kDeviceStateConnecting ||
+                to == kDeviceStateUpgrading || to == kDeviceStateActivating) {
                 esp_timer_stop(wifi_power_timer_);
                 SetPowerSaveLevel(PowerSaveLevel::PERFORMANCE);
             } else if (to == kDeviceStateIdle) {
@@ -1085,6 +1255,84 @@ public:
 
     virtual Display* GetDisplay() override {
         return display_;
+    }
+
+    virtual bool GetBatteryLevel(int &level, bool& charging, bool& discharging) override {
+        std::lock_guard<std::mutex> lock(sim_battery_mutex_);
+        bool level_from_adc = false;
+        bool adc_level_fallback = true;
+        int battery_mv = -1;
+        esp_err_t adc_capacity_err = ESP_FAIL;
+        esp_err_t adc_voltage_err = ESP_FAIL;
+        bool adc_voltage_valid = false;
+        if (battery_monitor_ != nullptr) {
+            AdcBatteryMonitor::Diagnostics diagnostics;
+            if (battery_monitor_->GetDiagnostics(diagnostics)) {
+                adc_voltage_valid = diagnostics.voltage_err == ESP_OK &&
+                                    IsValidSingleCellBatteryMv(diagnostics.battery_voltage_mv);
+                if (USE_LIBRARY_BATTERY_CAPACITY_ESTIMATE &&
+                    diagnostics.capacity_err == ESP_OK && !diagnostics.level_is_fallback) {
+                    level = diagnostics.level_percent;
+                    level_from_adc = true;
+                    adc_level_fallback = false;
+                    battery_last_valid_adc_level_ = level;
+                } else if (adc_voltage_valid) {
+                    level = EstimateSingleCellPercentFromMv(diagnostics.battery_voltage_mv);
+                    level_from_adc = true;
+                    adc_level_fallback = false;
+                    battery_last_valid_adc_level_ = level;
+                } else {
+                    adc_level_fallback = diagnostics.level_is_fallback;
+                }
+                battery_mv = diagnostics.battery_voltage_mv;
+                adc_capacity_err = diagnostics.capacity_err;
+                adc_voltage_err = diagnostics.voltage_err;
+            }
+        }
+        if (!level_from_adc) {
+            if (battery_last_valid_adc_level_ >= 0) {
+                level = battery_last_valid_adc_level_;
+            } else if (adc_voltage_err == ESP_OK && battery_mv > 0) {
+                // ADC is alive but voltage is out of valid 1S range.
+                // Keep UI stable and avoid stale simulated NVS value jumps.
+                level = sim_battery_last_reported_level_ >= 0 ? sim_battery_last_reported_level_ : 100;
+            } else {
+                UpdateSimulatedBatteryLocked();
+                level = ClampPercent(static_cast<int>(sim_battery_level_ + 0.5f));
+            }
+        }
+        charging = false;
+        bool charging_known = false;
+        if (USE_MAINBOARD_USB_DET_CHARGE_STATE && io_expander_ != nullptr) {
+            uint32_t pin_val = 0;
+            esp_err_t err = esp_io_expander_get_level(io_expander_, 1 << XIO_USB_DET, &pin_val);
+            if (err == ESP_OK) {
+                // TCA6408 input lines are active-low on this board.
+                charging = (pin_val & (1 << XIO_USB_DET)) == 0;
+                charging_known = true;
+            } else {
+                ESP_LOGW(TAG, "USB detect read failed: %s", esp_err_to_name(err));
+            }
+        }
+        discharging = charging_known ? !charging : false;
+        const int64_t now_us = esp_timer_get_time();
+        if ((sim_battery_last_reported_level_ < 0 ||
+             charging != sim_battery_last_reported_charging_ ||
+             discharging != sim_battery_last_reported_discharging_ ||
+             adc_level_fallback != sim_battery_last_reported_fallback_ ||
+             adc_capacity_err != sim_battery_last_reported_capacity_err_ ||
+             adc_voltage_err != sim_battery_last_reported_voltage_err_ ||
+             level != sim_battery_last_reported_level_ ||
+             (now_us - sim_battery_last_report_us_) >= SIM_BATTERY_REPORT_INTERVAL_US)) {
+            sim_battery_last_reported_level_ = level;
+            sim_battery_last_reported_charging_ = charging;
+            sim_battery_last_reported_discharging_ = discharging;
+            sim_battery_last_reported_fallback_ = adc_level_fallback;
+            sim_battery_last_reported_capacity_err_ = adc_capacity_err;
+            sim_battery_last_reported_voltage_err_ = adc_voltage_err;
+            sim_battery_last_report_us_ = now_us;
+        }
+        return true;
     }
 
     virtual Backlight* GetBacklight() override {

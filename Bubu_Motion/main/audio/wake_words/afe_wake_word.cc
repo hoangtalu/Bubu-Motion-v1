@@ -28,7 +28,7 @@ AfeWakeWord::~AfeWakeWord() {
         heap_caps_free(wake_word_encode_task_buffer_);
     }
 
-    if (models_ != nullptr) {
+    if (owns_models_ && models_ != nullptr) {
         esp_srmodel_deinit(models_);
     }
 
@@ -41,8 +41,10 @@ bool AfeWakeWord::Initialize(AudioCodec* codec, srmodel_list_t* models_list) {
 
     if (models_list == nullptr) {
         models_ = esp_srmodel_init("model");
+        owns_models_ = true;
     } else {
         models_ = models_list;
+        owns_models_ = false;
     }
 
     if (models_ == nullptr || models_->num == -1) {
@@ -70,22 +72,63 @@ bool AfeWakeWord::Initialize(AudioCodec* codec, srmodel_list_t* models_list) {
     for (int i = 0; i < ref_num; i++) {
         input_format.push_back('R');
     }
+    // AudioDetectionTask indexes wake_words_ by the model index the AFE reports,
+    // so an empty list is an out-of-bounds read on the first detection rather
+    // than a quiet no-op. Fail here instead.
+    if (wake_words_.empty()) {
+        ESP_LOGE(TAG, "No wakenet model in the models list; wake word unavailable");
+        return false;
+    }
+
     afe_config_t* afe_config = afe_config_init(input_format.c_str(), models_, AFE_TYPE_SR, AFE_MODE_HIGH_PERF);
+    if (afe_config == nullptr) {
+        ESP_LOGE(TAG, "Failed to create AFE config");
+        return false;
+    }
     afe_config->aec_init = codec_->input_reference();
     afe_config->aec_mode = AEC_MODE_SR_HIGH_PERF;
     afe_config->afe_perferred_core = 1;
     afe_config->afe_perferred_priority = 1;
     afe_config->memory_alloc_mode = AFE_MEMORY_ALLOC_MORE_PSRAM;
-    
-    afe_iface_ = esp_afe_handle_from_config(afe_config);
-    afe_data_ = afe_iface_->create_from_config(afe_config);
 
-    xTaskCreate([](void* arg) {
+    // Every one of these can fail under internal-SRAM pressure, which this board
+    // runs into (see DEVLOG). None of them used to be checked: a null afe_data_
+    // still started the detection task, whose first act is
+    // get_fetch_chunksize(afe_data_) — a null dereference, then a boot loop. On
+    // a board whose serial port IS the chip's own USB peripheral, that also
+    // takes the port away, so it presents as "the device disappeared" rather
+    // than as a crash. Bail cleanly instead; EnableWakeWordDetection() already
+    // handles a false return and will retry on the next attempt.
+    afe_iface_ = esp_afe_handle_from_config(afe_config);
+    if (afe_iface_ == nullptr) {
+        ESP_LOGE(TAG, "Failed to obtain AFE interface");
+        afe_config_free(afe_config);
+        return false;
+    }
+
+    afe_data_ = afe_iface_->create_from_config(afe_config);
+    if (afe_data_ == nullptr) {
+        ESP_LOGE(TAG, "Failed to create AFE data (likely memory exhaustion)");
+        afe_config_free(afe_config);
+        return false;
+    }
+
+    if (xTaskCreate([](void* arg) {
         auto this_ = (AfeWakeWord*)arg;
         this_->AudioDetectionTask();
         vTaskDelete(NULL);
-    }, "audio_detection", 4096, this, 3, nullptr);
+    }, "audio_detection", 4096, this, 3, nullptr) != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create AFE detection task");
+        afe_iface_->destroy(afe_data_);
+        afe_data_ = nullptr;
+        afe_config_free(afe_config);
+        return false;
+    }
 
+    ESP_LOGI(TAG, "Wake word ready: model=%s phrases=%d aec=%s",
+        wakenet_model_ != nullptr ? wakenet_model_ : "<none>",
+        static_cast<int>(wake_words_.size()),
+        afe_config->aec_init ? "on" : "off (no reference channel)");
     return true;
 }
 
@@ -151,7 +194,16 @@ void AfeWakeWord::AudioDetectionTask() {
 
         if (res->wakeup_state == WAKENET_DETECTED) {
             Stop();
-            last_detected_wake_word_ = wake_words_[res->wakenet_model_index - 1];
+            // wakenet_model_index is 1-based and comes from the library, so range
+            // check it rather than trusting it to match our parsed list.
+            int index = res->wakenet_model_index - 1;
+            if (index < 0 || index >= static_cast<int>(wake_words_.size())) {
+                ESP_LOGW(TAG, "Wake word index %d out of range (have %d), using the first",
+                    res->wakenet_model_index, static_cast<int>(wake_words_.size()));
+                index = 0;
+            }
+            last_detected_wake_word_ = wake_words_[index];
+            ESP_LOGI(TAG, "Wake word detected: %s", last_detected_wake_word_.c_str());
 
             if (wake_word_detected_callback_) {
                 wake_word_detected_callback_(last_detected_wake_word_);

@@ -30,6 +30,7 @@ public:
 
     bool Start() override;
     bool SendAudio(std::unique_ptr<AudioStreamPacket> packet) override;
+    uint32_t GetLastUplinkSequence() const override;
     bool OpenAudioChannel() override;
     void CloseAudioChannel(bool send_goodbye = true) override;
     bool IsAudioChannelOpened() const override;
@@ -42,7 +43,7 @@ private:
 
     std::string publish_topic_;
 
-    std::mutex channel_mutex_;
+    mutable std::mutex channel_mutex_;
     std::unique_ptr<Mqtt> mqtt_;
     std::unique_ptr<Udp> udp_;
     mbedtls_aes_context aes_ctx_;
@@ -51,6 +52,8 @@ private:
     int udp_port_;
     uint32_t local_sequence_;
     uint32_t remote_sequence_;
+    std::map<uint32_t, std::string> pending_audio_packets_;
+    uint64_t pending_gap_started_ms_ = 0;
     esp_timer_handle_t reconnect_timer_;
 
     bool StartMqttClient(bool report_error=false);

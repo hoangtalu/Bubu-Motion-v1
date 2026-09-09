@@ -7,8 +7,12 @@
 #include <sys/socket.h>
 #include <netdb.h>
 #include <errno.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 
 static const char *TAG = "EspUdp";
+static constexpr int kUdpSendRetryMax = 3;
+static constexpr int kUdpSendRetryDelayMs = 3;
 
 EspUdp::EspUdp() : udp_fd_(-1) {
     event_group_ = xEventGroupCreate();
@@ -90,10 +94,24 @@ int EspUdp::Send(const std::string& data) {
         return -1;
     }
 
-    int ret = send(udp_fd_, data.data(), data.size(), 0);
-    if (ret <= 0) {
-        ESP_LOGE(TAG, "Send failed: ret=%d, errno=%d", ret, errno);
+    int ret = -1;
+    int err = 0;
+    for (int attempt = 0; attempt <= kUdpSendRetryMax; ++attempt) {
+        ret = send(udp_fd_, data.data(), data.size(), 0);
+        if (ret > 0) {
+            return ret;
+        }
+
+        err = errno;
+        last_error_ = err;
+        const bool retryable = (err == ENOMEM || err == EAGAIN || err == EWOULDBLOCK);
+        if (!retryable || attempt == kUdpSendRetryMax) {
+            break;
+        }
+        vTaskDelay(pdMS_TO_TICKS(kUdpSendRetryDelayMs));
     }
+
+    ESP_LOGE(TAG, "Send failed: ret=%d, errno=%d, retries=%d", ret, err, kUdpSendRetryMax);
     return ret;
 }
 

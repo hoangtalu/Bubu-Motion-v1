@@ -8,9 +8,35 @@
 #include <cJSON.h>
 #include <esp_log.h>
 #include <arpa/inet.h>
+#include <sdkconfig.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 #include "assets/lang_config.h"
+#include "heap_debug.h"  // TEMPORARY instrumentation
 
 #define TAG "WS"
+
+#ifndef CONFIG_MBEDTLS_SSL_OUT_CONTENT_LEN
+// Boards that tunnel TLS through the ML307 modem never build mbedtls; assume the
+// conservative default so the retry budget below stays defined either way.
+#define CONFIG_MBEDTLS_SSL_OUT_CONTENT_LEN 4096
+#endif
+
+// A failed text send is usually not a network fault. The ESP32-S3 AES accelerator
+// can only DMA from internal SRAM, so mbedtls needs a small internal allocation to
+// encrypt each TLS record. That allocation fails transiently when the audio
+// pipeline has just claimed internal RAM -- which is exactly when we connect and
+// push the MCP tools list -- and a single failure used to tear down the session.
+//
+// Retrying is only byte-safe while the frame still fits in one TLS record. Above
+// that, mbedtls_ssl_write() splits the payload across records and EspSsl::Send()
+// throws away how much of a split write already reached the socket, so a resend
+// would duplicate those bytes on the wire and corrupt the websocket stream.
+static constexpr size_t kMaxWebsocketFrameOverhead = 8;  // 2 header + 2 extended length + 4 mask
+static constexpr size_t kMaxRetryableTextSize =
+    CONFIG_MBEDTLS_SSL_OUT_CONTENT_LEN - kMaxWebsocketFrameOverhead;
+static constexpr int kMaxSendAttempts = 3;
+static constexpr int kSendRetryDelayMs = 50;
 
 WebsocketProtocol::WebsocketProtocol() {
     event_group_handle_ = xEventGroupCreate();
@@ -30,6 +56,7 @@ bool WebsocketProtocol::SendAudio(std::unique_ptr<AudioStreamPacket> packet) {
         return false;
     }
 
+    bool sent = false;
     if (version_ == 2) {
         std::string serialized;
         serialized.resize(sizeof(BinaryProtocol2) + packet->payload.size());
@@ -41,7 +68,7 @@ bool WebsocketProtocol::SendAudio(std::unique_ptr<AudioStreamPacket> packet) {
         bp2->payload_size = htonl(packet->payload.size());
         memcpy(bp2->payload, packet->payload.data(), packet->payload.size());
 
-        return websocket_->Send(serialized.data(), serialized.size(), true);
+        sent = websocket_->Send(serialized.data(), serialized.size(), true);
     } else if (version_ == 3) {
         std::string serialized;
         serialized.resize(sizeof(BinaryProtocol3) + packet->payload.size());
@@ -51,10 +78,12 @@ bool WebsocketProtocol::SendAudio(std::unique_ptr<AudioStreamPacket> packet) {
         bp3->payload_size = htons(packet->payload.size());
         memcpy(bp3->payload, packet->payload.data(), packet->payload.size());
 
-        return websocket_->Send(serialized.data(), serialized.size(), true);
+        sent = websocket_->Send(serialized.data(), serialized.size(), true);
     } else {
-        return websocket_->Send(packet->payload.data(), packet->payload.size(), true);
+        sent = websocket_->Send(packet->payload.data(), packet->payload.size(), true);
     }
+
+    return sent;
 }
 
 bool WebsocketProtocol::SendText(const std::string& text) {
@@ -62,13 +91,38 @@ bool WebsocketProtocol::SendText(const std::string& text) {
         return false;
     }
 
-    if (!websocket_->Send(text)) {
-        ESP_LOGE(TAG, "Failed to send text: %s", text.c_str());
-        SetError(Lang::Strings::SERVER_ERROR);
-        return false;
+    const int attempts = text.size() <= kMaxRetryableTextSize ? kMaxSendAttempts : 1;
+    for (int attempt = 1; attempt <= attempts; attempt++) {
+        if (websocket_->Send(text)) {
+            if (attempt > 1) {
+                ESP_LOGW(TAG, "Text sent on attempt %d/%d", attempt, attempts);
+            }
+            return true;
+        }
+
+        // TEMPORARY: this is the failure we are chasing. Report on the FIRST
+        // failed attempt, while the memory state that caused it is still fresh.
+        if (attempt == 1) {
+            HeapDebug::Report("websocket-send-failed");
+        }
+
+        if (attempt == attempts) {
+            break;
+        }
+
+        // Give whatever is holding internal SRAM a moment to release it. This runs
+        // on the main task, so keep the pause short.
+        ESP_LOGW(TAG, "Send failed (attempt %d/%d), retrying in %dms", attempt, attempts, kSendRetryDelayMs);
+        vTaskDelay(pdMS_TO_TICKS(kSendRetryDelayMs));
+
+        if (websocket_ == nullptr || !websocket_->IsConnected()) {
+            break;
+        }
     }
 
-    return true;
+    ESP_LOGE(TAG, "Failed to send text (%d bytes, %d attempts)", (int)text.size(), attempts);
+    SetError(Lang::Strings::SERVER_ERROR);
+    return false;
 }
 
 bool WebsocketProtocol::IsAudioChannelOpened() const {
@@ -147,7 +201,11 @@ bool WebsocketProtocol::OpenAudioChannel() {
             }
         } else {
             // Parse JSON data
-            auto root = cJSON_Parse(data);
+            auto root = cJSON_ParseWithLength(data, len);
+            if (root == nullptr) {
+                ESP_LOGE(TAG, "Failed to parse JSON message, len=%u", static_cast<unsigned>(len));
+                return;
+            }
             auto type = cJSON_GetObjectItem(root, "type");
             if (cJSON_IsString(type)) {
                 if (strcmp(type->valuestring, "hello") == 0) {
@@ -158,7 +216,8 @@ bool WebsocketProtocol::OpenAudioChannel() {
                     }
                 }
             } else {
-                ESP_LOGE(TAG, "Missing message type, data: %s", data);
+                std::string payload(data, len);
+                ESP_LOGE(TAG, "Missing message type, data: %s", payload.c_str());
             }
             cJSON_Delete(root);
         }

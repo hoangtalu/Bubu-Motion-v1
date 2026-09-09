@@ -323,15 +323,7 @@ std::string WifiBoard::GetDeviceStatusJson() {
     }
     cJSON_AddItemToObject(root, "screen", screen);
 
-    // Battery
-    int level = 0;
-    bool charging = false, discharging = false;
-    if (board.GetBatteryLevel(level, charging, discharging)) {
-        auto battery = cJSON_CreateObject();
-        cJSON_AddNumberToObject(battery, "level", level);
-        cJSON_AddBoolToObject(battery, "charging", charging);
-        cJSON_AddItemToObject(root, "battery", battery);
-    }
+    // Battery reporting is intentionally disabled for server/device-status payloads.
 
     // Network
     auto& wifi = WifiManager::GetInstance();

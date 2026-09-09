@@ -5,6 +5,7 @@ namespace CareSystem {
 
   // Stat boost constants (single source of truth)
   static constexpr int kSandwichBoost      = 30;   // Hunger (feed)
+  static constexpr int kFeedBiteBoost      = kSandwichBoost / 3;  // Hunger per chomp (3 bites = full boost)
   static constexpr int kGamesBoost         = 10;   // Mood (play)
   static constexpr int kSleepBoost         = 90;   // Energy (sleep)
   static constexpr int kBathBoost          = 90;   // Cleanliness (bath)

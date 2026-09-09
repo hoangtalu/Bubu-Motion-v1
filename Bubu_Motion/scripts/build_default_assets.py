@@ -568,6 +568,30 @@ def read_wake_word_type_from_sdkconfig(sdkconfig_path):
     return config_values
 
 
+def build_wake_word_commands(custom_wake_word_config):
+    """
+    Build the multinet command list for the wake word.
+
+    Every phoneme variant becomes its own phrase with the "wake" action. The
+    phrase strings must be distinct (esp_mn_command_search keys on them), but
+    the display text is shared, so whichever pronunciation fires reports the
+    same wake word to the firmware and the server.
+    """
+    wake_word = custom_wake_word_config['wake_word']
+    display = custom_wake_word_config['display']
+    phonemes = custom_wake_word_config.get('phonemes') or ['']
+
+    commands = []
+    for index, phoneme in enumerate(phonemes):
+        commands.append({
+            "command": wake_word if index == 0 else f"{wake_word} alt{index}",
+            "text": display,
+            "action": "wake",
+            "phoneme": phoneme
+        })
+    return commands
+
+
 def read_custom_wake_word_from_sdkconfig(sdkconfig_path):
     """
     Read custom wake word configuration from sdkconfig
@@ -595,6 +619,10 @@ def read_custom_wake_word_from_sdkconfig(sdkconfig_path):
                 # Extract string value (remove quotes)
                 value = line.split('=', 1)[1].strip('"')
                 config_values['display'] = value
+            elif 'CONFIG_CUSTOM_WAKE_WORD_PHONEME=' in line and not line.startswith('#'):
+                # Extract string value (remove quotes)
+                value = line.split('=', 1)[1].strip('"')
+                config_values['phoneme'] = value
             elif 'CONFIG_CUSTOM_WAKE_WORD_THRESHOLD=' in line and not line.startswith('#'):
                 # Extract numeric value
                 value = line.split('=', 1)[1]
@@ -612,9 +640,18 @@ def read_custom_wake_word_from_sdkconfig(sdkconfig_path):
         'wake_word' in config_values and 
         'display' in config_values and 
         'threshold' in config_values):
+        # CONFIG_CUSTOM_WAKE_WORD_PHONEME may carry several ';'-separated
+        # pronunciations of the same wake word. MultiNet scores one phrase
+        # against one phoneme sequence, so a single spelling only fires for
+        # speakers who say it that way; each variant is registered as its own
+        # phrase, all mapped to the "wake" action.
+        phoneme = config_values.get('phoneme', '')
+        phonemes = [p.strip() for p in phoneme.split(';') if p.strip()]
         return {
             'wake_word': config_values['wake_word'],
             'display': config_values['display'],
+            'phoneme': phonemes[0] if phonemes else '',
+            'phonemes': phonemes,
             'threshold': config_values['threshold'] / 100.0  # Convert to decimal (20 -> 0.2)
         }
     
@@ -898,15 +935,11 @@ def main():
             "language": language,
             "duration": 3000,  # Default duration in ms
             "threshold": custom_wake_word_config['threshold'],
-            "commands": [
-                {
-                    "command": custom_wake_word_config['wake_word'],
-                    "text": custom_wake_word_config['display'],
-                    "action": "wake"
-                }
-            ]
+            "commands": build_wake_word_commands(custom_wake_word_config)
         }
         print(f"  custom wake word: {custom_wake_word_config['wake_word']} ({custom_wake_word_config['display']})")
+        for command in multinet_model_info['commands']:
+            print(f"    phrase '{command['command']}' phoneme: {command['phoneme'] or '<none>'}")
         print(f"  wake word language: {language}")
         print(f"  wake word threshold: {custom_wake_word_config['threshold']}")
     

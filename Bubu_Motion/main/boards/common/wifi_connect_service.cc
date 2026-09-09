@@ -108,10 +108,24 @@ void WifiConnectService::RunScan() {
     wifi_manager.StopConfigAp();
     wifi_manager.StopStation();
 
+    /* Scanning tears the station down (a temporary STA netif owns the radio
+     * for the scan) and nothing elsewhere in the codebase brings it back up
+     * afterwards -- WifiBoard::TryWifiConnect() only runs at boot and after
+     * leaving BLE/AP config mode. Without the RestoreStation() calls below,
+     * opening the WiFi connect screen once permanently drops connectivity
+     * (chat, OTA, everything) until the user manually re-enters credentials,
+     * even when the scan itself succeeds. Restore on every exit path. */
+    auto RestoreStation = [&wifi_manager]() {
+        if (!SsidManager::GetInstance().GetSsidList().empty()) {
+            wifi_manager.StartStation();
+        }
+    };
+
     scan_netif = esp_netif_create_default_wifi_sta();
     if (scan_netif == nullptr) {
         ESP_LOGE(kTag, "Failed to create temporary station netif for scan");
         StoreResults(std::move(results));
+        RestoreStation();
         return;
     }
 
@@ -120,6 +134,7 @@ void WifiConnectService::RunScan() {
         ESP_LOGE(kTag, "esp_wifi_set_mode failed: %s", esp_err_to_name(err));
         esp_netif_destroy_default_wifi(scan_netif);
         StoreResults(std::move(results));
+        RestoreStation();
         return;
     }
 
@@ -128,6 +143,7 @@ void WifiConnectService::RunScan() {
         ESP_LOGE(kTag, "esp_wifi_start failed: %s", esp_err_to_name(err));
         esp_netif_destroy_default_wifi(scan_netif);
         StoreResults(std::move(results));
+        RestoreStation();
         return;
     }
 
@@ -140,6 +156,7 @@ void WifiConnectService::RunScan() {
         esp_wifi_stop();
         esp_netif_destroy_default_wifi(scan_netif);
         StoreResults(std::move(results));
+        RestoreStation();
         return;
     }
 
@@ -182,6 +199,7 @@ void WifiConnectService::RunScan() {
     esp_wifi_stop();
     esp_netif_destroy_default_wifi(scan_netif);
     StoreResults(std::move(results));
+    RestoreStation();
 }
 
 void WifiConnectService::RunConnect(const std::string& ssid, const std::string& password) {

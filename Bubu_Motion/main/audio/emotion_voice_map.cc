@@ -57,6 +57,12 @@ void EmotionVoiceMap::Initialize() {
         Lang::Sounds::OGG_BUBU_HAPPY1,
         Lang::Sounds::OGG_BUBU_HAPPY3
     });
+    // "funny" is the same animation as "happy" (see EyeEmotion_Apply) - share its voice.
+    RegisterEmotion("funny", {
+        Lang::Sounds::OGG_BUBU_HAPPY2,
+        Lang::Sounds::OGG_BUBU_HAPPY1,
+        Lang::Sounds::OGG_BUBU_HAPPY3
+    });
 
     // Laugh emotion
     RegisterEmotion("laugh", {Lang::Sounds::OGG_BUBU_LAUGH});
@@ -64,9 +70,13 @@ void EmotionVoiceMap::Initialize() {
 
     // Sad emotion - multiple options
     RegisterEmotion("sad", {Lang::Sounds::OGG_BUBU_SAD1, Lang::Sounds::OGG_BUBU_SAD2});
+    // "crying" is the same pose as "sad" (see EyeEmotion_Apply) - share its voice.
+    RegisterEmotion("crying", {Lang::Sounds::OGG_BUBU_SAD1, Lang::Sounds::OGG_BUBU_SAD2});
 
     // Angry emotion - multiple options
     RegisterEmotion("angry", {Lang::Sounds::OGG_BUBU_ANGRY1, Lang::Sounds::OGG_BUBU_ANGRY2});
+    // "annoyed" is the same pose as "angry", just shallower (see EyeEmotion_Apply) - share its voice.
+    RegisterEmotion("annoyed", {Lang::Sounds::OGG_BUBU_ANGRY1, Lang::Sounds::OGG_BUBU_ANGRY2});
 
     // Bored emotion
     RegisterEmotion("bored", {Lang::Sounds::OGG_BUBU_BORED1});
@@ -87,12 +97,35 @@ void EmotionVoiceMap::Initialize() {
     RegisterEmotion("nervous", BuildOccasionalMumblingVoices());
     RegisterEmotion("anxious", BuildOccasionalMumblingVoices());
 
-    // Other recognized emotions without voice (no automatic playback)
+    // Other recognized emotions without voice (no automatic playback).
+    // Registered explicitly (rather than left out) so GetVoiceForEmotion's
+    // "Unknown emotion" warning is reserved for emotions the app doesn't
+    // actually recognize, not ones that are deliberately silent.
     RegisterEmotion("neutral", {});
     RegisterEmotion("relaxed", {});
     RegisterEmotion("cool", {});
     RegisterEmotion("shocked", {});
     RegisterEmotion("surprised", {});
+    // Same visual family as laughing/shocked (see EyeEmotion_Apply) but no
+    // dedicated asset - silent like shocked rather than reusing the laugh voice.
+    RegisterEmotion("confident", {});
+    RegisterEmotion("loving", {});
+    RegisterEmotion("kissy", {});
+    RegisterEmotion("delicious", {});
+    // No dedicated asset for these.
+    RegisterEmotion("worried", {});
+    RegisterEmotion("skeptic", {});
+    RegisterEmotion("skeptical", {});
+    RegisterEmotion("doubt", {});
+    RegisterEmotion("doubtful", {});
+    // Legacy emote set - no dedicated assets. Both the canonical
+    // ("legacy_emo_*") and short ("legacy_*") forms are registered since
+    // EyeEmotion_Apply accepts either and the server may send either.
+    for (const char* legacy : {"love", "cyclop", "drunk", "confuse", "angry",
+                                "furious", "banh_chung", "deadpool", "cry"}) {
+        RegisterEmotion(std::string("legacy_emo_") + legacy, {});
+        RegisterEmotion(std::string("legacy_") + legacy, {});
+    }
 
     ESP_LOGI(TAG, "EmotionVoiceMap initialized with %d emotions and %d voice mappings",
              emotion_map_.size(), voice_name_map_.size());

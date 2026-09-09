@@ -1,15 +1,22 @@
 #include "audio_service.h"
 #include <esp_log.h>
 #include <cstring>
+#include <cstdint>
+#include <algorithm>
 
-#define RATE_CVT_CFG(_src_rate, _dest_rate, _channel)        \
+/* complexity is 1..3 (3 = best quality, slowest). It is a parameter rather than
+ * a constant because the two resamplers sit on very different paths: the input
+ * one would run continuously on the always-on mic feed, while the output one
+ * only runs while TTS is actually playing, on the opus_codec task. Only the
+ * output path can afford the extra cycles. */
+#define RATE_CVT_CFG(_src_rate, _dest_rate, _channel, _complexity)  \
     (esp_ae_rate_cvt_cfg_t)                                  \
     {                                                        \
         .src_rate        = (uint32_t)(_src_rate),            \
         .dest_rate       = (uint32_t)(_dest_rate),           \
         .channel         = (uint8_t)(_channel),              \
         .bits_per_sample = ESP_AUDIO_BIT16,                  \
-        .complexity      = 2,                                \
+        .complexity      = (uint8_t)(_complexity),           \
         .perf_type       = ESP_AE_RATE_CVT_PERF_TYPE_SPEED,  \
     }
 
@@ -57,6 +64,12 @@ AudioService::~AudioService() {
     if (output_resampler_ != nullptr) {
         esp_ae_rate_cvt_close(output_resampler_);
     }
+    if (sfx_opus_decoder_ != nullptr) {
+        esp_opus_dec_close(sfx_opus_decoder_);
+    }
+    if (sfx_output_resampler_ != nullptr) {
+        esp_ae_rate_cvt_close(sfx_output_resampler_);
+    }
 }
 
 void AudioService::Initialize(AudioCodec* codec) {
@@ -76,6 +89,16 @@ void AudioService::Initialize(AudioCodec* codec) {
         decoder_duration_ms_ = OPUS_FRAME_DURATION_MS;
         decoder_frame_size_ = decoder_sample_rate_ / 1000 * OPUS_FRAME_DURATION_MS;
     }
+
+    esp_opus_dec_cfg_t sfx_opus_dec_cfg = OPUS_DEC_CFG(codec->output_sample_rate(), OPUS_FRAME_DURATION_MS);
+    ret = esp_opus_dec_open(&sfx_opus_dec_cfg, sizeof(esp_opus_dec_cfg_t), &sfx_opus_decoder_);
+    if (sfx_opus_decoder_ == nullptr) {
+        ESP_LOGE(TAG, "Failed to create SFX overlay decoder, error code: %d", ret);
+    } else {
+        sfx_decoder_sample_rate_ = codec->output_sample_rate();
+        sfx_decoder_duration_ms_ = OPUS_FRAME_DURATION_MS;
+        sfx_decoder_frame_size_ = sfx_decoder_sample_rate_ / 1000 * OPUS_FRAME_DURATION_MS;
+    }
     esp_opus_enc_config_t opus_enc_cfg = AS_OPUS_ENC_CONFIG();
     ret = esp_opus_enc_open(&opus_enc_cfg, sizeof(esp_opus_enc_config_t), &opus_encoder_);
     if (opus_encoder_ == nullptr) {
@@ -88,8 +111,10 @@ void AudioService::Initialize(AudioCodec* codec) {
     }
 
     if (codec->input_sample_rate() != 16000) {
+        // Mic path: keep complexity 2. This runs on every captured frame for the
+        // entire uptime, competing with the always-on wake word for CPU.
         esp_ae_rate_cvt_cfg_t input_resampler_cfg = RATE_CVT_CFG(
-            codec->input_sample_rate(), ESP_AUDIO_SAMPLE_RATE_16K, codec->input_channels());
+            codec->input_sample_rate(), ESP_AUDIO_SAMPLE_RATE_16K, codec->input_channels(), 2);
         auto resampler_ret = esp_ae_rate_cvt_open(&input_resampler_cfg, &input_resampler_);
         if (input_resampler_ == nullptr) {
             ESP_LOGE(TAG, "Failed to create input resampler, error code: %d", resampler_ret);
@@ -129,6 +154,8 @@ void AudioService::Initialize(AudioCodec* codec) {
 void AudioService::Start() {
     service_stopped_ = false;
     xEventGroupClearBits(event_group_, AS_EVENT_AUDIO_TESTING_RUNNING | AS_EVENT_WAKE_WORD_RUNNING | AS_EVENT_AUDIO_PROCESSOR_RUNNING);
+    last_input_time_ = std::chrono::steady_clock::now();
+    last_output_time_ = last_input_time_;
 
     esp_timer_start_periodic(audio_power_timer_, 1000000);
 
@@ -167,7 +194,47 @@ void AudioService::Start() {
         AudioService* audio_service = (AudioService*)arg;
         audio_service->OpusCodecTask();
         vTaskDelete(NULL);
-    }, "opus_codec", 2048 * 12, this, 2, &opus_codec_task_handle_);
+      /* DO NOT trim to a single measured high-water reading. 2048*6 was tried
+       * on the strength of a 7884-byte sample and overflowed as soon as the
+       * ENCODE path first ran (connecting -> listening, AFE start): that sample
+       * had only ever seen decode. Real peak is >12288; this stays at the known
+       * -good 24576 until a peak measured across a fully exercised session
+       * (speech + TTS playback + SFX) says otherwise. */
+    }, "opus_codec", 2048 * 12, this, 5, &opus_codec_task_handle_);
+
+    /* Start the SFX overlay codec task. Runs on its own thread of execution
+     * (lowest priority of the four) so decoding a long overlay clip never
+     * steals CPU time from the voice lane's OpusCodecTask mid-stream.
+     *
+     * This 24KB stack is pinned to PSRAM deliberately. The history behind that,
+     * because it has been flip-flopped three times:
+     *   2026-09-03  moved to PSRAM to free internal SRAM for AFE, which needs it
+     *               (AFE_MEMORY_ALLOC_INTERNAL_PSRAM_BALANCE).
+     *   2026-09-07  reverted to plain xTaskCreate as a diagnostic, on the theory
+     *               that PSRAM bus latency was causing the overlay crackle.
+     *   2026-09-08  pinned to MALLOC_CAP_INTERNAL to test that theory properly.
+     *               Result killed it: reserving ~24KB of internal RAM here
+     *               starved WiFi connect, AND the crackle was still present.
+     *               So stack placement does not cause the crackle, while
+     *               internal placement demonstrably costs connectivity.
+     * Conclusion: PSRAM is the correct home. Pinning it explicitly (rather than
+     * plain xTaskCreate, which floats between heaps boot-to-boot under
+     * CONFIG_SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY) also makes placement
+     * deterministic, which the reboot-dependent crackle investigation needs.
+     * The crackle itself is still unexplained -- look at scheduling/priority
+     * during the busy boot window or the decode path, not memory location.
+     *
+     * vTaskDeleteWithCaps in the task body is MANDATORY here: deleting a
+     * WithCaps task with plain vTaskDelete leaks both the stack and the TCB. */
+    if (xTaskCreateWithCaps([](void* arg) {
+            AudioService* audio_service = (AudioService*)arg;
+            audio_service->SfxCodecTask();
+            vTaskDeleteWithCaps(NULL);
+        }, "sfx_codec", 2048 * 12, this, 3, &sfx_codec_task_handle_,
+        MALLOC_CAP_SPIRAM) != pdPASS) {
+        sfx_codec_task_handle_ = nullptr;
+        ESP_LOGE(TAG, "Failed to create sfx_codec task (PSRAM stack) -- overlay SFX disabled");
+    }
 }
 
 void AudioService::Stop() {
@@ -182,6 +249,8 @@ void AudioService::Stop() {
     audio_decode_queue_.clear();
     audio_playback_queue_.clear();
     audio_testing_queue_.clear();
+    audio_sfx_decode_queue_.clear();
+    audio_sfx_playback_queue_.clear();
     audio_queue_cv_.notify_all();
 }
 
@@ -219,6 +288,20 @@ bool AudioService::ReadAudioData(std::vector<int16_t>& data, int sample_rate, in
     /* Update the last input time */
     last_input_time_ = std::chrono::steady_clock::now();
     debug_statistics_.input_count++;
+    uint64_t now_ms = esp_timer_get_time() / 1000ULL;
+    int peak = 0;
+    uint64_t sum_abs = 0;
+    for (int16_t sample : data) {
+        int value = sample >= 0 ? sample : -sample;
+        if (value > peak) {
+            peak = value;
+        }
+        sum_abs += static_cast<uint64_t>(value);
+    }
+    int avg_abs = data.empty() ? 0 : static_cast<int>(sum_abs / data.size());
+    last_input_ms_.store(now_ms);
+    last_input_peak_.store(peak);
+    last_input_avg_abs_.store(avg_abs);
 
 #if CONFIG_USE_AUDIO_DEBUGGER
     // 音频调试：发送原始音频数据
@@ -271,13 +354,17 @@ void AudioService::AudioInputTask() {
 
         /* Feed the wake word and/or audio processor */
         if (bits & (AS_EVENT_WAKE_WORD_RUNNING | AS_EVENT_AUDIO_PROCESSOR_RUNNING)) {
+            const bool wake_word_running = (bits & AS_EVENT_WAKE_WORD_RUNNING) != 0;
+            const bool audio_processor_running = (bits & AS_EVENT_AUDIO_PROCESSOR_RUNNING) != 0;
+
             int samples = 160; // 10ms
+
             std::vector<int16_t> data;
             if (ReadAudioData(data, 16000, samples)) {
-                if (bits & AS_EVENT_WAKE_WORD_RUNNING) {
+                if (wake_word_running && wake_word_ != nullptr) {
                     wake_word_->Feed(data);
                 }
-                if (bits & AS_EVENT_AUDIO_PROCESSOR_RUNNING) {
+                if (audio_processor_running && audio_processor_ != nullptr) {
                     audio_processor_->Feed(std::move(data));
                 }
                 continue;
@@ -294,13 +381,23 @@ void AudioService::AudioInputTask() {
 void AudioService::AudioOutputTask() {
     while (true) {
         std::unique_lock<std::mutex> lock(audio_queue_mutex_);
-        audio_queue_cv_.wait(lock, [this]() { return !audio_playback_queue_.empty() || service_stopped_; });
+        audio_queue_cv_.wait(lock, [this]() {
+            return !audio_playback_queue_.empty() || !audio_sfx_playback_queue_.empty() || service_stopped_;
+        });
         if (service_stopped_) {
             break;
         }
 
-        auto task = std::move(audio_playback_queue_.front());
-        audio_playback_queue_.pop_front();
+        std::unique_ptr<AudioTask> voice_task;
+        if (!audio_playback_queue_.empty()) {
+            voice_task = std::move(audio_playback_queue_.front());
+            audio_playback_queue_.pop_front();
+        }
+        std::unique_ptr<AudioTask> sfx_task;
+        if (!audio_sfx_playback_queue_.empty()) {
+            sfx_task = std::move(audio_sfx_playback_queue_.front());
+            audio_sfx_playback_queue_.pop_front();
+        }
         audio_queue_cv_.notify_all();
         lock.unlock();
 
@@ -310,7 +407,34 @@ void AudioService::AudioOutputTask() {
             codec_->EnableOutput(true);
         }
 
-        codec_->OutputData(task->pcm);
+        // The overlay lane is muted for the whole AI session, so drop any sfx
+        // frame that was already decoded (or grabbed between the flush and
+        // now) instead of playing it under the voice lane. The voice lane is
+        // never attenuated anymore — no ducking.
+        if (sfx_task && sfx_muted_.load()) {
+            sfx_task.reset();
+        }
+
+        if (voice_task && sfx_task) {
+            // Both lanes have audio this cycle: mix the overlay on top of the
+            // voice lane at full gain so the single mono speaker plays them
+            // together instead of one waiting for the other.
+            size_t mix_len = std::min(voice_task->pcm.size(), sfx_task->pcm.size());
+            for (size_t i = 0; i < mix_len; ++i) {
+                int32_t mixed = static_cast<int32_t>(voice_task->pcm[i]) + static_cast<int32_t>(sfx_task->pcm[i]);
+                mixed = std::min<int32_t>(std::max<int32_t>(mixed, INT16_MIN), INT16_MAX);
+                voice_task->pcm[i] = static_cast<int16_t>(mixed);
+            }
+            codec_->OutputData(voice_task->pcm);
+            if (sfx_task->pcm.size() > mix_len) {
+                std::vector<int16_t> remainder(sfx_task->pcm.begin() + mix_len, sfx_task->pcm.end());
+                codec_->OutputData(remainder);
+            }
+        } else if (voice_task) {
+            codec_->OutputData(voice_task->pcm);
+        } else if (sfx_task) {
+            codec_->OutputData(sfx_task->pcm);
+        }
 
         /* Update the last output time */
         last_output_time_ = std::chrono::steady_clock::now();
@@ -318,9 +442,9 @@ void AudioService::AudioOutputTask() {
 
 #if CONFIG_USE_SERVER_AEC
         /* Record the timestamp for server AEC */
-        if (task->timestamp > 0) {
+        if (voice_task && voice_task->timestamp > 0) {
             lock.lock();
-            timestamp_queue_.push_back(task->timestamp);
+            timestamp_queue_.push_back(voice_task->timestamp);
         }
 #endif
     }
@@ -386,7 +510,26 @@ void AudioService::OpusCodecTask() {
                     audio_queue_cv_.notify_all();
                     debug_statistics_.decode_count++;
                 } else {
-                    ESP_LOGE(TAG, "Failed to decode audio after resize, error code: %d", ret);
+                    if (ret == ESP_AUDIO_ERR_BUFF_NOT_ENOUGH) {
+                        ESP_LOGW(TAG,
+                                 "Opus decode output buffer too small after resize: packet_sr=%d packet_fd=%d decoder_sr=%d decoder_fd=%d payload=%u out_len=%u",
+                                 packet->sample_rate,
+                                 packet->frame_duration,
+                                 decoder_sample_rate_,
+                                 decoder_duration_ms_,
+                                 static_cast<unsigned>(packet->payload.size()),
+                                 static_cast<unsigned>(out_frame.len));
+                    } else {
+                        ESP_LOGE(TAG,
+                                 "Failed to decode audio after resize: ret=%d packet_sr=%d packet_fd=%d decoder_sr=%d decoder_fd=%d payload=%u out_len=%u",
+                                 ret,
+                                 packet->sample_rate,
+                                 packet->frame_duration,
+                                 decoder_sample_rate_,
+                                 decoder_duration_ms_,
+                                 static_cast<unsigned>(packet->payload.size()),
+                                 static_cast<unsigned>(out_frame.len));
+                    }
                     lock.lock();
                 }
             } else {
@@ -449,6 +592,77 @@ void AudioService::OpusCodecTask() {
     ESP_LOGW(TAG, "Opus codec task stopped");
 }
 
+void AudioService::SfxCodecTask() {
+    // Decodes the overlay lane on its own thread of execution. Deliberately
+    // separate from OpusCodecTask: decoding is CPU-bound work, and a long
+    // overlay clip (the mischief pool goes up to ~17s) previously shared
+    // OpusCodecTask's single execution slot with the voice lane, halving its
+    // effective decode throughput for as long as the overlay was draining
+    // and starving AudioOutputTask of voice PCM. Running it as its own
+    // (lowest-priority) task means it can never steal that slot.
+    while (true) {
+        std::unique_lock<std::mutex> lock(audio_queue_mutex_);
+        audio_queue_cv_.wait(lock, [this]() {
+            return service_stopped_ ||
+                (!audio_sfx_decode_queue_.empty() && audio_sfx_playback_queue_.size() < MAX_SFX_PLAYBACK_TASKS_IN_QUEUE);
+        });
+        if (service_stopped_) {
+            break;
+        }
+
+        auto packet = std::move(audio_sfx_decode_queue_.front());
+        audio_sfx_decode_queue_.pop_front();
+        audio_queue_cv_.notify_all();
+        lock.unlock();
+
+        auto task = std::make_unique<AudioTask>();
+        task->type = kAudioTaskTypeDecodeToPlaybackQueue;
+        task->timestamp = packet->timestamp;
+
+        SetSfxDecodeSampleRate(packet->sample_rate, packet->frame_duration);
+        if (sfx_opus_decoder_ != nullptr) {
+            task->pcm.resize(sfx_decoder_frame_size_);
+            esp_audio_dec_in_raw_t raw = {
+                .buffer = (uint8_t *)(packet->payload.data()),
+                .len = (uint32_t)(packet->payload.size()),
+                .consumed = 0,
+                .frame_recover = ESP_AUDIO_DEC_RECOVERY_NONE,
+            };
+            esp_audio_dec_out_frame_t out_frame = {
+                .buffer = (uint8_t *)(task->pcm.data()),
+                .len = (uint32_t)(task->pcm.size() * sizeof(int16_t)),
+                .decoded_size = 0,
+            };
+            esp_audio_dec_info_t dec_info = {};
+            std::unique_lock<std::mutex> sfx_decoder_lock(sfx_decoder_mutex_);
+            auto ret = esp_opus_dec_decode(sfx_opus_decoder_, &raw, &out_frame, &dec_info);
+            sfx_decoder_lock.unlock();
+            if (ret == ESP_AUDIO_ERR_OK) {
+                task->pcm.resize(out_frame.decoded_size / sizeof(int16_t));
+                if (sfx_decoder_sample_rate_ != codec_->output_sample_rate() && sfx_output_resampler_ != nullptr) {
+                    uint32_t target_size = 0;
+                    esp_ae_rate_cvt_get_max_out_sample_num(sfx_output_resampler_, task->pcm.size(), &target_size);
+                    std::vector<int16_t> resampled(target_size);
+                    uint32_t actual_output = target_size;
+                    esp_ae_rate_cvt_process(sfx_output_resampler_, (esp_ae_sample_t)task->pcm.data(), task->pcm.size(),
+                                            (esp_ae_sample_t)resampled.data(), &actual_output);
+                    resampled.resize(actual_output);
+                    task->pcm = std::move(resampled);
+                }
+                lock.lock();
+                audio_sfx_playback_queue_.push_back(std::move(task));
+                audio_queue_cv_.notify_all();
+            } else {
+                ESP_LOGW(TAG, "Failed to decode SFX overlay audio, error code: %d", ret);
+            }
+        } else {
+            ESP_LOGE(TAG, "SFX overlay decoder is not configured");
+        }
+    }
+
+    ESP_LOGW(TAG, "SFX codec task stopped");
+}
+
 void AudioService::SetDecodeSampleRate(int sample_rate, int frame_duration) {
     if (decoder_sample_rate_ == sample_rate && decoder_duration_ms_ == frame_duration) {
         return;
@@ -476,11 +690,60 @@ void AudioService::SetDecodeSampleRate(int sample_rate, int frame_duration) {
             esp_ae_rate_cvt_close(output_resampler_);
             output_resampler_ = nullptr;
         }
+        /* TTS path: complexity 3 (highest quality). The gateway sends 24000 Hz
+         * (Gemini Live's native rate) while this board's I2S runs at 16000, so
+         * every TTS stream is decimated 3:2 here. The board CANNOT simply run
+         * its output at 24000: NoAudioCodecDuplex puts TX and RX on the same
+         * I2S_NUM_0 channel pair sharing one BCLK/WS, so raising the output
+         * rate silently raises the mic rate too while the rest of the pipeline
+         * still assumes 16000 -- pitch-shifted capture, broken wake word and
+         * STT. The real elimination is server-side: have the gateway honour the
+         * 16000 this client advertises in its hello audio_params. Until then
+         * this at least resamples as cleanly as the library allows. */
         esp_ae_rate_cvt_cfg_t output_resampler_cfg = RATE_CVT_CFG(
-            decoder_sample_rate_, codec->output_sample_rate(), ESP_AUDIO_MONO);
+            decoder_sample_rate_, codec->output_sample_rate(), ESP_AUDIO_MONO, 3);
         auto resampler_ret = esp_ae_rate_cvt_open(&output_resampler_cfg, &output_resampler_);
         if (output_resampler_ == nullptr) {
             ESP_LOGE(TAG, "Failed to create output resampler, error code: %d", resampler_ret);
+        }
+    }
+}
+
+void AudioService::SetSfxDecodeSampleRate(int sample_rate, int frame_duration) {
+    if (sfx_decoder_sample_rate_ == sample_rate && sfx_decoder_duration_ms_ == frame_duration) {
+        return;
+    }
+    std::unique_lock<std::mutex> sfx_decoder_lock(sfx_decoder_mutex_);
+    if (sfx_opus_decoder_ != nullptr) {
+        esp_opus_dec_close(sfx_opus_decoder_);
+        sfx_opus_decoder_ = nullptr;
+    }
+    sfx_decoder_lock.unlock();
+    esp_opus_dec_cfg_t opus_dec_cfg = OPUS_DEC_CFG(sample_rate, frame_duration);
+    auto ret = esp_opus_dec_open(&opus_dec_cfg, sizeof(esp_opus_dec_cfg_t), &sfx_opus_decoder_);
+    if (sfx_opus_decoder_ == nullptr) {
+        ESP_LOGE(TAG, "Failed to create SFX overlay decoder, error code: %d", ret);
+        return;
+    }
+    sfx_decoder_sample_rate_ = sample_rate;
+    sfx_decoder_duration_ms_ = frame_duration;
+    sfx_decoder_frame_size_ = sfx_decoder_sample_rate_ / 1000 * frame_duration;
+
+    auto codec = Board::GetInstance().GetAudioCodec();
+    if (sfx_decoder_sample_rate_ != codec->output_sample_rate()) {
+        if (sfx_output_resampler_ != nullptr) {
+            esp_ae_rate_cvt_close(sfx_output_resampler_);
+            sfx_output_resampler_ = nullptr;
+        }
+        /* SFX overlay path: deliberately left at complexity 2, unchanged. The
+         * reboot-dependent overlay crackle is still unexplained, so this build
+         * changes only the TTS path -- keeping this one fixed means any change
+         * in the crackle can be attributed, instead of confounding two edits. */
+        esp_ae_rate_cvt_cfg_t sfx_output_resampler_cfg = RATE_CVT_CFG(
+            sfx_decoder_sample_rate_, codec->output_sample_rate(), ESP_AUDIO_MONO, 2);
+        auto resampler_ret = esp_ae_rate_cvt_open(&sfx_output_resampler_cfg, &sfx_output_resampler_);
+        if (sfx_output_resampler_ == nullptr) {
+            ESP_LOGE(TAG, "Failed to create SFX output resampler, error code: %d", resampler_ret);
         }
     }
 }
@@ -525,6 +788,39 @@ bool AudioService::PushPacketToDecodeQueue(std::unique_ptr<AudioStreamPacket> pa
     audio_decode_queue_.push_back(std::move(packet));
     audio_queue_cv_.notify_all();
     return true;
+}
+
+bool AudioService::PushPacketToSfxDecodeQueue(std::unique_ptr<AudioStreamPacket> packet) {
+    // A clip's packets are pushed one demuxer callback at a time, so the mute
+    // can land partway through a PlayOverlaySound that already passed its own
+    // check. Re-check here so the rest of that clip is dropped too.
+    if (sfx_muted_.load()) {
+        return false;
+    }
+    std::unique_lock<std::mutex> lock(audio_queue_mutex_);
+    if (audio_sfx_decode_queue_.size() >= MAX_SFX_DECODE_PACKETS_IN_QUEUE) {
+        // Overlay sounds are short one-shots; never worth waiting or backing up.
+        return false;
+    }
+    audio_sfx_decode_queue_.push_back(std::move(packet));
+    audio_queue_cv_.notify_all();
+    return true;
+}
+
+void AudioService::SetSfxMuted(bool muted) {
+    bool was_muted = sfx_muted_.exchange(muted);
+    if (was_muted == muted) {
+        return;
+    }
+    if (muted) {
+        // Go quiet now, not at the end of the current clip: drop the undecoded
+        // packets and the decoded frames both. AudioOutputTask discards any
+        // frame it already popped, so nothing survives this.
+        std::lock_guard<std::mutex> lock(audio_queue_mutex_);
+        audio_sfx_decode_queue_.clear();
+        audio_sfx_playback_queue_.clear();
+    }
+    ESP_LOGI(TAG, "SFX overlay lane %s", muted ? "muted" : "unmuted");
 }
 
 std::unique_ptr<AudioStreamPacket> AudioService::PopPacketFromSendQueue() {
@@ -586,15 +882,31 @@ void AudioService::EnableWakeWordDetection(bool enable) {
     }
 }
 
+bool AudioService::EnsureAudioProcessorInitialized() {
+    if (audio_processor_initialized_) {
+        return true;
+    }
+    audio_processor_->Initialize(codec_, OPUS_FRAME_DURATION_MS, models_list_);
+    // Initialize() returns void and bails out silently-ish on any of its error
+    // paths (AFE config, AFE handle, create_from_config, chunk sizes), so the
+    // only way to know whether it took is to ask for the feed size — it is 0
+    // exactly when afe_data_ is null. Latching the flag to true regardless (as
+    // this used to) turned one transient allocation failure into a mic that
+    // stayed dead until reboot: every later attempt skipped re-init, saw feed
+    // size 0, and bailed. Leave the flag false on failure so the next attempt
+    // retries, by which point the memory pressure may have passed.
+    bool ok = audio_processor_->GetFeedSize() > 0;
+    audio_processor_initialized_ = ok;
+    if (!ok) {
+        ESP_LOGE(TAG, "Audio processor failed to initialize; will retry on next use");
+    }
+    return ok;
+}
+
 void AudioService::EnableVoiceProcessing(bool enable) {
     ESP_LOGD(TAG, "%s voice processing", enable ? "Enabling" : "Disabling");
     if (enable) {
-        if (!audio_processor_initialized_) {
-            audio_processor_->Initialize(codec_, OPUS_FRAME_DURATION_MS, models_list_);
-            audio_processor_initialized_ = true;
-        }
-
-        if (audio_processor_->GetFeedSize() == 0) {
+        if (!EnsureAudioProcessorInitialized() || audio_processor_->GetFeedSize() == 0) {
             ESP_LOGE(TAG, "Audio processor is unavailable (feed size=0), skip enabling voice processing");
             xEventGroupClearBits(event_group_, AS_EVENT_AUDIO_PROCESSOR_RUNNING);
             return;
@@ -634,9 +946,8 @@ void AudioService::EnableAudioTesting(bool enable) {
 
 void AudioService::EnableDeviceAec(bool enable) {
     ESP_LOGI(TAG, "%s device AEC", enable ? "Enabling" : "Disabling");
-    if (!audio_processor_initialized_) {
-        audio_processor_->Initialize(codec_, OPUS_FRAME_DURATION_MS, models_list_);
-        audio_processor_initialized_ = true;
+    if (!EnsureAudioProcessorInitialized()) {
+        return;
     }
 
     audio_processor_->EnableDeviceAec(enable);
@@ -645,6 +956,56 @@ void AudioService::EnableDeviceAec(bool enable) {
 void AudioService::SetCallbacks(AudioServiceCallbacks& callbacks) {
     callbacks_ = callbacks;
 }
+
+namespace {
+
+// An Opus packet self-describes its own duration in its first (TOC) byte, so
+// there is no need to assume one. The overlay assets are all 20ms packets, not
+// the 60ms this code used to hardcode, which made every queue bound sized in
+// "packets" mean a third of what it looked like.
+//
+// TOC layout (RFC 6716 s3.1): config = toc >> 3, c = toc & 3. `config` selects
+// the frame size, `c` how many frames the packet carries (3 = arbitrary count
+// in the low 6 bits of the next byte).
+int OpusPacketDurationMs(const uint8_t* data, size_t len) {
+    if (data == nullptr || len == 0) {
+        return 0;
+    }
+    // Frame size per config, in tenths of a millisecond (CELT can do 2.5ms).
+    static const uint16_t kFrameTenthsMs[32] = {
+        100, 200, 400, 600,   // SILK NB
+        100, 200, 400, 600,   // SILK MB
+        100, 200, 400, 600,   // SILK WB
+        100, 200,             // Hybrid SWB
+        100, 200,             // Hybrid FB
+         25,  50, 100, 200,   // CELT NB
+         25,  50, 100, 200,   // CELT WB
+         25,  50, 100, 200,   // CELT SWB
+         25,  50, 100, 200,   // CELT FB
+    };
+    int config = data[0] >> 3;
+    int code = data[0] & 0x03;
+    int frames;
+    switch (code) {
+        case 0:  frames = 1; break;
+        case 1:
+        case 2:  frames = 2; break;
+        default:
+            if (len < 2) {
+                return 0;
+            }
+            frames = data[1] & 0x3F;
+            break;
+    }
+    if (frames <= 0) {
+        return 0;
+    }
+    int tenths = kFrameTenthsMs[config] * frames;
+    // Round to whole milliseconds, never down to zero (a lone 2.5ms CELT frame).
+    return tenths < 10 ? 1 : tenths / 10;
+}
+
+}  // namespace
 
 void AudioService::PlaySound(const std::string_view& ogg) {
     if (!codec_->output_enabled()) {
@@ -671,6 +1032,41 @@ void AudioService::PlaySound(const std::string_view& ogg) {
     demuxer->Process(buf, size);
 }
 
+void AudioService::PlayOverlaySound(const std::string_view& ogg) {
+    // Muted for the whole AI session: bail before the demuxer runs so we don't
+    // spend the parse (and don't power the codec back up) for audio that would
+    // only be thrown away.
+    if (sfx_muted_.load()) {
+        ESP_LOGD(TAG, "SFX muted, dropping overlay sound");
+        return;
+    }
+
+    if (!codec_->output_enabled()) {
+        esp_timer_stop(audio_power_timer_);
+        esp_timer_start_periodic(audio_power_timer_, AUDIO_POWER_CHECK_INTERVAL_MS * 1000);
+        codec_->EnableOutput(true);
+    }
+
+    const auto* buf = reinterpret_cast<const uint8_t*>(ogg.data());
+    size_t size = ogg.size();
+
+    auto demuxer = std::make_unique<OggDemuxer>();
+    demuxer->OnDemuxerFinished([this](const uint8_t* data, int sample_rate, size_t size){
+        auto packet = std::make_unique<AudioStreamPacket>();
+        packet->sample_rate = sample_rate;
+        // Read the real duration off the packet instead of assuming 60ms; the
+        // overlay assets are 20ms, and getting this wrong made the decoder
+        // frame buffer 3x larger than needed and every queue bound wrong.
+        int duration_ms = OpusPacketDurationMs(data, size);
+        packet->frame_duration = duration_ms > 0 ? duration_ms : OPUS_FRAME_DURATION_MS;
+        packet->payload.resize(size);
+        std::memcpy(packet->payload.data(), data, size);
+        PushPacketToSfxDecodeQueue(std::move(packet));
+    });
+    demuxer->Reset();
+    demuxer->Process(buf, size);
+}
+
 void AudioService::PlayEmotionalVoice(const std::string& emotion) {
     if (!emotion_voice_map_) {
         ESP_LOGW("AudioService", "EmotionVoiceMap not initialized");
@@ -685,7 +1081,11 @@ void AudioService::PlayEmotionalVoice(const std::string& emotion) {
 
     ESP_LOGI("AudioService", "Playing emotional voice for emotion: %s (size: %zu bytes)",
              emotion.c_str(), voice.size());
-    PlaySound(voice);
+    // Overlay lane rather than the main lane so an emotion line never queues
+    // up behind whatever else is on the voice lane. It inherits the lane's
+    // mute, so it is silent for the whole AI session (see SetSfxMuted and
+    // Application::PlayEmotionalVoice).
+    PlayOverlaySound(voice);
 }
 
 bool AudioService::IsIdle() {
@@ -716,9 +1116,13 @@ void AudioService::ResetDecoder() {
 
 void AudioService::CheckAndUpdateAudioPowerState() {
     auto now = std::chrono::steady_clock::now();
+    const EventBits_t active_bits = xEventGroupGetBits(event_group_);
+    const bool capture_active = (active_bits & (AS_EVENT_AUDIO_TESTING_RUNNING |
+                                                AS_EVENT_WAKE_WORD_RUNNING |
+                                                AS_EVENT_AUDIO_PROCESSOR_RUNNING)) != 0;
     auto input_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_input_time_).count();
     auto output_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_output_time_).count();
-    if (input_elapsed > AUDIO_POWER_TIMEOUT_MS && codec_->input_enabled()) {
+    if (!capture_active && input_elapsed > AUDIO_POWER_TIMEOUT_MS && codec_->input_enabled()) {
         codec_->EnableInput(false);
     }
     if (output_elapsed > AUDIO_POWER_TIMEOUT_MS && codec_->output_enabled()) {
@@ -767,6 +1171,28 @@ void AudioService::SetModelsList(srmodel_list_t* models_list) {
             }
         });
     }
+}
+
+AudioDebugSnapshot AudioService::GetDebugSnapshot() {
+    AudioDebugSnapshot snapshot;
+    snapshot.last_input_ms = last_input_ms_.load();
+    snapshot.last_input_peak = last_input_peak_.load();
+    snapshot.last_input_avg_abs = last_input_avg_abs_.load();
+    snapshot.voice_detected = voice_detected_;
+    snapshot.input_enabled = codec_ != nullptr ? codec_->input_enabled() : false;
+    snapshot.output_enabled = codec_ != nullptr ? codec_->output_enabled() : false;
+    snapshot.wake_word_running = IsWakeWordRunning();
+    snapshot.audio_processor_running = IsAudioProcessorRunning();
+
+    std::lock_guard<std::mutex> lock(audio_queue_mutex_);
+    snapshot.encode_queue_size = audio_encode_queue_.size();
+    snapshot.decode_queue_size = audio_decode_queue_.size();
+    snapshot.send_queue_size = audio_send_queue_.size();
+    snapshot.playback_queue_size = audio_playback_queue_.size();
+    snapshot.testing_queue_size = audio_testing_queue_.size();
+    snapshot.sfx_decode_queue_size = audio_sfx_decode_queue_.size();
+    snapshot.sfx_playback_queue_size = audio_sfx_playback_queue_.size();
+    return snapshot;
 }
 
 bool AudioService::IsAfeWakeWord() {

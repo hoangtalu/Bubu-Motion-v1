@@ -148,7 +148,14 @@ void SystemInfo::PrintTaskList() {
 void SystemInfo::PrintHeapStats() {
     int free_sram = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
     int min_free_sram = heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL);
-    ESP_LOGI(TAG, "free sram: %u minimal sram: %u", free_sram, min_free_sram);
+    // Largest free block and the DMA pool matter more than total free here: the
+    // AES accelerator needs a contiguous DMA-capable internal allocation, so it
+    // can fail while plenty of fragmented internal RAM is still "free".
+    ESP_LOGI(TAG, "free sram: %u minimal sram: %u largest: %u | dma free: %u largest: %u",
+             free_sram, min_free_sram,
+             heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
+             heap_caps_get_free_size(MALLOC_CAP_DMA),
+             heap_caps_get_largest_free_block(MALLOC_CAP_DMA));
 }
 
 void SystemInfo::PrintPmLocks() {

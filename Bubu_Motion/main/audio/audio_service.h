@@ -6,10 +6,13 @@
 #include <condition_variable>
 #include <chrono>
 #include <mutex>
+#include <atomic>
 
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <freertos/event_groups.h>
+#include <freertos/idf_additions.h>  // xTaskCreateWithCaps/vTaskDeleteWithCaps for the PSRAM-pinned sfx_codec task
+#include <esp_heap_caps.h>
 #include <esp_timer.h>
 #include <model_path.h>
 #include "esp_audio_enc.h"
@@ -44,6 +47,50 @@
 #define MAX_SEND_PACKETS_IN_QUEUE (2400 / OPUS_FRAME_DURATION_MS)
 #define AUDIO_TESTING_MAX_DURATION_MS 10000
 #define MAX_TIMESTAMPS_IN_QUEUE 3
+
+// Overlay lane: local sounds triggered by touch/mischief reactions get their
+// own decoder and queue so they never queue up behind the main voice lane
+// (network TTS + Bubu's own emotional voice lines). The two lanes are never
+// meant to be audible at once: SFX is hard-muted for the whole AI session
+// (see SetSfxMuted) and only resumes once the device is back to Idle. The
+// mix in AudioOutputTask exists only to cover the brief window where a
+// local sound and residual voice playback overlap while not muted; there is
+// deliberately no gain ducking anymore.
+//
+// PlayOverlaySound's OggDemuxer parses the whole embedded clip synchronously
+// in one call, firing one decode-queue push per ~60ms Opus packet back to
+// back — for the longest clips in the mischief pool (bubu_sing4.ogg is
+// ~17s, ~285 packets) that happens far faster than OpusCodecTask, a
+// separate task, can drain them. The decode queue has to be sized to
+// absorb a whole clip's worth of (small, compressed) packets up front, or
+// everything past the first few packets gets silently dropped and the
+// sound cuts off almost immediately. 20s of headroom comfortably covers
+// today's longest asset with margin for future ones.
+// Every overlay asset in main/assets/common is encoded as 20ms Opus packets
+// (verified against their TOC bytes), against OPUS_FRAME_DURATION_MS's 60 for
+// the network voice lane. Queue bounds counted in packets have to use this one
+// or they mean a third of what they say.
+#define OPUS_SFX_FRAME_DURATION_MS 20
+// Compressed-packet backlog, deliberately left at the count it has always had
+// rather than rescaled to the real packet size. At 20ms packets this is ~6.6s
+// of audio, not the 20s the old expression implied — so the longest clips
+// (bubu_sing3 ~15.3s, bubu_sing4 ~17.1s) already lose their tail. Growing it
+// is the wrong fix: payloads are ~79 bytes each, and anything under
+// CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL (2048) is allocated from INTERNAL RAM,
+// so covering a 17s clip would park ~100KB in exactly the pool AFE needs to
+// initialize. The real fix is to feed the demuxer incrementally instead of
+// parsing a whole clip synchronously into this queue.
+#define MAX_SFX_DECODE_PACKETS_IN_QUEUE 333
+
+// Decoded-PCM depth for the overlay lane. This is what actually protects the
+// speaker from scheduling jitter, and 2 frames was far too shallow: the assets
+// are 20ms packets (not the 60ms this file used to assume), so "2" was 40ms of
+// audio, produced by SfxCodecTask — the LOWEST-priority audio task, competing
+// with LVGL and the AFE task at the same or higher priority. Any hiccup longer
+// than 40ms underran the I2S stream, which is heard as a glitch/crackle partway
+// through nearly every clip. 12 frames is ~240ms of slack and costs ~9KB while
+// a clip is playing (nothing when idle).
+#define MAX_SFX_PLAYBACK_TASKS_IN_QUEUE 12
 
 #define AUDIO_POWER_TIMEOUT_MS 15000
 #define AUDIO_POWER_CHECK_INTERVAL_MS 1000
@@ -103,6 +150,24 @@ struct DebugStatistics {
     uint32_t playback_count = 0;
 };
 
+struct AudioDebugSnapshot {
+    uint64_t last_input_ms = 0;
+    int last_input_peak = 0;
+    int last_input_avg_abs = 0;
+    bool voice_detected = false;
+    bool input_enabled = false;
+    bool output_enabled = false;
+    bool wake_word_running = false;
+    bool audio_processor_running = false;
+    size_t encode_queue_size = 0;
+    size_t decode_queue_size = 0;
+    size_t send_queue_size = 0;
+    size_t playback_queue_size = 0;
+    size_t testing_queue_size = 0;
+    size_t sfx_decode_queue_size = 0;
+    size_t sfx_playback_queue_size = 0;
+};
+
 class AudioService {
 public:
     AudioService();
@@ -120,9 +185,13 @@ public:
     bool IsWakeWordRunning() const { return xEventGroupGetBits(event_group_) & AS_EVENT_WAKE_WORD_RUNNING; }
     bool IsAudioProcessorRunning() const { return xEventGroupGetBits(event_group_) & AS_EVENT_AUDIO_PROCESSOR_RUNNING; }
     bool IsAfeWakeWord();
+    AudioDebugSnapshot GetDebugSnapshot();
 
     void EnableWakeWordDetection(bool enable);
     void EnableVoiceProcessing(bool enable);
+    // True once the audio processor is actually usable. Retries Initialize()
+    // on every call until it succeeds — a failed init must not latch.
+    bool EnsureAudioProcessorInitialized();
     void EnableAudioTesting(bool enable);
     void EnableDeviceAec(bool enable);
 
@@ -131,10 +200,17 @@ public:
     bool PushPacketToDecodeQueue(std::unique_ptr<AudioStreamPacket> packet, bool wait = false);
     std::unique_ptr<AudioStreamPacket> PopPacketFromSendQueue();
     void PlaySound(const std::string_view& sound);
+    void PlayOverlaySound(const std::string_view& sound);
     void PlayEmotionalVoice(const std::string& emotion);
     bool ReadAudioData(std::vector<int16_t>& data, int sample_rate, int samples);
     void ResetDecoder();
     void SetModelsList(srmodel_list_t* models_list);
+
+    // Mute/unmute the SFX overlay lane. Muting also flushes whatever is
+    // already queued on it, so the lane goes quiet immediately rather than
+    // draining the rest of the current clip under the AI's voice.
+    void SetSfxMuted(bool muted);
+    bool IsSfxMuted() const { return sfx_muted_.load(); }
 
 private:
     AudioCodec* codec_ = nullptr;
@@ -149,7 +225,16 @@ private:
     std::mutex input_resampler_mutex_;
     esp_ae_rate_cvt_handle_t input_resampler_ = nullptr;
     esp_ae_rate_cvt_handle_t output_resampler_ = nullptr;
-    
+
+    // Overlay (SFX) lane: independent decoder/resampler so it never blocks on
+    // or gets blocked by the main voice lane's decoder state.
+    void* sfx_opus_decoder_ = nullptr;
+    std::mutex sfx_decoder_mutex_;
+    esp_ae_rate_cvt_handle_t sfx_output_resampler_ = nullptr;
+    int sfx_decoder_sample_rate_ = 0;
+    int sfx_decoder_duration_ms_ = OPUS_FRAME_DURATION_MS;
+    int sfx_decoder_frame_size_ = 0;
+
     // Encoder/Decoder state
     int encoder_sample_rate_ = 16000;
     int encoder_duration_ms_ = OPUS_FRAME_DURATION_MS;
@@ -167,6 +252,7 @@ private:
     TaskHandle_t audio_input_task_handle_ = nullptr;
     TaskHandle_t audio_output_task_handle_ = nullptr;
     TaskHandle_t opus_codec_task_handle_ = nullptr;
+    TaskHandle_t sfx_codec_task_handle_ = nullptr;
     std::mutex audio_queue_mutex_;
     std::condition_variable audio_queue_cv_;
     std::deque<std::unique_ptr<AudioStreamPacket>> audio_decode_queue_;
@@ -174,14 +260,27 @@ private:
     std::deque<std::unique_ptr<AudioStreamPacket>> audio_testing_queue_;
     std::deque<std::unique_ptr<AudioTask>> audio_encode_queue_;
     std::deque<std::unique_ptr<AudioTask>> audio_playback_queue_;
+    std::deque<std::unique_ptr<AudioStreamPacket>> audio_sfx_decode_queue_;
+    std::deque<std::unique_ptr<AudioTask>> audio_sfx_playback_queue_;
+    // When set, the overlay lane is silenced end to end: new clips are
+    // refused, in-flight packets are dropped and anything already decoded is
+    // discarded instead of being played. Set for the whole AI session by
+    // Application's state-change listener. Atomic because it is read on the
+    // audio tasks and written from whichever task drives the transition.
+    std::atomic<bool> sfx_muted_{false};
     // For server AEC
     std::deque<uint32_t> timestamp_queue_;
 
     bool wake_word_initialized_ = false;
+    // Only ever true when Initialize() actually produced a working processor
+    // (feed size > 0); see EnsureAudioProcessorInitialized.
     bool audio_processor_initialized_ = false;
     bool voice_detected_ = false;
     bool service_stopped_ = true;
     bool audio_input_need_warmup_ = false;
+    std::atomic<uint64_t> last_input_ms_{0};
+    std::atomic<int> last_input_peak_{0};
+    std::atomic<int> last_input_avg_abs_{0};
 
     esp_timer_handle_t audio_power_timer_ = nullptr;
     std::chrono::steady_clock::time_point last_input_time_;
@@ -190,8 +289,11 @@ private:
     void AudioInputTask();
     void AudioOutputTask();
     void OpusCodecTask();
+    void SfxCodecTask();
     void PushTaskToEncodeQueue(AudioTaskType type, std::vector<int16_t>&& pcm);
     void SetDecodeSampleRate(int sample_rate, int frame_duration);
+    void SetSfxDecodeSampleRate(int sample_rate, int frame_duration);
+    bool PushPacketToSfxDecodeQueue(std::unique_ptr<AudioStreamPacket> packet);
     void CheckAndUpdateAudioPowerState();
 };
 

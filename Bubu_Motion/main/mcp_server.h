@@ -122,28 +122,18 @@ public:
 
     std::string to_json() const {
         cJSON *json = cJSON_CreateObject();
-        
+
+        // Gemini function-calling accepts only a restricted OpenAPI subset and
+        // rejects the entire tool list with "Unknown field for Schema: minimum"
+        // if other JSON Schema keywords are present. Emit "type" only.
+        // Range/default enforcement still happens in C++ (see set_value()),
+        // so nothing is lost at runtime.
         if (type_ == kPropertyTypeBoolean) {
             cJSON_AddStringToObject(json, "type", "boolean");
-            if (has_default_value_) {
-                cJSON_AddBoolToObject(json, "default", value<bool>());
-            }
         } else if (type_ == kPropertyTypeInteger) {
             cJSON_AddStringToObject(json, "type", "integer");
-            if (has_default_value_) {
-                cJSON_AddNumberToObject(json, "default", value<int>());
-            }
-            if (min_value_.has_value()) {
-                cJSON_AddNumberToObject(json, "minimum", min_value_.value());
-            }
-            if (max_value_.has_value()) {
-                cJSON_AddNumberToObject(json, "maximum", max_value_.value());
-            }
         } else if (type_ == kPropertyTypeString) {
             cJSON_AddStringToObject(json, "type", "string");
-            if (has_default_value_) {
-                cJSON_AddStringToObject(json, "default", value<std::string>().c_str());
-            }
         }
         
         char *json_str = cJSON_PrintUnformatted(json);

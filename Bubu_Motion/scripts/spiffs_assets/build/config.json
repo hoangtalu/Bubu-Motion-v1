@@ -1,7 +1,7 @@
 {
-    "include_path": "/Users/judes/Downloads/xiaozhi-main/xiaozhi-doremon/xiaozhi-esp32/scripts/spiffs_assets/build/include",
-    "assets_path": "/Users/judes/Downloads/xiaozhi-main/xiaozhi-doremon/xiaozhi-esp32/scripts/spiffs_assets/build/assets",
-    "image_file": "/Users/judes/Downloads/xiaozhi-main/xiaozhi-doremon/xiaozhi-esp32/scripts/spiffs_assets/build/output/assets.bin",
+    "include_path": "/Users/judes/Downloads/Bubu-Motion-v1-main/Bubu_Motion/scripts/spiffs_assets/build/include",
+    "assets_path": "/Users/judes/Downloads/Bubu-Motion-v1-main/Bubu_Motion/scripts/spiffs_assets/build/assets",
+    "image_file": "/Users/judes/Downloads/Bubu-Motion-v1-main/Bubu_Motion/scripts/spiffs_assets/build/output/assets.bin",
     "lvgl_ver": "9.3.0",
     "assets_size": "0x400000",
     "support_format": ".png, .gif, .jpg, .bin, .json, .eaf",

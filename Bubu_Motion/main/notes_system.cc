@@ -79,16 +79,25 @@ std::string SlotKey(char prefix, size_t index) {
 
 void PersistLocked() {
     Settings settings(kNamespace, true);
-    settings.SetBool("has", !s_entries.empty());
-    settings.SetInt("count", static_cast<int32_t>(s_entries.size()));
 
+    // Write the slots before the count, so a write that fails partway leaves a
+    // smaller-but-consistent list rather than a count pointing at empty slots.
+    size_t written = 0;
     for (size_t i = 0; i < s_entries.size(); ++i) {
-        settings.SetString(SlotKey('k', i), s_entries[i].key);
-        settings.SetString(SlotKey('v', i), s_entries[i].value);
+        if (settings.SetString(SlotKey('k', i), s_entries[i].key) != ESP_OK ||
+            settings.SetString(SlotKey('v', i), s_entries[i].value) != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to persist note %zu of %zu; truncating stored list",
+                     i + 1, s_entries.size());
+            break;
+        }
+        ++written;
     }
 
+    settings.SetInt("count", static_cast<int32_t>(written));
+    settings.SetBool("has", written != 0);
+
     // Clear old slots that are no longer used.
-    for (size_t i = s_entries.size(); i < NotesSystem::kMaxEntries; ++i) {
+    for (size_t i = written; i < NotesSystem::kMaxEntries; ++i) {
         settings.EraseKey(SlotKey('k', i));
         settings.EraseKey(SlotKey('v', i));
     }

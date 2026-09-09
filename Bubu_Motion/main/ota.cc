@@ -24,6 +24,61 @@
 
 #define TAG "Ota"
 
+namespace {
+
+std::string GetJsonString(cJSON* object, const char* key) {
+    if (object == nullptr || key == nullptr) {
+        return "";
+    }
+
+    cJSON* item = cJSON_GetObjectItem(object, key);
+    if (!cJSON_IsString(item) || item->valuestring == nullptr) {
+        return "";
+    }
+
+    return item->valuestring;
+}
+
+std::string ExtractAssetsUrl(cJSON* root) {
+    if (root == nullptr) {
+        return "";
+    }
+
+    std::string assets_url = GetJsonString(root, "assets_url");
+    if (!assets_url.empty()) {
+        return assets_url;
+    }
+
+    cJSON* assets = cJSON_GetObjectItem(root, "assets");
+    if (cJSON_IsObject(assets)) {
+        assets_url = GetJsonString(assets, "url");
+        if (!assets_url.empty()) {
+            return assets_url;
+        }
+    }
+
+    return "";
+}
+
+void StoreAssetsDownloadUrl(const std::string& url, bool overwrite_existing) {
+    if (url.empty()) {
+        return;
+    }
+
+    Settings settings("assets", true);
+    std::string current_url = settings.GetString("download_url");
+    if (!overwrite_existing && !current_url.empty()) {
+        return;
+    }
+
+    if (current_url != url) {
+        ESP_LOGI(TAG, "Updating assets download URL: %s", url.c_str());
+        settings.SetString("download_url", url);
+    }
+}
+
+}  // namespace
+
 
 Ota::Ota() {
 #ifdef ESP_EFUSE_BLOCK_USR_DATA
@@ -46,6 +101,10 @@ Ota::~Ota() {
 std::string Ota::GetCheckVersionUrl() {
     Settings settings("wifi", false);
     std::string url = settings.GetString("ota_url");
+    // Migrate away from the old Vietbot fork default if it is still persisted in NVS.
+    if (url == "https://vietbot.vn/ota/") {
+        url.clear();
+    }
     if (url.empty()) {
         url = CONFIG_OTA_URL;
     }
@@ -92,6 +151,14 @@ esp_err_t Ota::CheckVersion() {
 
     std::string data = board.GetSystemInfoJson();
     std::string method = data.length() > 0 ? "POST" : "GET";
+    
+    // GitHub Raw strictly rejects POST requests with 403/405. 
+    // Force a GET request if we are downloading from GitHub.
+    if (url.find("githubusercontent.com") != std::string::npos) {
+        method = "GET";
+        data = ""; // Clear payload
+    }
+    
     http->SetContent(std::move(data));
 
     if (!http->Open(method, url)) {
@@ -221,26 +288,86 @@ esp_err_t Ota::CheckVersion() {
         if (cJSON_IsString(url)) {
             firmware_url_ = url->valuestring;
         }
-
-        if (cJSON_IsString(version) && cJSON_IsString(url)) {
-            // Check if the version is newer, for example, 0.1.0 is newer than 0.0.1
-            has_new_version_ = IsNewVersionAvailable(current_version_, firmware_version_);
-            if (has_new_version_) {
-                ESP_LOGI(TAG, "New version available: %s", firmware_version_.c_str());
-            } else {
-                ESP_LOGI(TAG, "Current is the latest version");
-            }
-            // If the force flag is set to 1, the given version is forced to be installed
-            cJSON *force = cJSON_GetObjectItem(firmware, "force");
-            if (cJSON_IsNumber(force) && force->valueint == 1) {
-                has_new_version_ = true;
-            }
-        }
     } else {
-        ESP_LOGW(TAG, "No firmware section found!");
+        // Fallback to flat format in case it's like Bubu-OTA/latest.json
+        cJSON *version = cJSON_GetObjectItem(root, "version");
+        if (cJSON_IsString(version)) {
+            firmware_version_ = version->valuestring;
+        }
+        cJSON *url = cJSON_GetObjectItem(root, "url");
+        if (cJSON_IsString(url)) {
+            firmware_url_ = url->valuestring;
+        }
     }
 
+    if (!firmware_version_.empty() && !firmware_url_.empty()) {
+        // Check if the version is newer
+        has_new_version_ = IsNewVersionAvailable(current_version_, firmware_version_);
+        if (has_new_version_) {
+            ESP_LOGI(TAG, "New version available: %s", firmware_version_.c_str());
+        } else {
+            ESP_LOGI(TAG, "Current is the latest version");
+        }
+        // If the force flag is set to 1, the given version is forced to be installed
+        cJSON *force = cJSON_IsObject(firmware) ? cJSON_GetObjectItem(firmware, "force") : cJSON_GetObjectItem(root, "force");
+        if (cJSON_IsNumber(force) && force->valueint == 1) {
+            has_new_version_ = true;
+        }
+    } else {
+        ESP_LOGW(TAG, "No firmware section or version info found!");
+    }
+
+    // Only pull a new assets_url when it rides along with a genuine firmware
+    // version bump -- otherwise every boot's OTA check (even one that finds
+    // nothing new) would re-stamp download_url and trigger a full assets
+    // partition re-download/overwrite on the next boot.
+    if (has_new_version_) {
+        StoreAssetsDownloadUrl(ExtractAssetsUrl(root), true);
+    }
     cJSON_Delete(root);
+
+    // --- SECOND PASS: Check GitHub specifically for Firmware ---
+    std::string github_url = "https://raw.githubusercontent.com/hoangtalu/Bubu-OTA/main/latest.json";
+    auto gh_http = SetupHttp();
+    gh_http->SetContent(""); // Force GET, no payload
+    if (gh_http->Open("GET", github_url)) {
+        if (gh_http->GetStatusCode() == 200) {
+            std::string gh_data = gh_http->ReadAll();
+            cJSON *gh_root = cJSON_Parse(gh_data.c_str());
+            if (gh_root != NULL) {
+                std::string gh_assets_url = ExtractAssetsUrl(gh_root);
+
+                // Try reading flat format
+                cJSON *gh_version = cJSON_GetObjectItem(gh_root, "version");
+                cJSON *gh_url = cJSON_GetObjectItem(gh_root, "url");
+                if (cJSON_IsString(gh_version) && cJSON_IsString(gh_url)) {
+                    std::string gh_firmware_version = gh_version->valuestring;
+                    std::string gh_firmware_url = gh_url->valuestring;
+                    
+                    bool gh_has_new = IsNewVersionAvailable(current_version_, gh_firmware_version);
+                    
+                    // If GitHub has a newer version than both the current device AND what Vietbot offered, use GitHub's.
+                    if (gh_has_new) {
+                        if (!has_new_version_ || IsNewVersionAvailable(firmware_version_, gh_firmware_version)) {
+                            ESP_LOGI(TAG, "Overriding update with newer GitHub firmware: %s", gh_firmware_version.c_str());
+                            has_new_version_ = true;
+                            firmware_version_ = gh_firmware_version;
+                            firmware_url_ = gh_firmware_url;
+                            StoreAssetsDownloadUrl(gh_assets_url, true);
+                        }
+                    }
+                }
+                // No unconditional fallback store here: GitHub's assets_url
+                // is only applied above, inside the gh_has_new branch, so a
+                // JSON edit alone (without an actual version bump) can't
+                // trigger a re-download.
+
+                cJSON_Delete(gh_root);
+            }
+        }
+        gh_http->Close();
+    }
+
     return ESP_OK;
 }
 

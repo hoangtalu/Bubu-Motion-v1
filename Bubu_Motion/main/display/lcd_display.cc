@@ -117,8 +117,16 @@ SpiLcdDisplay::SpiLcdDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_h
     // lv image cache, currently only PNG is supported
     size_t psram_size_mb = esp_psram_get_size() / 1024 / 1024;
     if (psram_size_mb >= 8) {
-        lv_image_cache_resize(2 * 1024 * 1024, true);
-        ESP_LOGI(TAG, "Use 2MB of PSRAM for image cache");
+#if CONFIG_USE_CUSTOM_WAKE_WORD
+        constexpr size_t kImageCacheSize = 512 * 1024;
+        lv_image_cache_resize(kImageCacheSize, true);
+        ESP_LOGI(TAG, "Use %uKB of PSRAM for image cache (custom wake word enabled)",
+            static_cast<unsigned>(kImageCacheSize / 1024));
+#else
+        constexpr size_t kImageCacheSize = 2 * 1024 * 1024;
+        lv_image_cache_resize(kImageCacheSize, true);
+        ESP_LOGI(TAG, "Use %uKB of PSRAM for image cache", static_cast<unsigned>(kImageCacheSize / 1024));
+#endif
     } else if (psram_size_mb >= 2) {
         lv_image_cache_resize(512 * 1024, true);
         ESP_LOGI(TAG, "Use 512KB of PSRAM for image cache");

@@ -12,6 +12,14 @@ CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=98304
 CONFIG_SPIRAM_MEMTEST=n
 CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y
 
+# MEASURED ON HARDWARE, do not "fix" these without re-measuring (see DEVLOG):
+#   hardware AES (this config): free internal ~17KB, low-water 2775 B
+#   software AES:               free internal  ~5KB, low-water   23 B  <-- much worse
+#   software AES + WIFI_LWIP in PSRAM: ~6KB, low-water 203 B
+# Software AES removes the AES-DMA internal allocation but costs ~12KB of internal
+# RAM overall, which is a far worse trade. The real problem is the internal-SRAM
+# low-water excursions, not the AES path itself.
+
 CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=3
 CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=6
 CONFIG_ESP_WIFI_RX_BA_WIN=3

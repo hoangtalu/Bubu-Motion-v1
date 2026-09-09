@@ -1,4 +1,5 @@
 #include "level_system.h"
+#include "display/menu_system.h"
 #include "settings.h"
 #include <esp_log.h>
 #include <esp_timer.h>
@@ -37,9 +38,11 @@ static void LoadState() {
 
 static void CheckLevelUp() {
     int required = GetXPForNextLevel();
+    bool leveled_up = false;
     while (current_xp_ >= required) {
         current_level_++;
         current_xp_ -= required;
+        leveled_up = true;
         required = GetXPForNextLevel();
         ESP_LOGI(TAG, "LEVEL UP! Level %d", current_level_);
     }
@@ -50,6 +53,10 @@ static void CheckLevelUp() {
         last_save_ms_ = Millis();
     } else {
         dirty_ = true;
+    }
+
+    if (leveled_up) {
+        MenuSystem::TriggerLevelUpAnimation(current_level_);
     }
 }
 

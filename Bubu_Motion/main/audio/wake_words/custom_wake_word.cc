@@ -4,6 +4,7 @@
 #include "assets.h"
 
 #include <esp_log.h>
+#include <esp_heap_caps.h>
 #include <esp_mn_iface.h>
 #include <esp_mn_models.h>
 #include <esp_mn_speech_commands.h>
@@ -11,8 +12,35 @@
 #include <cJSON.h>
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 
 #define TAG "CustomWakeWord"
+
+namespace {
+constexpr int kMaxMultinetDurationMs = 1500;
+
+// Energy gate used only to decide when it is safe to restart MultiNet's
+// detection window (see MaybeRefreshDetectionWindowLocked). Levels are post
+// codec input gain, so they are absolute int16 RMS.
+constexpr float kAbsoluteSilenceRms = 120.0f;   // below this it is silence no matter the floor
+constexpr float kSpeechOverFloorRatio = 2.5f;   // ...or this much above the tracked noise floor
+constexpr float kNoiseFloorRiseAlpha = 0.005f;  // floor climbs slowly
+constexpr float kNoiseFloorFallAlpha = 0.25f;   // ...and drops fast
+constexpr int kSilentChunksBeforeRefresh = 10;  // 10 x 30ms = 300ms of quiet
+constexpr int kWindowRefreshAgePercent = 50;    // only bother once the window is half spent
+constexpr int kClippedSampleLevel = 32000;      // the codec clamps at +/-INT16_MAX
+constexpr int kMinUtteranceChunksToLog = 4;     // ignore sub-120ms clicks and taps
+
+void LogHeapStats(const char* stage) {
+    ESP_LOGI(TAG,
+        "%s heap: internal_free=%u internal_largest=%u psram_free=%u psram_largest=%u",
+        stage,
+        static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
+        static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL)),
+        static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)),
+        static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM)));
+}
+}  // namespace
 
 CustomWakeWord::CustomWakeWord()
     : wake_word_pcm_(), wake_word_opus_() {
@@ -32,7 +60,7 @@ CustomWakeWord::~CustomWakeWord() {
         heap_caps_free(wake_word_encode_task_buffer_);
     }
 
-    if (models_ != nullptr) {
+    if (owns_models_ && models_ != nullptr) {
         esp_srmodel_deinit(models_);
     }
 }
@@ -49,6 +77,13 @@ std::string CustomWakeWord::TrimCopy(const std::string& text) {
     }
 
     return text.substr(start, end - start);
+}
+
+std::string CustomWakeWord::NormalizeAction(const std::string& action) {
+    std::string normalized = TrimCopy(action);
+    std::transform(normalized.begin(), normalized.end(), normalized.begin(),
+        [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return normalized;
 }
 
 bool CustomWakeWord::EmitWakeEventLocked(const std::string& text) {
@@ -136,6 +171,77 @@ void CustomWakeWord::ParseWakenetModelConfig() {
 }
 
 
+// MultiNet matches one phrase against one phoneme sequence, so a wake word
+// spelled a single way only fires for speakers who say it that way — and a
+// miss is total, not a low score, which is why cranking the threshold does not
+// rescue it. Register the realistic pronunciations as extra phrases, all mapped
+// to the wake action, so any of them wakes the device.
+//
+// These come from Kconfig rather than the assets because this board flashes a
+// prebuilt assets.bin (CONFIG_FLASH_CUSTOM_ASSETS), so an assets-side variant
+// list would need that blob regenerated; this one takes effect on an app flash.
+void CustomWakeWord::AddWakeWordPronunciationVariants() {
+#ifdef CONFIG_CUSTOM_WAKE_WORD_PHONEME_VARIANTS
+    std::string variants = CONFIG_CUSTOM_WAKE_WORD_PHONEME_VARIANTS;
+    if (TrimCopy(variants).empty()) {
+        return;
+    }
+
+    const Command* wake_command = nullptr;
+    for (const auto& cmd : commands_) {
+        if (NormalizeAction(cmd.action) == "wake") {
+            wake_command = &cmd;
+            break;
+        }
+    }
+    if (wake_command == nullptr) {
+        ESP_LOGW(TAG, "Extra pronunciations configured but no wake command to attach them to");
+        return;
+    }
+
+    std::string base_command = wake_command->command;
+    std::string base_text = wake_command->text;
+    std::deque<Command> variant_commands;
+
+    size_t start = 0;
+    int index = 0;
+    while (start <= variants.size()) {
+        size_t sep = variants.find(';', start);
+        std::string phoneme = TrimCopy(variants.substr(start,
+            sep == std::string::npos ? std::string::npos : sep - start));
+        if (!phoneme.empty()) {
+            bool duplicate = false;
+            for (const auto& cmd : commands_) {
+                if (cmd.phoneme == phoneme) {
+                    duplicate = true;
+                    break;
+                }
+            }
+            if (!duplicate) {
+                // The phrase string is the key esp_mn_command_search() uses, so
+                // it has to be distinct; the display text stays shared so every
+                // variant reports the same wake word upstream.
+                variant_commands.push_back({
+                    base_command + " alt" + std::to_string(++index),
+                    base_text,
+                    "wake",
+                    phoneme});
+            }
+        }
+        if (sep == std::string::npos) {
+            break;
+        }
+        start = sep + 1;
+    }
+
+    for (auto& cmd : variant_commands) {
+        ESP_LOGI(TAG, "Extra wake pronunciation: '%s' phoneme=%s",
+            cmd.command.c_str(), cmd.phoneme.c_str());
+        commands_.push_back(std::move(cmd));
+    }
+#endif
+}
+
 bool CustomWakeWord::Initialize(AudioCodec* codec, srmodel_list_t* models_list) {
     codec_ = codec;
     commands_.clear();
@@ -146,20 +252,21 @@ bool CustomWakeWord::Initialize(AudioCodec* codec, srmodel_list_t* models_list) 
     if (models_list == nullptr) {
         language_ = "cn";
         models_ = esp_srmodel_init("model");
+        owns_models_ = true;
 #ifdef CONFIG_CUSTOM_WAKE_WORD
         threshold_ = CONFIG_CUSTOM_WAKE_WORD_THRESHOLD / 100.0f;
         commands_.push_back({CONFIG_CUSTOM_WAKE_WORD, CONFIG_CUSTOM_WAKE_WORD_DISPLAY, "wake", ""});
 #endif
     } else {
         models_ = models_list;
+        owns_models_ = false;
         ParseWakenetModelConfig();
     }
 
+    AddWakeWordPronunciationVariants();
+
     for (const auto& cmd : commands_) {
-        std::string action = TrimCopy(cmd.action);
-        std::transform(action.begin(), action.end(), action.begin(),
-            [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-        if (action != "wake") {
+        if (NormalizeAction(cmd.action) != "wake") {
             has_non_wake_actions_ = true;
             break;
         }
@@ -182,17 +289,24 @@ bool CustomWakeWord::Initialize(AudioCodec* codec, srmodel_list_t* models_list) 
         return false;
     }
 
+    if (duration_ > kMaxMultinetDurationMs) {
+        ESP_LOGW(TAG, "Clamping multinet duration from %d ms to %d ms", duration_, kMaxMultinetDurationMs);
+        duration_ = kMaxMultinetDurationMs;
+    }
+
     multinet_ = esp_mn_handle_from_name(mn_name_);
     if (multinet_ == nullptr) {
         ESP_LOGE(TAG, "Failed to get multinet handle for model: %s", mn_name_);
         return false;
     }
 
+    LogHeapStats("Before multinet create");
     multinet_model_data_ = multinet_->create(mn_name_, duration_);
     if (multinet_model_data_ == nullptr) {
         ESP_LOGE(TAG, "Failed to create multinet model data for model: %s", mn_name_);
         return false;
     }
+    LogHeapStats("After multinet create");
 
     multinet_->set_det_threshold(multinet_model_data_, threshold_);
     esp_mn_commands_clear();
@@ -204,6 +318,16 @@ bool CustomWakeWord::Initialize(AudioCodec* codec, srmodel_list_t* models_list) 
         std::string command_phoneme = TrimCopy(cmd.phoneme);
         if (command_text.empty()) {
             ESP_LOGW(TAG, "Skipping empty local command text");
+            continue;
+        }
+
+        // Every phrase in the grammar competes with the wake word for the same
+        // utterance, and a non-wake win is discarded (the command window is
+        // never opened), so it costs wake-word hit rate and buys nothing.
+        if (!kEnableLocalCommands && NormalizeAction(cmd.action) != "wake") {
+            ESP_LOGI(TAG, "Not registering local command '%s' (action=%s): local commands are disabled, "
+                "keeping the multinet grammar wake-word-only",
+                command_text.c_str(), cmd.action.c_str());
             continue;
         }
 
@@ -241,10 +365,7 @@ bool CustomWakeWord::Initialize(AudioCodec* codec, srmodel_list_t* models_list) 
     bool has_wake_command = false;
     has_non_wake_actions_ = false;
     for (const auto& cmd : accepted_commands) {
-        std::string action = TrimCopy(cmd.action);
-        std::transform(action.begin(), action.end(), action.begin(),
-            [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-        if (action == "wake") {
+        if (NormalizeAction(cmd.action) == "wake") {
             has_wake_command = true;
         } else {
             has_non_wake_actions_ = true;
@@ -269,6 +390,14 @@ bool CustomWakeWord::Initialize(AudioCodec* codec, srmodel_list_t* models_list) 
         return false;
     }
 
+    // The knob that actually decides sensitivity is the `threshold` in the
+    // assets' index.json, NOT CONFIG_CUSTOM_WAKE_WORD_THRESHOLD — that Kconfig
+    // value is only read on the models_list == nullptr path, which this board
+    // never takes. Log the effective numbers so a field log says which is live.
+    ESP_LOGI(TAG, "Wake word ready: model=%s lang=%s threshold=%.2f duration=%dms phrases=%d chunk=%d samples",
+        mn_name_, language_.c_str(), threshold_, duration_,
+        static_cast<int>(commands_.size()),
+        multinet_->get_samp_chunksize(multinet_model_data_));
     multinet_->print_active_speech_commands(multinet_model_data_);
     return true;
 }
@@ -278,9 +407,24 @@ void CustomWakeWord::OnWakeWordDetected(std::function<void(const std::string& wa
 }
 
 void CustomWakeWord::Start() {
-    running_ = true;
+    std::lock_guard<std::mutex> lock(input_buffer_mutex_);
     command_window_active_ = false;
     command_window_deadline_us_ = 0;
+
+    // Detection is stopped for the whole AI session, during which the mic has
+    // been carrying the user's speech and the speaker's TTS. MultiNet keeps its
+    // decoder state across that gap, so without a clean the first utterance
+    // after a session is decoded on top of stale context. Clear both buffers.
+    input_buffer_.clear();
+    if (multinet_model_data_ != nullptr) {
+        multinet_->clean(multinet_model_data_);
+    }
+    ResetDetectionWindowLocked();
+    noise_floor_rms_ = 0.0f;
+    silent_chunk_count_ = 0;
+    utterance_active_ = false;
+
+    running_ = true;
 }
 
 void CustomWakeWord::Stop() {
@@ -290,6 +434,127 @@ void CustomWakeWord::Stop() {
 
     std::lock_guard<std::mutex> lock(input_buffer_mutex_);
     input_buffer_.clear();
+}
+
+void CustomWakeWord::ResetDetectionWindowLocked() {
+    window_started_us_ = esp_timer_get_time();
+}
+
+// Level/energy analysis of one MultiNet chunk. Drives both the speech gate that
+// aligns the detection window and the per-utterance mic report below, which is
+// the only way to tell "the model scored the phrase and rejected it" apart from
+// "the audio reaching the model was clipped or too quiet to score at all".
+CustomWakeWord::ChunkStats CustomWakeWord::AnalyzeChunkLocked(const int16_t* samples, size_t count) {
+    ChunkStats stats;
+    if (count == 0) {
+        return stats;
+    }
+
+    uint64_t sum_squares = 0;
+    for (size_t i = 0; i < count; i++) {
+        int32_t value = samples[i];
+        int32_t magnitude = value < 0 ? -value : value;
+        if (magnitude > stats.peak) {
+            stats.peak = magnitude;
+        }
+        // The codec clamps to +/-INT16_MAX, so anything at the rail was cut off.
+        if (magnitude >= kClippedSampleLevel) {
+            ++stats.clipped;
+        }
+        sum_squares += static_cast<uint64_t>(value * value);
+    }
+    stats.rms = sqrtf(static_cast<float>(sum_squares / count));
+
+    if (noise_floor_rms_ <= 0.0f) {
+        noise_floor_rms_ = stats.rms;
+    } else {
+        float alpha = stats.rms < noise_floor_rms_ ? kNoiseFloorFallAlpha : kNoiseFloorRiseAlpha;
+        noise_floor_rms_ += (stats.rms - noise_floor_rms_) * alpha;
+    }
+    stats.is_speech = stats.rms > kAbsoluteSilenceRms &&
+        stats.rms > noise_floor_rms_ * kSpeechOverFloorRatio;
+
+    if (stats.is_speech) {
+        silent_chunk_count_ = 0;
+        if (!utterance_active_) {
+            utterance_active_ = true;
+            utterance_started_us_ = esp_timer_get_time();
+            utterance_peak_ = 0;
+            utterance_chunks_ = 0;
+            utterance_clipped_ = 0;
+            utterance_rms_sum_ = 0.0f;
+            utterance_detected_ = false;
+        }
+    } else if (silent_chunk_count_ < kSilentChunksBeforeRefresh) {
+        ++silent_chunk_count_;
+    }
+
+    if (utterance_active_) {
+        ++utterance_chunks_;
+        utterance_clipped_ += stats.clipped;
+        utterance_rms_sum_ += stats.rms;
+        if (stats.peak > utterance_peak_) {
+            utterance_peak_ = stats.peak;
+        }
+        utterance_chunk_samples_ = static_cast<int>(count);
+        // Close the utterance once the gate has been quiet long enough that a
+        // detection for it would already have been emitted.
+        if (!stats.is_speech && silent_chunk_count_ >= kSilentChunksBeforeRefresh) {
+            FlushUtteranceReportLocked();
+        }
+    }
+
+    return stats;
+}
+
+// One INFO line per spoken phrase: enough to run a hit-rate play test and read
+// off whether the misses were clipped, too quiet, or perfectly well-levelled
+// audio the model simply did not match.
+void CustomWakeWord::FlushUtteranceReportLocked() {
+    if (!utterance_active_) {
+        return;
+    }
+    utterance_active_ = false;
+    if (utterance_chunks_ < kMinUtteranceChunksToLog) {
+        return;
+    }
+
+    int samples_total = utterance_chunks_ * utterance_chunk_samples_;
+    ESP_LOGI(TAG,
+        "[MIC] utterance %ums peak=%d avg_rms=%.0f clipped=%.1f%% floor=%.0f gain=%.1f -> %s",
+        static_cast<unsigned>((esp_timer_get_time() - utterance_started_us_) / 1000ULL),
+        utterance_peak_,
+        utterance_rms_sum_ / utterance_chunks_,
+        samples_total > 0 ? (100.0f * utterance_clipped_ / samples_total) : 0.0f,
+        noise_floor_rms_,
+        codec_ != nullptr ? codec_->input_gain() : 0.0f,
+        utterance_detected_ ? "WAKE" : "no match");
+}
+
+// MultiNet here runs free, with no WakeNet in front of it, so its detection
+// window is restarted by whatever happens to trip detect()'s timeout rather
+// than by the user starting to talk. A boundary landing between "hey" and
+// "bubu" splits the phrase across two decodes and neither half matches.
+//
+// Fix the alignment rather than the odds: once the window is half spent,
+// restart it as soon as the room has been quiet for 300ms, so the boundary
+// falls between phrases instead of inside one.
+void CustomWakeWord::MaybeRefreshDetectionWindowLocked(const ChunkStats& stats) {
+    if (stats.is_speech || silent_chunk_count_ < kSilentChunksBeforeRefresh) {
+        return;
+    }
+
+    uint64_t age_ms = (esp_timer_get_time() - window_started_us_) / 1000ULL;
+    if (age_ms * 100 < static_cast<uint64_t>(duration_) * kWindowRefreshAgePercent) {
+        return;
+    }
+
+    multinet_->clean(multinet_model_data_);
+    ResetDetectionWindowLocked();
+    ++window_refresh_count_;
+    ESP_LOGD(TAG, "Refreshed detection window in silence (age=%ums floor=%.0f count=%u)",
+        static_cast<unsigned>(age_ms), noise_floor_rms_,
+        static_cast<unsigned>(window_refresh_count_));
 }
 
 void CustomWakeWord::Feed(const std::vector<int16_t>& data) {
@@ -316,6 +581,7 @@ void CustomWakeWord::Feed(const std::vector<int16_t>& data) {
     while (input_buffer_.size() >= chunksize) {
         std::vector<int16_t> chunk(input_buffer_.begin(), input_buffer_.begin() + chunksize);
         StoreWakeWordData(chunk);
+        ChunkStats stats = AnalyzeChunkLocked(chunk.data(), chunk.size());
 
         if (command_window_active_ && esp_timer_get_time() > command_window_deadline_us_) {
             command_window_active_ = false;
@@ -324,60 +590,72 @@ void CustomWakeWord::Feed(const std::vector<int16_t>& data) {
         }
         
         esp_mn_state_t mn_state = multinet_->detect(multinet_model_data_, chunk.data());
-        
+
         if (mn_state == ESP_MN_STATE_DETECTED) {
             esp_mn_results_t *mn_result = multinet_->get_results(multinet_model_data_);
             if (mn_result == nullptr) {
                 ESP_LOGW(TAG, "MultiNet reported detection but returned null results");
                 multinet_->clean(multinet_model_data_);
+                ResetDetectionWindowLocked();
                 input_buffer_.erase(input_buffer_.begin(), input_buffer_.begin() + chunksize);
                 continue;
             }
-            for (int i = 0; i < mn_result->num && running_; i++) {
-                ESP_LOGI(TAG, "Custom wake word detected: command_id=%d, string=%s, prob=%f", 
-                        mn_result->command_id[i],
-                        (mn_result->string != nullptr) ? mn_result->string : "<null>",
-                        mn_result->prob[i]);
+
+            // MultiNet returns up to ESP_MN_RESULT_MAX_NUM candidates and the
+            // wake word is not always the top one. Take it wherever it lands
+            // rather than reading only rank 0 and dropping the rest — a wake
+            // word that decoded second used to be a silent miss.
+            int wake_index = -1;
+            int action_index = -1;
+            for (int i = 0; i < mn_result->num; i++) {
                 int command_index = mn_result->command_id[i] - 1;
                 if (command_index < 0 || command_index >= static_cast<int>(commands_.size())) {
                     ESP_LOGW(TAG, "Invalid command index: %d (size=%d)",
                         command_index, static_cast<int>(commands_.size()));
                     continue;
                 }
-
-                auto& command = commands_[command_index];
-                std::string action = TrimCopy(command.action);
-                std::string action_lower = action;
-                std::transform(action_lower.begin(), action_lower.end(), action_lower.begin(),
-                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-                if (action_lower == "wake") {
-                    if (has_non_wake_actions_) {
-                        command_window_active_ = true;
-                        command_window_deadline_us_ = esp_timer_get_time() + static_cast<uint64_t>(command_window_timeout_ms_) * 1000ULL;
-                        ESP_LOGI(TAG, "Wake command armed local command window for %u ms", static_cast<unsigned>(command_window_timeout_ms_));
-                    } else {
-                        running_ = false;
-                        input_buffer_.clear();
-                        EmitWakeEventLocked(command.text);
+                ESP_LOGI(TAG, "MultiNet candidate %d/%d: command_id=%d action=%s prob=%.3f string=%s",
+                    i + 1, mn_result->num, mn_result->command_id[i],
+                    commands_[command_index].action.c_str(), mn_result->prob[i],
+                    (mn_result->string != nullptr) ? mn_result->string : "<null>");
+                if (NormalizeAction(commands_[command_index].action) == "wake") {
+                    if (wake_index < 0) {
+                        wake_index = command_index;
                     }
-                    continue;
+                } else if (action_index < 0) {
+                    action_index = command_index;
                 }
+            }
 
-                if (!command_window_active_) {
-                    ESP_LOGD(TAG, "Ignoring local action '%s' outside command window", action_lower.c_str());
-                    continue;
-                }
-
+            if (wake_index >= 0) {
+                utterance_detected_ = true;
+                FlushUtteranceReportLocked();
                 command_window_active_ = false;
                 command_window_deadline_us_ = 0;
-                EmitLocalActionEventLocked(action_lower);
+                running_ = false;
+                input_buffer_.clear();
+                EmitWakeEventLocked(commands_[wake_index].text);
+            } else if (action_index >= 0 && command_window_active_) {
+                command_window_active_ = false;
+                command_window_deadline_us_ = 0;
+                EmitLocalActionEventLocked(commands_[action_index].action);
+            } else if (action_index >= 0) {
+                // Only reachable with kEnableLocalCommands; kept so the
+                // swallowed detection is visible instead of silent.
+                ESP_LOGW(TAG, "Dropping local action '%s' outside the command window "
+                    "(it may have outranked the wake word for this utterance)",
+                    commands_[action_index].action.c_str());
             }
             multinet_->clean(multinet_model_data_);
+            ResetDetectionWindowLocked();
         } else if (mn_state == ESP_MN_STATE_TIMEOUT) {
             ESP_LOGD(TAG, "Command word detection timeout, cleaning state");
             multinet_->clean(multinet_model_data_);
+            ResetDetectionWindowLocked();
+        } else {
+            MaybeRefreshDetectionWindowLocked(stats);
         }
-        
+
         if (!running_) {
             break;
         }

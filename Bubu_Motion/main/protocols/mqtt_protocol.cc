@@ -6,9 +6,15 @@
 #include <esp_log.h>
 #include <cstring>
 #include <arpa/inet.h>
+#include <inttypes.h>
 #include "assets/lang_config.h"
 
 #define TAG "MQTT"
+
+namespace {
+constexpr uint64_t kDownlinkJitterHoldMs = 90;
+constexpr size_t kDownlinkMaxReorderPackets = 10;
+}  // namespace
 
 MqttProtocol::MqttProtocol() {
     event_group_handle_ = xEventGroupCreate();
@@ -189,10 +195,17 @@ bool MqttProtocol::SendAudio(std::unique_ptr<AudioStreamPacket> packet) {
     return udp_->Send(encrypted) > 0;
 }
 
+uint32_t MqttProtocol::GetLastUplinkSequence() const {
+    std::lock_guard<std::mutex> lock(channel_mutex_);
+    return local_sequence_;
+}
+
 void MqttProtocol::CloseAudioChannel(bool send_goodbye) {
     {
         std::lock_guard<std::mutex> lock(channel_mutex_);
         udp_.reset();
+        pending_audio_packets_.clear();
+        pending_gap_started_ms_ = 0;
     }
 
     ESP_LOGI(TAG, "Closing audio channel, send_goodbye: %d", send_goodbye);
@@ -254,36 +267,94 @@ bool MqttProtocol::OpenAudioChannel() {
             ESP_LOGE(TAG, "Invalid audio packet type: %x", data[0]);
             return;
         }
-        uint32_t timestamp = ntohl(*(uint32_t*)&data[8]);
         uint32_t sequence = ntohl(*(uint32_t*)&data[12]);
+        auto decode_and_dispatch = [this](const std::string& packet_data) {
+            uint32_t timestamp = ntohl(*(uint32_t*)&packet_data[8]);
+            size_t decrypted_size = packet_data.size() - aes_nonce_.size();
+            size_t nc_off = 0;
+            uint8_t stream_block[16] = {0};
+            auto nonce = (uint8_t*)packet_data.data();
+            auto encrypted = (uint8_t*)packet_data.data() + aes_nonce_.size();
+
+            auto packet = std::make_unique<AudioStreamPacket>();
+            packet->sample_rate = server_sample_rate_;
+            packet->frame_duration = server_frame_duration_;
+            packet->timestamp = timestamp;
+            packet->payload.resize(decrypted_size);
+
+            int ret = mbedtls_aes_crypt_ctr(&aes_ctx_, decrypted_size, &nc_off, nonce, stream_block, encrypted,
+                                            (uint8_t*)packet->payload.data());
+            if (ret != 0) {
+                ESP_LOGE(TAG, "Failed to decrypt audio data, ret: %d", ret);
+                return false;
+            }
+            if (on_incoming_audio_ != nullptr) {
+                on_incoming_audio_(std::move(packet));
+            }
+            last_incoming_time_ = std::chrono::steady_clock::now();
+            return true;
+        };
+
+    #if CONFIG_MQTT_STRICT_UPSTREAM_SEQUENCE
         if (sequence < remote_sequence_) {
             ESP_LOGW(TAG, "Received audio packet with old sequence: %lu, expected: %lu", sequence, remote_sequence_);
             return;
         }
         if (sequence != remote_sequence_ + 1) {
-            ESP_LOGW(TAG, "Received audio packet with wrong sequence: %lu, expected: %lu", sequence, remote_sequence_ + 1);
+            ESP_LOGW(TAG, "Received audio packet with wrong sequence: %lu, expected: %lu",
+                     sequence, remote_sequence_ + 1);
         }
-
-        size_t decrypted_size = data.size() - aes_nonce_.size();
-        size_t nc_off = 0;
-        uint8_t stream_block[16] = {0};
-        auto nonce = (uint8_t*)data.data();
-        auto encrypted = (uint8_t*)data.data() + aes_nonce_.size();
-        auto packet = std::make_unique<AudioStreamPacket>();
-        packet->sample_rate = server_sample_rate_;
-        packet->frame_duration = server_frame_duration_;
-        packet->timestamp = timestamp;
-        packet->payload.resize(decrypted_size);
-        int ret = mbedtls_aes_crypt_ctr(&aes_ctx_, decrypted_size, &nc_off, nonce, stream_block, encrypted, (uint8_t*)packet->payload.data());
-        if (ret != 0) {
-            ESP_LOGE(TAG, "Failed to decrypt audio data, ret: %d", ret);
+        if (decode_and_dispatch(data)) {
+            remote_sequence_ = sequence;
+        }
+        return;
+    #else
+        if (sequence <= remote_sequence_) {
+            ESP_LOGW(TAG, "Received audio packet with old sequence: %lu, expected > %lu", sequence, remote_sequence_);
             return;
         }
-        if (on_incoming_audio_ != nullptr) {
-            on_incoming_audio_(std::move(packet));
+
+        auto insert_result = pending_audio_packets_.emplace(sequence, data);
+        if (!insert_result.second) {
+            return;
         }
-        remote_sequence_ = sequence;
-        last_incoming_time_ = std::chrono::steady_clock::now();
+
+        uint64_t now_ms = esp_timer_get_time() / 1000ULL;
+        while (true) {
+            uint32_t expected_sequence = remote_sequence_ + 1;
+            auto it = pending_audio_packets_.find(expected_sequence);
+            if (it != pending_audio_packets_.end()) {
+                decode_and_dispatch(it->second);
+                pending_audio_packets_.erase(it);
+                remote_sequence_ = expected_sequence;
+                pending_gap_started_ms_ = 0;
+                continue;
+            }
+
+            if (pending_audio_packets_.empty()) {
+                pending_gap_started_ms_ = 0;
+                break;
+            }
+
+            if (pending_gap_started_ms_ == 0) {
+                pending_gap_started_ms_ = now_ms;
+                break;
+            }
+
+            bool gap_timeout = (now_ms - pending_gap_started_ms_) >= kDownlinkJitterHoldMs;
+            bool buffer_full = pending_audio_packets_.size() >= kDownlinkMaxReorderPackets;
+            if (!gap_timeout && !buffer_full) {
+                break;
+            }
+
+            ESP_LOGW(TAG, "Skipping missing downlink packet seq=%" PRIu32 " after jitter hold (%" PRIu64 " ms, buffered=%u)",
+                     expected_sequence,
+                     now_ms - pending_gap_started_ms_,
+                     (unsigned)pending_audio_packets_.size());
+            remote_sequence_ = expected_sequence;
+            pending_gap_started_ms_ = now_ms;
+        }
+    #endif
     });
 
     udp_->Connect(udp_server_, udp_port_);
@@ -362,6 +433,8 @@ void MqttProtocol::ParseServerHello(const cJSON* root) {
     mbedtls_aes_setkey_enc(&aes_ctx_, (const unsigned char*)DecodeHexString(key).c_str(), 128);
     local_sequence_ = 0;
     remote_sequence_ = 0;
+    pending_audio_packets_.clear();
+    pending_gap_started_ms_ = 0;
     xEventGroupSetBits(event_group_handle_, MQTT_PROTOCOL_SERVER_HELLO_EVENT);
 }
 

@@ -25,9 +25,10 @@
 #include "notes_system.h"
 #include "reminder_system.h"
 #include "speaker_profile.h"
-#include "behavior_scheduler.h"
 #include "care_system.h"
 #include "level_system.h"
+#include "display/menu_system.h"
+#include "display/pomodoro_timer.h"
 #include "lvgl_theme.h"
 #include "lvgl_display.h"
 
@@ -49,7 +50,7 @@ std::string NormalizeToken(std::string_view value) {
 }
 
 bool IsSupportedEmotion(std::string_view emotion) {
-    static const std::array<std::string_view, 31> kSupportedEmotions = {{
+    static const std::array<std::string_view, 40> kSupportedEmotions = {{
         "neutral", "relaxed", "cool",
         "happy", "funny",
         "laughing", "confident", "loving", "kissy", "delicious", "shocked",
@@ -63,6 +64,9 @@ bool IsSupportedEmotion(std::string_view emotion) {
         "skeptic", "skeptical",
         "doubt", "doubtful",
         "confused",
+        "legacy_emo_love", "legacy_emo_cyclop", "legacy_emo_drunk",
+        "legacy_emo_confuse", "legacy_emo_angry", "legacy_emo_furious",
+        "legacy_emo_banh_chung", "legacy_emo_deadpool", "legacy_emo_cry",
     }};
     return std::find(kSupportedEmotions.begin(), kSupportedEmotions.end(), emotion) !=
            kSupportedEmotions.end();
@@ -72,7 +76,10 @@ std::string SupportedEmotionsList() {
     return "neutral, relaxed, cool, happy, funny, laughing, confident, loving, kissy, "
            "delicious, shocked, surprised, sad, crying, worried, embarrassed, nervous, "
            "anxious, angry, annoyed, sleepy, thinking, winking, silly, skeptic, "
-           "skeptical, doubt, doubtful, confused";
+           "skeptical, doubt, doubtful, confused, legacy_emo_love, "
+           "legacy_emo_cyclop, legacy_emo_drunk, legacy_emo_confuse, legacy_emo_angry, "
+           "legacy_emo_furious, legacy_emo_banh_chung, legacy_emo_deadpool, "
+           "legacy_emo_cry";
 }
 
 bool ParseTime24h(const std::string& text, int* out_hour, int* out_minute) {
@@ -199,7 +206,7 @@ std::string_view ResolveSoundName(std::string_view sound_name) {
         std::string_view sound;
     };
 
-    static const std::array<SoundBinding, 52> kSoundBindings = {{
+    static const std::array<SoundBinding, 50> kSoundBindings = {{
         {"0", Lang::Sounds::OGG_0},
         {"1", Lang::Sounds::OGG_1},
         {"2", Lang::Sounds::OGG_2},
@@ -213,7 +220,6 @@ std::string_view ResolveSoundName(std::string_view sound_name) {
         {"activation", Lang::Sounds::OGG_ACTIVATION},
         {"bubu_angry1", Lang::Sounds::OGG_BUBU_ANGRY1},
         {"bubu_angry2", Lang::Sounds::OGG_BUBU_ANGRY2},
-        {"bubu_blink", Lang::Sounds::OGG_BUBU_BLINK},
         {"bubu_bored1", Lang::Sounds::OGG_BUBU_BORED1},
         {"bubu_curious1", Lang::Sounds::OGG_BUBU_CURIOUS1},
         {"bubu_happy1", Lang::Sounds::OGG_BUBU_HAPPY1},
@@ -238,7 +244,6 @@ std::string_view ResolveSoundName(std::string_view sound_name) {
         {"bubu_sing2", Lang::Sounds::OGG_BUBU_SING2},
         {"bubu_sing3", Lang::Sounds::OGG_BUBU_SING3},
         {"bubu_sing4", Lang::Sounds::OGG_BUBU_SING4},
-        {"bubu_tap", Lang::Sounds::OGG_BUBU_TAP},
         {"bubu_tired1", Lang::Sounds::OGG_BUBU_TIRED1},
         {"err_pin", Lang::Sounds::OGG_ERR_PIN},
         {"err_reg", Lang::Sounds::OGG_ERR_REG},
@@ -448,30 +453,6 @@ void McpServer::AddCommonTools() {
             cJSON_AddNumberToObject(json, "timezone_offset_min", timezone_offset_min);
             cJSON_AddBoolToObject(json, "time_valid", time_valid);
             return json;
-        });
-
-    AddTool("self.behavior.get_config",
-        "Get proactive behavior scheduler config.",
-        PropertyList(),
-        [](const PropertyList& properties) -> ReturnValue {
-            (void)properties;
-            cJSON* json = cJSON_CreateObject();
-            cJSON_AddNumberToObject(json, "idle_timeout_min",
-                                    BehaviorScheduler::GetIdleTimeoutMinutes());
-            return json;
-        });
-
-    AddTool("self.behavior.set_idle_timeout_minutes",
-        "Set proactive idle-talk timeout in minutes (range 5..240).",
-        PropertyList({
-            Property("minutes", kPropertyTypeInteger, 5, 240)
-        }),
-        [](const PropertyList& properties) -> ReturnValue {
-            const int minutes = properties["minutes"].value<int>();
-            if (!BehaviorScheduler::SetIdleTimeoutMinutes(minutes)) {
-                throw std::runtime_error("set_idle_timeout failed");
-            }
-            return std::string("idle_timeout_min set");
         });
 
     AddTool("self.get_care_stats",
@@ -760,6 +741,82 @@ void McpServer::AddCommonTools() {
             cJSON_AddStringToObject(json, "name", name.c_str());
             cJSON_AddBoolToObject(json, "is_registered", name != "unknown");
             cJSON_AddStringToObject(json, "mode", "self_reported_single_owner");
+            return json;
+        });
+
+    AddTool("self.end_conversation",
+        "End the current conversation and return the device to idle/standby. "
+        "Call this when the user wants to stop talking, end the session, or "
+        "says goodbye — e.g. 'stop', 'that's all', 'bye Bubu', 'go to sleep', "
+        "'I'm done'.",
+        PropertyList(),
+        [](const PropertyList& properties) -> ReturnValue {
+            (void)properties;
+            Application::GetInstance().EndConversation();
+            return true;
+        });
+
+    AddTool("self.start_pomodoro",
+        "Start a focus session (HỌC TẬP) on the device screen. Only 25 minutes "
+        "is a true pomodoro; 15 and 45 are plain focus timers. `focus_minutes` "
+        "snaps to the nearest of 15 / 25 / 45, and defaults to 25. "
+        "Warn the user that there is no pause: leaving the screen or a long "
+        "press voids the block and nothing is banked.",
+        PropertyList({
+            Property("focus_minutes", kPropertyTypeInteger, 25, 1, 120)
+        }),
+        [](const PropertyList& properties) -> ReturnValue {
+            const auto focus_minutes = properties["focus_minutes"].value<int>();
+            // Touches LVGL, so it has to land on the main task.
+            Application::GetInstance().Schedule([focus_minutes]() {
+                MenuSystem::StartPomodoroFromVoice(focus_minutes);
+            });
+            return std::string("starting a focus block");
+        });
+
+    AddTool("self.stop_pomodoro",
+        "Stop the running focus session. A focus block stopped this way is "
+        "voided, not banked.",
+        PropertyList(),
+        [](const PropertyList& properties) -> ReturnValue {
+            (void)properties;
+            Application::GetInstance().Schedule([]() {
+                MenuSystem::StopPomodoro();
+            });
+            return std::string("focus session stopped");
+        });
+
+    AddTool("self.get_pomodoro",
+        "Get the state of the focus timer and the study record.",
+        PropertyList(),
+        [](const PropertyList& properties) -> ReturnValue {
+            (void)properties;
+            const auto phase = PomodoroTimer::GetPhase();
+            const auto preset = PomodoroTimer::GetPreset();
+            const auto stats = PomodoroTimer::GetStats();
+
+            const char* phase_name = "idle";
+            switch (phase) {
+                case PomodoroTimer::Phase::kFocus:      phase_name = "focus"; break;
+                case PomodoroTimer::Phase::kShortBreak: phase_name = "short_break"; break;
+                case PomodoroTimer::Phase::kLongBreak:  phase_name = "long_break"; break;
+                case PomodoroTimer::Phase::kIdle:       break;
+            }
+
+            cJSON* json = cJSON_CreateObject();
+            cJSON_AddStringToObject(json, "phase", phase_name);
+            cJSON_AddBoolToObject(json, "running", PomodoroTimer::IsActive());
+            cJSON_AddNumberToObject(json, "remaining_sec",
+                                    (PomodoroTimer::RemainingMs() + 999) / 1000);
+            cJSON_AddNumberToObject(json, "focus_minutes",
+                                    PomodoroTimer::GetProfile(preset).focus_min);
+            cJSON_AddBoolToObject(json, "is_true_pomodoro", PomodoroTimer::IsPomodoro(preset));
+            cJSON_AddNumberToObject(json, "blocks_done_this_run",
+                                    PomodoroTimer::FocusDoneInRun());
+            cJSON_AddNumberToObject(json, "blocks_today", stats.today);
+            cJSON_AddNumberToObject(json, "streak_days", stats.streak_days);
+            cJSON_AddNumberToObject(json, "best_day", stats.best_day);
+            cJSON_AddNumberToObject(json, "blocks_total", stats.total);
             return json;
         });
 
@@ -1095,7 +1152,14 @@ void McpServer::ReplyError(int id, const std::string& message) {
 }
 
 void McpServer::GetToolsList(int id, const std::string& cursor, bool list_user_only_tools) {
-    const int max_payload_size = 8000;
+    // Keep one page small enough that the finished websocket frame fits in a single
+    // TLS record (CONFIG_MBEDTLS_SSL_OUT_CONTENT_LEN, 4096). The ESP32-S3 AES
+    // accelerator can only DMA from internal SRAM, so every record costs a small
+    // internal allocation -- and that allocation fails when the audio pipeline has
+    // just claimed internal RAM, which used to kill the session on connect. The
+    // reply adds ~120 bytes of jsonrpc + session envelope on top of this budget.
+    // The largest single tool serialises to ~750 bytes, so every tool still fits.
+    const int max_payload_size = 1800;
     std::string json = "{\"tools\":[";
     
     bool found_cursor = cursor.empty();

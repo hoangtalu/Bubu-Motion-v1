@@ -14,7 +14,7 @@
 #include "esp_mmap_assets.h"
 
 #define MMAP_ASSETS_FILES           3
-#define MMAP_ASSETS_CHECKSUM        0x61D5
+#define MMAP_ASSETS_CHECKSUM        0x0E18
 
 enum MMAP_ASSETS_LISTS {
     MMAP_ASSETS_SRMODELS_BIN = 0,        /*!< srmodels.bin */
