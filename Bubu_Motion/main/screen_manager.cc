@@ -51,6 +51,7 @@ constexpr ScreenPolicy kScreenPolicies[] = {
     kEyeGame,     // EyeTapGame     -- played on the full eye canvas
     kPanel,       // CheckerGame
     kPanel,       // QuickTapGame
+    kPanel,       // SnakeGame
     kPanel,       // Pomodoro
     kPanel,       // Celebration    -- level-up GIF owns the screen
 };
@@ -65,7 +66,7 @@ const char* const kScreenNames[] = {
     "keyboard", "settings",       "notes",   "note_detail", "reminders",
     "reminder_detail", "volume",  "stats", "games_list",
     "level",    "fortune",        "eye_tap_game", "checker_game",
-    "quick_tap_game", "pomodoro", "celebration",
+    "quick_tap_game", "snake_game", "pomodoro", "celebration",
 };
 
 static_assert(sizeof(kScreenNames) / sizeof(kScreenNames[0]) ==

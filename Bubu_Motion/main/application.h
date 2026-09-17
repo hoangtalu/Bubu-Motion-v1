@@ -159,6 +159,12 @@ private:
     bool has_server_time_ = false;
     bool aborted_ = false;
     bool assets_version_checked_ = false;
+    // Set once ActivationTask() has finished. MaybeRefreshAssetsBundle() must not
+    // run Ota::CheckVersion() concurrently with that task, which owns ota_ during
+    // boot; device state alone is not a safe proxy, because the activation retry
+    // loop can legitimately sit in kDeviceStateIdle.
+    std::atomic<bool> activation_done_{false};
+    std::atomic<bool> assets_refresh_running_{false};
     bool play_popup_on_listening_ = false;  // Flag to play popup sound after state changes to listening
     int clock_ticks_ = 0;
     TaskHandle_t activation_task_handle_ = nullptr;
@@ -204,6 +210,11 @@ private:
     void ProcessIncomingJsonMessage(const cJSON* root, uint64_t queue_wait_ms);
     void CheckAssetsVersion();
     void CheckNewVersion();
+    /* Periodic, idle-only poll for a new assets bundle. The bundle carries the
+     * wake word model, so this is how a change made in the parent portal reaches
+     * a device that is already running. */
+    void MaybeRefreshAssetsBundle();
+    void AssetsRefreshTask();
     void InitializeProtocol();
     void RewardMoodForAiChatUse();
     void ShowActivationCode(const std::string& code, const std::string& message);

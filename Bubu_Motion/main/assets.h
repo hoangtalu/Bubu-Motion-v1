@@ -28,10 +28,28 @@ public:
     }
     ~Assets();
 
-    bool Download(std::string url, std::function<void(int progress, size_t speed)> progress_callback);
+    /* expected_sha256: lowercase hex digest of the whole bundle, from the server.
+     * Empty means "no hash offered" and only the bundle's own checksum applies --
+     * which is a 16-bit additive sum (LvglStrategy::CalculateChecksum), blind to
+     * byte reordering and with a 1-in-65536 miss rate on a 1.3 MB binary. Pass a
+     * hash whenever the server has one. */
+    bool Download(std::string url, const std::string& expected_sha256,
+                  std::function<void(int progress, size_t speed)> progress_callback);
     bool Apply();
     bool GetAssetData(const std::string& name, void*& ptr, size_t& size);
 
+    /* False from the moment UnApplyPartition() unmaps the partition (Download()
+     * calls it first thing, before streaming a byte) until InitializePartition()
+     * next succeeds -- which may be never, if that download then fails (e.g. a
+     * sha256 mismatch): UnApplyPartition() has no way to put the old mapping
+     * back, so a failed download leaves this false for the rest of the boot.
+     * Every previously resolved menu/care icon is a raw pointer straight into
+     * that mmap (ResolvePersistentAssetImage in menu_system.cc caches it once
+     * at boot rather than re-fetching per draw), so once this is false those
+     * pointers are dangling -- LVGL redrawing one is a Cache error / MMU fault,
+     * not a benign glitch. Callers that would make an icon-bearing screen
+     * visible (MenuSystem::Open(), the only entry point from the idle eyes
+     * screen into any menu panel) must check this first and no-op instead. */
     inline bool partition_valid() const { return partition_valid_; }
     inline std::string default_assets_url() const { return default_assets_url_; }
 

@@ -47,6 +47,7 @@ enum class ScreenId : uint8_t {
     EyeTapGame,
     CheckerGame,
     QuickTapGame,
+    SnakeGame,
     Pomodoro,
     Celebration,
     Count,

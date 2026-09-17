@@ -33,7 +33,13 @@ def parse(path):
         if not mm:
             return []
         body = re.sub(r'/\*.*?\*/', '', mm.group(1), flags=re.S)
-        return [int(x) for x in re.findall(r'-?\d+', body)]
+        # Hex first, and as one token. The old r'-?\d+' split every 0xNN into
+        # a spurious 0 plus the digits read as DECIMAL, so unicode_list_2 came
+        # back 71 entries long instead of 33 and every sparse lookup past the
+        # first entry was wrong -- U+01AF (Ư) reported as absent from fonts
+        # that do carry it. Only the SPARSE_TINY cmaps are written in hex, so
+        # this never showed up in the FORMAT0 ranges that cover plain ASCII.
+        return [int(x, 0) for x in re.findall(r'-?0[xX][0-9a-fA-F]+|-?\d+', body)]
 
     for c in cmaps:
         c['ulist'] = arr(c['list']) if c['list'] != 'NULL' else None

@@ -56,6 +56,21 @@ private:
     std::mutex wake_word_mutex_;
     std::condition_variable wake_word_cv_;
 
+    /* Mic telemetry. The MultiNet path used to print a per-utterance
+     * "[MIC] ... peak= avg_rms= clipped=" line and it was the only thing that
+     * ever distinguished "the mic is dead" from "the model did not match" --
+     * see the 2026-09-03 hardware verdict in DEVLOG. That code left the build
+     * with custom_wake_word.cc, so the shipping path had no equivalent. This is
+     * the AFE-side replacement, deliberately level-only: WakeNet exposes no
+     * losing-candidate score, so "did it hear anything, and how loud" is the
+     * whole question this can answer. */
+    void ReportMicLevelLocked(const std::vector<int16_t>& data);
+    uint64_t mic_window_started_ms_ = 0;
+    uint32_t mic_window_samples_ = 0;
+    uint32_t mic_window_clipped_ = 0;
+    uint64_t mic_window_abs_sum_ = 0;
+    int16_t mic_window_peak_ = 0;
+
     void StoreWakeWordData(const int16_t* data, size_t size);
     void AudioDetectionTask();
 };

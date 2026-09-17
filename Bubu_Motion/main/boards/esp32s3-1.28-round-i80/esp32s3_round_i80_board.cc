@@ -182,6 +182,12 @@ private:
 
     static constexpr int64_t TOUCH_LONG_PRESS_MS = 400;
     static constexpr int     TOUCH_TAP_MAX_DRIFT  = 35;
+    // A release that drifted too far to be a tap becomes a swipe when one axis
+    // clearly dominates and it happened quickly. Both thresholds sit above the
+    // tap drift limit on purpose, so nothing that used to be a tap becomes a
+    // swipe -- this only gives a meaning to releases that were dropped before.
+    static constexpr int     TOUCH_SWIPE_MIN_PX   = 28;
+    static constexpr int64_t TOUCH_SWIPE_MAX_MS   = 700;
     static constexpr int     TOUCH_SCRUB_MIN_DELTA = 4;   // px before a scrub sample is sent
     static constexpr int64_t TOUCH_TAP_MIN_MS     = 20;
     static constexpr int TOUCH_MAX_X = DISPLAY_WIDTH - 1;
@@ -201,7 +207,7 @@ private:
     // bare instantaneous OCV lookup below. Flip to false to revert to the old
     // raw-mV-only behavior if this misbehaves on hardware — no other code path
     // changes, it only changes which already-computed value GetBatteryLevel() uses.
-    static constexpr bool USE_LIBRARY_BATTERY_CAPACITY_ESTIMATE = false;
+    static constexpr bool USE_LIBRARY_BATTERY_CAPACITY_ESTIMATE = true;
 
     int sim_battery_runtime_min_ = SIM_BATTERY_DEFAULT_RUNTIME_MIN;
     float sim_battery_level_ = 100.0f;
@@ -600,8 +606,12 @@ private:
         }
 
         // Games drive the eyes themselves; the pet's own tap reactions fight them.
+        // Snake is here because a tap IS its steering control -- a tap voice
+        // on every turn would talk over the whole round. (QuickTapGame is
+        // deliberately left off this list, unchanged from before.)
         const bool game_active =
-            screen == ScreenId::EyeTapGame || screen == ScreenId::CheckerGame;
+            screen == ScreenId::EyeTapGame || screen == ScreenId::CheckerGame ||
+            screen == ScreenId::SnakeGame;
         if (!game_active && eye_display) {
             eye_display->PlayTapVoice();
             eye_display->NotifyUserInteraction();
@@ -953,7 +963,37 @@ private:
                                     self->DispatchTap(tap_x, tap_y);
                                 });
                             } else {
-                                ESP_LOGD(TAG, "[Touch] IGNORED dur=%ldms drift=%d", static_cast<long>(dur), drift);
+                                // Not a tap. The only other thing that reads a
+                                // drag is the Bathing scrub, and that fires
+                                // during the drag rather than on release, so
+                                // classifying the release as a swipe adds a
+                                // signal without altering an existing one.
+                                // MenuSystem returns false on every screen that
+                                // does not want it.
+                                const int sdx = self->touch_cur_x_ - self->touch_down_x_;
+                                const int sdy = self->touch_cur_y_ - self->touch_down_y_;
+                                const int adx = abs(sdx);
+                                const int ady = abs(sdy);
+                                const int dominant = adx > ady ? adx : ady;
+                                if (dur >= TOUCH_TAP_MIN_MS && dur <= TOUCH_SWIPE_MAX_MS &&
+                                    dominant >= TOUCH_SWIPE_MIN_PX) {
+                                    MenuSystem::SwipeDirection dir;
+                                    if (adx > ady) {
+                                        dir = sdx < 0 ? MenuSystem::SwipeDirection::kLeft
+                                                      : MenuSystem::SwipeDirection::kRight;
+                                    } else {
+                                        dir = sdy < 0 ? MenuSystem::SwipeDirection::kUp
+                                                      : MenuSystem::SwipeDirection::kDown;
+                                    }
+                                    ESP_LOGI(TAG, "[Touch] SWIPE dx=%d dy=%d dur=%ldms",
+                                             sdx, sdy, static_cast<long>(dur));
+                                    Application::GetInstance().Schedule([dir]() {
+                                        MenuSystem::HandleSwipe(dir);
+                                    });
+                                } else {
+                                    ESP_LOGD(TAG, "[Touch] IGNORED dur=%ldms drift=%d",
+                                             static_cast<long>(dur), drift);
+                                }
                             }
                         }
                         self->long_press_fired_ = false;

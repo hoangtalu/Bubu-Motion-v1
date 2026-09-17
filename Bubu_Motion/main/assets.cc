@@ -8,6 +8,7 @@
 #if HAVE_LVGL
 #include "display/lcd_display.h"
 #include <spi_flash_mmap.h>
+#include <mbedtls/sha256.h>
 #endif
 
 #include <esp_log.h>
@@ -192,7 +193,13 @@ void Assets::LvglStrategy::UnApplyPartition(Assets* assets) {
     }
     checksum_valid_ = false;
     assets_.clear();
-    (void)assets; // Unused parameter
+    // InitializePartition() sets this back to true only on a fresh successful
+    // mmap. Leaving it true here (as before) was a lie the moment mmap_root_
+    // above went null -- partition_valid() is the flag menu_system.cc checks
+    // before showing a screen that would dereference an already-resolved icon
+    // pointer into this same mmap, so it must go false exactly when the mmap
+    // does, not stay stuck true through a Download() that then fails.
+    assets->partition_valid_ = false;
 }
 
 bool Assets::LvglStrategy::GetAssetData(Assets* assets, const std::string& name, void*& ptr, size_t& size) {
@@ -423,7 +430,21 @@ bool Assets::EmoteStrategy::Apply(Assets* assets) {
     return true;
 }
 
-bool Assets::Download(std::string url, std::function<void(int progress, size_t speed)> progress_callback) {
+namespace {
+
+/** Lowercase hex of a SHA-256 digest, for comparing against the server's. */
+std::string HexDigest(const uint8_t digest[32]) {
+    char out[65];
+    for (int i = 0; i < 32; i++) {
+        snprintf(out + i * 2, sizeof(out) - i * 2, "%02x", digest[i]);
+    }
+    return std::string(out, 64);
+}
+
+}  // namespace
+
+bool Assets::Download(std::string url, const std::string& expected_sha256,
+                      std::function<void(int progress, size_t speed)> progress_callback) {
     ESP_LOGI(TAG, "Downloading new version of assets from %s", url.c_str());
 
     // 取消当前资源分区的内存映射
@@ -470,6 +491,13 @@ bool Assets::Download(std::string url, std::function<void(int progress, size_t s
         ESP_LOGE(TAG, "Failed to allocate buffer");
         return false;
     }
+    // Hashed on the way past rather than by re-reading the partition afterwards:
+    // the bytes are already in hand, and MBEDTLS_HARDWARE_SHA makes this nearly
+    // free next to the flash erase it sits between.
+    mbedtls_sha256_context sha_ctx;
+    mbedtls_sha256_init(&sha_ctx);
+    mbedtls_sha256_starts(&sha_ctx, 0);
+
     size_t total_written = 0;
     size_t recent_written = 0;
     size_t current_sector = 0;
@@ -514,6 +542,8 @@ bool Assets::Download(std::string url, std::function<void(int progress, size_t s
             current_sector++;
         }
 
+        mbedtls_sha256_update(&sha_ctx, reinterpret_cast<const unsigned char*>(buffer), ret);
+
         // 写入数据到分区
         esp_err_t err = esp_partition_write(partition_, total_written, buffer, ret);
         if (err != ESP_OK) {
@@ -542,9 +572,27 @@ bool Assets::Download(std::string url, std::function<void(int progress, size_t s
     http->Close();
     heap_caps_free(buffer);
 
+    uint8_t digest[32];
+    mbedtls_sha256_finish(&sha_ctx, digest);
+    mbedtls_sha256_free(&sha_ctx);
+    std::string actual_sha256 = HexDigest(digest);
+
     if (total_written != content_length) {
         ESP_LOGE(TAG, "Downloaded size (%u) does not match expected size (%u)", total_written, content_length);
         return false;
+    }
+
+    // Checked before InitializePartition() so a bad bundle is reported as a hash
+    // mismatch rather than as the vaguer checksum failure downstream, and so the
+    // caller never records this URL as applied -- the next boot retries it.
+    if (!expected_sha256.empty() && actual_sha256 != expected_sha256) {
+        ESP_LOGE(TAG, "Assets SHA-256 mismatch: expected %s, got %s",
+                 expected_sha256.c_str(), actual_sha256.c_str());
+        return false;
+    }
+    if (expected_sha256.empty()) {
+        ESP_LOGW(TAG, "No SHA-256 offered for this bundle; only its 16-bit internal "
+                      "checksum will be verified (sha256=%s)", actual_sha256.c_str());
     }
 
     ESP_LOGI(TAG, "Assets download completed, total written: %u bytes, total sectors erased: %u", 

@@ -29,7 +29,7 @@ def baseline(top, size):
     lh, bl = MET[size]
     return top + lh - bl
 
-NAMES = ["MẮT XANH", "CỜ CA-RÔ", "CHẠM NHANH"]
+NAMES = ["MẮT XANH", "CỜ CA-RÔ", "CHẠM NHANH", "RẮN SĂN MỒI"]
 CHIPS = ["KỶ LỤC 48", "KỶ LỤC 999"]
 
 print(f"constants read from menu_system.cc:")

@@ -155,6 +155,13 @@ void NotesDetailPrev();
 // A tap at a screen coordinate.
 bool HandleTap(uint16_t x, uint16_t y);
 
+// A directional flick. The board classifies a release that travelled too far
+// to be a tap and hands it here; today only the snake game consumes one, and
+// every other screen returns false, so the caller can treat "not consumed" as
+// "this release was not a gesture" without knowing which screen is up.
+enum class SwipeDirection : uint8_t { kUp, kDown, kLeft, kRight };
+bool HandleSwipe(SwipeDirection direction);
+
 // A long press. x/y are the touch point, or 0,0 for a physical button.
 // close_by_default controls the fallback for screens with no long-press
 // behaviour of their own: true closes the menu (touch gesture), false leaves
@@ -191,5 +198,12 @@ bool IsTapOnRemindersSelected(uint16_t x, uint16_t y);
 
 // Clean animation trigger
 void StartCleanAnimation();
+
+// Re-resolves every menu/care icon from the assets partition as currently
+// mapped. Call after a successful Assets::Download() + Apply() -- icons are
+// otherwise raw pointers cached once at boot and never refreshed, so a
+// download landing after that first resolve leaves them stale (silently
+// garbled, not a crash -- see the comment at the implementation).
+void RefreshIcons();
 
 }  // namespace MenuSystem

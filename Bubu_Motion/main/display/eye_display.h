@@ -5,6 +5,7 @@
 #include "eye_animation.h"
 #include "bubu_interaction_voice.h"
 #include "screen_manager.h"
+#include "chat_subtitle.h"
 #include <memory>
 #include <string>
 
@@ -172,6 +173,11 @@ private:
     std::string status_base_text_;
     bool status_busy_ = false;        // append animated waiting dots
     uint8_t status_ellipsis_phase_ = 0;
+    // ---- Chat subtitles (what Bubu says, a few words at a time) ----
+    lv_obj_t* subtitle_label_ = nullptr;
+    lv_timer_t* subtitle_timer_ = nullptr;
+    ChatSubtitle subtitle_;
+    std::string subtitle_shown_;
 
     void CreateClockScreensaver(lv_obj_t* parent);
     void UpdateClockScreensaver(uint64_t now_ms);
@@ -199,6 +205,10 @@ private:
     void UpdateStatusArcColor();
     void StatusChromeTick();
     static void StatusChromeTimerCb(lv_timer_t* timer);
+    void SetupSubtitle();
+    void SubtitleTick();
+    static void SubtitleTimerCb(lv_timer_t* timer);
+    static int MeasureSubtitleText(const std::string& text);
     static uint64_t GetNowMs();
 
     BubuInteractionVoice interaction_voice_;
@@ -212,6 +222,15 @@ private:
     static constexpr int kStatusArcStart = 250;  // degrees; 270 = top of screen
     static constexpr int kStatusArcEnd = 290;
     static constexpr int kStatusBarTopY = 40;  // measured: keeps the row inside the bezel
+    // Subtitle pill: y=163..193, clear of the wifi/mute/battery row (y=211..233).
+    // Measured with tools/fit.py against lv_font_montserrat_vn_20: a full 180px
+    // chunk's ink (y~166..190, tallest diacritics included) has its worst corner
+    // at r=114.3, 5.7px inside the glass; the pill's own corners reach r~119.
+    static constexpr int kSubtitleBottomY = 194;
+    static constexpr int kSubtitleMaxTextWidth = 180;
+    static constexpr int kSubtitlePadX = 8;
+    static constexpr int kSubtitlePadY = 2;
+    static constexpr uint32_t kSubtitleTickMs = 100;
 
 protected:
     virtual bool AllowIdleClockStatus() const override { return false; }

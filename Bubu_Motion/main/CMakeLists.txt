@@ -26,6 +26,8 @@ set(SOURCES "heap_debug.cc"  # TEMPORARY instrumentation, see heap_debug.h
             "display/checker_game.cc"
             "display/eye_game.cc"
             "display/quick_tap_game.cc"
+            "display/snake_game.cc"
+            "display/chat_subtitle.cc"
             "display/pomodoro_timer.cc"
             "display/menu_system.cc"
             "display/fonts/lv_font_montserrat_vn_20.c"
@@ -42,6 +44,7 @@ set(SOURCES "heap_debug.cc"  # TEMPORARY instrumentation, see heap_debug.h
             "system_info.cc"
             "application.cc"
             "ota.cc"
+            "time_sync.cc"
             "settings.cc"
             "care_system.cc"
             "level_system.cc"
@@ -101,7 +104,23 @@ set(EMOTE_RESOLUTION "320_240")
 # instead of silently globbing nothing and failing much later at link.
 if(CONFIG_BOARD_TYPE_ESP32S3_128_ROUND_I80)
     set(BOARD_TYPE "esp32s3-1.28-round-i80")
-    set(BUILTIN_TEXT_FONT font_puhui_basic_20_4)
+    # BOTH of these are drawn on this board. Do not point them at a font that
+    # lacks the glyphs -- doing exactly that on 2026-09-10 made the battery and
+    # WiFi icons vanish.
+    #
+    # icon_font: LcdDisplay::SetupUI() gives network_label_, battery_label_ and
+    # mute_label_ this font, and those live in status_bar_, which EyeDisplay keeps
+    # visible (the comment at eye_display.cc:468 is about chat_message_label_ and
+    # bottom_bar_ only -- it does NOT cover the status bar).
+    #
+    # text_font: EyeDisplay::RenderStatusText() writes into status_label_, created
+    # by the base SetupUI() with this font. It used to be overridden at runtime by
+    # the bundle's font_puhui_common_20_4.bin, which is why the compiled-in one
+    # looked dead -- but that font was removed from the bundle, so this is now what
+    # actually renders the Vietnamese status line. lv_font_montserrat_vn_20 is the
+    # right choice: our own UI already draws with it, so it costs nothing extra and
+    # it has the diacritics.
+    set(BUILTIN_TEXT_FONT lv_font_montserrat_vn_20)
     set(BUILTIN_ICON_FONT font_awesome_20_4)
     set(DEFAULT_EMOJI_COLLECTION twemoji_64)
     # Menu icon PNGs, packed into assets.bin and loaded at runtime via Assets::GetAssetData
@@ -142,8 +161,18 @@ else()
     list(APPEND SOURCES "audio/processors/no_audio_processor.cc")
 endif()
 if(CONFIG_IDF_TARGET_ESP32S3 OR CONFIG_IDF_TARGET_ESP32P4)
+    # Built for BOTH S3/P4 wake-word choices, not just CONFIG_USE_AFE_WAKE_WORD:
+    # AudioService::IsAfeWakeWord() dynamic_casts to AfeWakeWord, and that needs
+    # the class's typeinfo/vtable, which is emitted in this translation unit.
     list(APPEND SOURCES "audio/wake_words/afe_wake_word.cc")
-    list(APPEND SOURCES "audio/wake_words/custom_wake_word.cc")
+    # MultiNet is compiled only when it is the engine actually selected. This
+    # file has no #if guard of its own, so building it unconditionally keeps
+    # libmultinet.a (~40 KB) and libfst.a (~8 KB) linked even when the engine is
+    # WakeNet -- and because CONFIG_SPIRAM_FETCH_INSTRUCTIONS/RODATA mirror all
+    # flash .text/.rodata into PSRAM, that dead code costs the same again there.
+    if(CONFIG_USE_CUSTOM_WAKE_WORD)
+        list(APPEND SOURCES "audio/wake_words/custom_wake_word.cc")
+    endif()
 else()
     list(APPEND SOURCES "audio/wake_words/esp_wake_word.cc")
 endif()

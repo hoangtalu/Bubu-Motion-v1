@@ -9,6 +9,13 @@
 namespace EyeGame {
 namespace {
 
+// A tap that lands just after the colours change is judged against what the
+// child actually saw. Between the logic re-rolling a colour and that colour
+// reaching the glass there is a 33ms game tick, a 33ms render frame and the LCD
+// flush -- and a tap is aimed well before it lands. Without this, a green eye
+// that turns red under a finger mid-tap ends the game as a wrong tap.
+constexpr uint32_t kLateTapGraceMs = 250;
+
 enum class EyeColorType : uint8_t {
     kGreen = 0,
     kRed,
@@ -27,6 +34,14 @@ struct State {
     RgbColor left_rgb = {255, 255, 255};
     RgbColor right_rgb = {255, 255, 255};
     uint32_t next_change_ms = 0;
+    // The pair shown before the last change, and when that change happened.
+    // prev_round_open is false when the previous round is already settled --
+    // it ended because it was hit, or there was none -- so a quick second tap
+    // cannot claim the same green eye twice.
+    EyeColorType prev_left_color = EyeColorType::kRed;
+    EyeColorType prev_right_color = EyeColorType::kRed;
+    uint32_t changed_ms = 0;
+    bool prev_round_open = false;
     uint16_t rounds = 0;
     uint8_t score = 0;
     GameResult last_result = GameResult::kNone;
@@ -115,8 +130,14 @@ void ApplyWrongTapPenalty() {
     CareSystem::AddEnergy(static_cast<int>(state.config.wrong_tap_energy_delta));
 }
 
-void ScheduleNextChange() {
-    state.next_change_ms = NowMs() + RandomRange(1000, 2001);
+// timed_out: the round ended because its time ran out rather than because it
+// was hit, so a late tap may still claim it.
+void ScheduleNextChange(bool timed_out) {
+    state.prev_left_color = state.left_color;
+    state.prev_right_color = state.right_color;
+    state.prev_round_open = timed_out;
+    state.changed_ms = NowMs();
+    state.next_change_ms = state.changed_ms + RandomRange(1000, 2001);
     state.left_color = RandomColorType();
     state.right_color = RandomColorType();
     RefreshColors();
@@ -138,7 +159,7 @@ void Start(CareSystem::StatId reward_stat) {
     state.rounds = 0;
     state.score = 0;
     state.last_result = GameResult::kNone;
-    ScheduleNextChange();
+    ScheduleNextChange(false);
 }
 
 void Stop() {
@@ -155,7 +176,7 @@ void Update() {
         return;
     }
     if (NowMs() >= state.next_change_ms) {
-        ScheduleNextChange();
+        ScheduleNextChange(true);
     }
 }
 
@@ -169,7 +190,18 @@ TapOutcome HandleTap(int x, int y) {
     const EyeColorType tapped_color = is_left ? state.left_color : state.right_color;
     if (tapped_color == EyeColorType::kGreen) {
         state.score++;
-        ScheduleNextChange();
+        ScheduleNextChange(false);
+        return TapOutcome::kCorrect;
+    }
+
+    // The eye was green until a moment ago: credit the round the child saw and
+    // leave the new one running, rather than re-rolling colours on a hit the
+    // screen no longer shows.
+    const EyeColorType previous = is_left ? state.prev_left_color : state.prev_right_color;
+    if (state.prev_round_open && previous == EyeColorType::kGreen &&
+        NowMs() - state.changed_ms < kLateTapGraceMs) {
+        state.score++;
+        state.prev_round_open = false;
         return TapOutcome::kCorrect;
     }
 

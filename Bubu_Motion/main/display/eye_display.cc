@@ -96,7 +96,8 @@ EyeDisplay::EyeDisplay(esp_lcd_panel_io_handle_t io_handle,
                        int height, int offset_x, int offset_y, bool mirror_x,
                        bool mirror_y, bool swap_xy)
     : SpiLcdDisplay(io_handle, panel_handle, width, height, offset_x, offset_y,
-                    mirror_x, mirror_y, swap_xy) {}
+                    mirror_x, mirror_y, swap_xy),
+      subtitle_(&EyeDisplay::MeasureSubtitleText) {}
 
 EyeDisplay::~EyeDisplay() {
   if (screen_listener_id_ >= 0) {
@@ -106,6 +107,10 @@ EyeDisplay::~EyeDisplay() {
   if (status_chrome_timer_ != nullptr) {
     lv_timer_delete(status_chrome_timer_);
     status_chrome_timer_ = nullptr;
+  }
+  if (subtitle_timer_ != nullptr) {
+    lv_timer_delete(subtitle_timer_);
+    subtitle_timer_ = nullptr;
   }
   eye_animation_.reset();
 }
@@ -243,6 +248,13 @@ void EyeDisplay::SetupUI() {
   lv_obj_move_foreground(bottom_icons_);
 
   SetupStatusChrome();
+  // Chat subtitles (ChatSubtitle + this widget/timer) disabled for the 1.7.6
+  // release: the whole feature has never been flashed to real hardware
+  // (created + revised same day, 2026-09-17, host-tested only). Leaving the
+  // call out means subtitle_label_/subtitle_timer_ stay null and
+  // SetChatMessage/SubtitleTick become no-ops for anything screen-visible.
+  // Re-enable by restoring this call once verified on a bench device.
+  // SetupSubtitle();
 
   // Initialize menu system (overlays on top of eyes)
   MenuSystem::Begin(this);
@@ -464,21 +476,127 @@ void EyeDisplay::ShowNotification(const std::string &notification,
 
 void EyeDisplay::SetChatMessage(const char *role, const char *content) {
   NotifyUserInteraction();
-  // Deliberately not forwarded to SpiLcdDisplay::SetChatMessage(): its
-  // chat_message_label_/bottom_bar_ are created behind EyeAnimation's
-  // full-screen opaque canvas (see EyeAnimation::CreateEyeObjects, added to
-  // `screen` after LcdDisplay::SetupUI() and never foregrounded here), so
-  // they're never visible on this board. Visible feedback for status/system
-  // text goes through status_label_/status_bar_ (SetStatus) and
-  // MessageBoard instead. Calling the base impl here would just churn LVGL
-  // label/layout updates on every chat turn for nothing.
-  (void)role;
-  (void)content;
+  // Not forwarded to SpiLcdDisplay::SetChatMessage(): its chat_message_label_/
+  // bottom_bar_ sit behind EyeAnimation's full-screen canvas and are never
+  // visible on this board. Subtitles are drawn by our own label instead (see
+  // SetupSubtitle), paced to the speaker by ChatSubtitle.
+  if (role == nullptr || content == nullptr) {
+    return;
+  }
+  const uint64_t now_ms = GetNowMs();
+  const uint64_t voice_ms =
+      Application::GetInstance().GetAudioService().GetVoicePlayedMs();
+  DisplayLockGuard lock(this);
+  if (std::strcmp(role, "assistant") == 0) {
+    subtitle_.AppendAssistant(content, voice_ms, now_ms);
+  } else if (std::strcmp(role, "user") == 0) {
+    subtitle_.AppendUser(content, now_ms);
+  } else if (content[0] == '\0') {
+    // "system" with empty content is how Application clears the chat line
+    // (channel closed, connecting, power save). Non-empty system text (boot
+    // user agent, OTA progress) goes through SetStatus/MessageBoard here, as
+    // it always has.
+    subtitle_.Clear();
+  }
 }
 
 void EyeDisplay::ClearChatMessages() {
   NotifyUserInteraction();
   SpiLcdDisplay::ClearChatMessages();
+  DisplayLockGuard lock(this);
+  subtitle_.Clear();
+}
+
+int EyeDisplay::MeasureSubtitleText(const std::string &text) {
+  lv_point_t size;
+  lv_text_get_size(&size, text.c_str(), &lv_font_montserrat_vn_20, 0, 0,
+                   LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+  return size.x;
+}
+
+void EyeDisplay::SetupSubtitle() {
+  subtitle_label_ = lv_label_create(lv_screen_active());
+  lv_obj_set_style_text_font(subtitle_label_, &lv_font_montserrat_vn_20, 0);
+  lv_obj_set_style_text_color(subtitle_label_, lv_color_hex(0xE8EEF8), 0);
+  lv_obj_set_style_text_align(subtitle_label_, LV_TEXT_ALIGN_CENTER, 0);
+  // Dark pill so the words stay legible over whatever the eyes are doing.
+  lv_obj_set_style_bg_color(subtitle_label_, lv_color_black(), 0);
+  lv_obj_set_style_bg_opa(subtitle_label_, LV_OPA_70, 0);
+  lv_obj_set_style_radius(subtitle_label_, 14, 0);
+  lv_obj_set_style_pad_hor(subtitle_label_, kSubtitlePadX, 0);
+  lv_obj_set_style_pad_ver(subtitle_label_, kSubtitlePadY, 0);
+  lv_label_set_long_mode(subtitle_label_, LV_LABEL_LONG_CLIP);
+  lv_obj_set_size(subtitle_label_, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+  lv_obj_remove_flag(subtitle_label_, LV_OBJ_FLAG_CLICKABLE);
+  lv_label_set_text(subtitle_label_, "");
+  lv_obj_align(subtitle_label_, LV_ALIGN_BOTTOM_MID, 0,
+               kSubtitleBottomY - static_cast<int>(LV_VER_RES));
+  lv_obj_add_flag(subtitle_label_, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_move_foreground(subtitle_label_);
+
+  subtitle_timer_ = lv_timer_create(SubtitleTimerCb, kSubtitleTickMs, this);
+}
+
+void EyeDisplay::SubtitleTimerCb(lv_timer_t *timer) {
+  auto *self = static_cast<EyeDisplay *>(lv_timer_get_user_data(timer));
+  if (self != nullptr) {
+    self->SubtitleTick();
+  }
+}
+
+// Runs inside lv_timer_handler, which already holds the display lock; taking
+// DisplayLockGuard here would deadlock.
+void EyeDisplay::SubtitleTick() {
+  if (subtitle_label_ == nullptr) {
+    return;
+  }
+  // Ticked even while hidden, so pacing keeps up with the voice when a menu
+  // closes mid-reply.
+  const uint64_t sub_voice_ms =
+      Application::GetInstance().GetAudioService().GetVoicePlayedMs();
+  const uint64_t sub_now_ms = GetNowMs();
+  const std::string &text = subtitle_.Tick(sub_voice_ms, sub_now_ms);
+  {
+    // TEMP [SUB] timing capture -- remove after calibration.
+    static uint64_t dbg_last_v = 0, dbg_last_adv = 0;
+    static bool dbg_playing = false;
+    static std::string dbg_last_text;
+    if (sub_voice_ms != dbg_last_v) {
+      if (!dbg_playing) {
+        ESP_LOGI(TAG, "[SUB] voice start t=%u v=%u", (unsigned)sub_now_ms, (unsigned)dbg_last_v);
+        dbg_playing = true;
+      }
+      dbg_last_v = sub_voice_ms;
+      dbg_last_adv = sub_now_ms;
+    } else if (dbg_playing && sub_now_ms - dbg_last_adv >= 300) {
+      ESP_LOGI(TAG, "[SUB] voice stop t=%u v=%u", (unsigned)dbg_last_adv, (unsigned)dbg_last_v);
+      dbg_playing = false;
+    }
+    if (text != dbg_last_text) {
+      ESP_LOGI(TAG, "[SUB] show t=%u v=%u \"%s\"", (unsigned)sub_now_ms, (unsigned)sub_voice_ms, text.c_str());
+      dbg_last_text = text;
+    }
+  }
+
+  const bool visible = !text.empty() && !hide_subtitle_ &&
+                       ScreenManager::Current() == ScreenManager::ScreenId::Main &&
+                       !MessageBoard::IsOpen();
+  if (!visible) {
+    if (!lv_obj_has_flag(subtitle_label_, LV_OBJ_FLAG_HIDDEN)) {
+      lv_obj_add_flag(subtitle_label_, LV_OBJ_FLAG_HIDDEN);
+    }
+    return;
+  }
+  if (text != subtitle_shown_) {
+    subtitle_shown_ = text;
+    lv_label_set_text(subtitle_label_, subtitle_shown_.c_str());
+    // Content-sized, so re-anchor after the width changes.
+    lv_obj_align(subtitle_label_, LV_ALIGN_BOTTOM_MID, 0,
+                 kSubtitleBottomY - static_cast<int>(LV_VER_RES));
+  }
+  if (lv_obj_has_flag(subtitle_label_, LV_OBJ_FLAG_HIDDEN)) {
+    lv_obj_remove_flag(subtitle_label_, LV_OBJ_FLAG_HIDDEN);
+  }
 }
 
 void EyeDisplay::UpdateStatusBar(bool update_all) {
@@ -676,6 +794,10 @@ void EyeDisplay::ApplyEmotionInternal(const char *emotion, bool is_external) {
   if (sleep_mode_active_) {
     return;
   }
+  // Remembered above, applied when the game ends -- see SetEyeGameMode().
+  if (eye_animation_->IsGameMode()) {
+    return;
+  }
 
   // Apply emotion directly via RoboEyes persistent mood setters (no auto reset)
   EyeEmotion_Apply(safe_emotion, eye_animation_.get());
@@ -805,8 +927,29 @@ void EyeDisplay::SetEyeMoodColorAuto(bool enabled) {
 }
 
 void EyeDisplay::SetEyeGameMode(bool active) {
-  if (eye_animation_) {
-    eye_animation_->SetGameMode(active);
+  if (!eye_animation_) {
+    return;
+  }
+  const bool was_active = eye_animation_->IsGameMode();
+  eye_animation_->SetGameMode(active);
+  if (active == was_active) {
+    return;
+  }
+  // The game plays on whatever eyes were already on screen, and some of them
+  // are not eyes the game can use. The legacy emotions (love, cry, confuse,
+  // cyclop, ...) take RenderFrame over entirely and return before the normal
+  // eyes are drawn, so the game's colours never appear at all -- cyclop even
+  // empties the right eye's touch box. Lid moods (sleepy, angry, skeptic) half
+  // cover the colour. So the game starts on plain neutral eyes, and whatever
+  // Bubu was showing comes back when it ends. Emotions arriving mid-game are
+  // recorded in current_eye_emotion_ by ApplyEmotionInternal and restored here.
+  //
+  // EyeEmotion_Apply directly, not ApplyEmotionInternal: that one takes the
+  // display lock, and some callers of this already hold it.
+  if (active) {
+    EyeEmotion_Apply("neutral", eye_animation_.get());
+  } else {
+    EyeEmotion_Apply(current_eye_emotion_.c_str(), eye_animation_.get());
   }
 }
 

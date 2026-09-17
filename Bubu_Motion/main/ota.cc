@@ -1,6 +1,7 @@
 #include "ota.h"
 #include "system_info.h"
 #include "settings.h"
+#include "time_sync.h"
 #include "assets/lang_config.h"
 
 #include <freertos/FreeRTOS.h>
@@ -60,7 +61,16 @@ std::string ExtractAssetsUrl(cJSON* root) {
     return "";
 }
 
-void StoreAssetsDownloadUrl(const std::string& url, bool overwrite_existing) {
+std::string ExtractAssetsSha256(cJSON* root) {
+    cJSON* assets = cJSON_GetObjectItem(root, "assets");
+    if (cJSON_IsObject(assets)) {
+        return GetJsonString(assets, "sha256");
+    }
+    return GetJsonString(root, "assets_sha256");
+}
+
+void StoreAssetsDownloadUrl(const std::string& url, const std::string& sha256,
+                            bool overwrite_existing) {
     if (url.empty()) {
         return;
     }
@@ -71,10 +81,23 @@ void StoreAssetsDownloadUrl(const std::string& url, bool overwrite_existing) {
         return;
     }
 
+    // Never queue a bundle that is already installed. The assets URL now
+    // identifies which wake word the device is running (the console picks it per
+    // device), so it is offered on every single OTA check rather than only
+    // alongside a firmware bump -- without this, each boot would re-stamp
+    // download_url and CheckAssetsVersion() would rewrite the whole assets
+    // partition for nothing.
+    if (settings.GetString("applied_url") == url) {
+        return;
+    }
+
     if (current_url != url) {
         ESP_LOGI(TAG, "Updating assets download URL: %s", url.c_str());
         settings.SetString("download_url", url);
     }
+    // Stored next to the URL, and always rewritten with it: a stale hash from a
+    // previous bundle would fail every future download.
+    settings.SetString("download_sha256", sha256);
 }
 
 }  // namespace
@@ -256,21 +279,10 @@ esp_err_t Ota::CheckVersion() {
     cJSON *server_time = cJSON_GetObjectItem(root, "server_time");
     if (cJSON_IsObject(server_time)) {
         cJSON *timestamp = cJSON_GetObjectItem(server_time, "timestamp");
-        cJSON *timezone_offset = cJSON_GetObjectItem(server_time, "timezone_offset");
-        
         if (cJSON_IsNumber(timestamp)) {
-            // 设置系统时间
-            struct timeval tv;
-            double ts = timestamp->valuedouble;
-            
-            // 如果有时区偏移，计算本地时间
-            if (cJSON_IsNumber(timezone_offset)) {
-                ts += (timezone_offset->valueint * 60 * 1000); // 转换分钟为毫秒
-            }
-            
-            tv.tv_sec = (time_t)(ts / 1000);  // 转换毫秒为秒
-            tv.tv_usec = (suseconds_t)((long long)ts % 1000) * 1000;  // 剩余的毫秒转换为微秒
-            settimeofday(&tv, NULL);
+            // True UTC only. timezone_offset is deliberately ignored: TZ is set
+            // on the device (time_sync.cc), and SNTP is the primary source.
+            TimeSync::ApplyServerTime(timestamp->valuedouble);
             has_server_time_ = true;
         }
     } else {
@@ -317,13 +329,17 @@ esp_err_t Ota::CheckVersion() {
         ESP_LOGW(TAG, "No firmware section or version info found!");
     }
 
-    // Only pull a new assets_url when it rides along with a genuine firmware
-    // version bump -- otherwise every boot's OTA check (even one that finds
-    // nothing new) would re-stamp download_url and trigger a full assets
-    // partition re-download/overwrite on the next boot.
-    if (has_new_version_) {
-        StoreAssetsDownloadUrl(ExtractAssetsUrl(root), true);
-    }
+    // Unconditional on purpose, and this is a deliberate reversal of the old
+    // "only alongside a firmware bump" rule. The console now selects the assets
+    // bundle per device, because the bundle is what carries the chosen wake word
+    // model -- so a parent changing the wake word in the portal must reach the
+    // device without shipping new firmware. The re-download loop the old gate
+    // guarded against is prevented in two places instead: StoreAssetsDownloadUrl()
+    // above ignores a URL equal to applied_url, and CheckAssetsVersion() checks
+    // the same thing again before it erases anything.
+    // The GitHub pass below keeps its own has_new_version_ gate, because there
+    // the assets URL genuinely belongs to a firmware release.
+    StoreAssetsDownloadUrl(ExtractAssetsUrl(root), ExtractAssetsSha256(root), true);
     cJSON_Delete(root);
 
     // --- SECOND PASS: Check GitHub specifically for Firmware ---
@@ -353,7 +369,7 @@ esp_err_t Ota::CheckVersion() {
                             has_new_version_ = true;
                             firmware_version_ = gh_firmware_version;
                             firmware_url_ = gh_firmware_url;
-                            StoreAssetsDownloadUrl(gh_assets_url, true);
+                            StoreAssetsDownloadUrl(gh_assets_url, ExtractAssetsSha256(gh_root), true);
                         }
                     }
                 }

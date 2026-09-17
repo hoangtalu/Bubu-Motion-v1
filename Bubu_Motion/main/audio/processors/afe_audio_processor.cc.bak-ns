@@ -57,21 +57,6 @@ void AfeAudioProcessor::Initialize(AudioCodec* codec, int frame_duration_ms, srm
         afe_config->ns_model_name = ns_model_name;
         afe_config->afe_ns_mode = AFE_NS_MODE_NET;
     } else {
-        /* Noise suppression stays OFF here, and that is not an oversight.
-         *
-         * Enabling it crashed the device on every wake word: LoadProhibited inside
-         * afe_init_aec_ns (esp_afe_sr_1mic.c:187) <- afe_create_from_config <-
-         * this function, decoded from a reproducible panic on 2026-09-10.
-         *
-         * The reason is the NULL on the afe_config_init() line above: this lane
-         * deliberately passes no models list, and AFE resolves ns_model_name
-         * against that list. Setting ns_init = true with any name -- including the
-         * "WEBRTC" the header documents -- makes it dereference NULL.
-         *
-         * So turning NS on here is not a one-line change. It needs the models list
-         * passed to afe_config_init, and that NULL is itself deliberate (see the
-         * comment above it about AFE memory footprint). Measure both before trying
-         * again. */
         afe_config->ns_init = false;
     }
 

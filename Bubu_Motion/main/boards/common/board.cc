@@ -114,6 +114,28 @@ std::string Board::GetSystemInfoJson() {
     json += R"("uuid":")" + uuid_ + R"(",)";
     json += R"("chip_model_name":")" + SystemInfo::GetChipModelName() + R"(",)";
 
+    /* Which assets bundle is actually installed. The bundle is what carries the
+     * WakeNet model, so this is how the server knows whether a wake word chosen
+     * in the portal has landed yet, rather than only that it was offered.
+     *
+     * Deliberately the applied URL and not the wake word itself: this runs during
+     * Ota::CheckVersion(), which is before Assets::Apply() has loaded the model
+     * list, so the model name is not knowable yet. The URL is, and it identifies
+     * the bundle exactly. Empty on a device still running its factory bundle. */
+    {
+        Settings assets_settings("assets", false);
+        std::string applied = assets_settings.GetString("applied_url");
+        // Only ever a URL we generated, but escape the quote anyway rather than
+        // trust it to produce valid JSON.
+        std::string escaped;
+        for (char c : applied) {
+            if (c == '"' || c == '\\') escaped += '\\';
+            escaped += c;
+        }
+        json += R"("assets_url":")" + escaped + R"(",)";
+    }
+
+
     esp_chip_info_t chip_info;
     esp_chip_info(&chip_info);
     json += R"("chip_info":{)";

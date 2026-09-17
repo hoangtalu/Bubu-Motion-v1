@@ -15,6 +15,7 @@
 #include "reminder_system.h"
 #include "display/menu_system.h"
 #include "message_board.h"
+#include "time_sync.h"
 
 #include <cctype>
 #include <cstring>
@@ -36,6 +37,16 @@ constexpr uint64_t kListeningServerReplyTimeoutMs = 15000;
 // listening mode, unlike the two above. Generous enough to clear the
 // AudioInputTask warmup delay and an AutoStop playback-queue drain.
 constexpr uint64_t kListeningMicStallTimeoutMs = 5000;
+// Grace before declaring a channel-less listening state dead. Only needs to
+// cover the gap between entering listening and the channel being reported open;
+// it is not a retry window, because nothing retries.
+constexpr uint64_t kListeningNoChannelTimeoutMs = 3000;
+// How often the device asks the console whether its assets bundle (and so its
+// wake word) changed. Counted in 1 Hz clock ticks. 15 minutes is a compromise:
+// short enough that a parent changing the wake word in the portal sees it apply
+// while they still remember doing it, long enough that it is not a meaningful
+// load on the console or the battery.
+constexpr int kAssetsRefreshIntervalSeconds = 15 * 60;
 constexpr uint32_t kStopListeningDrainMs = 200;
 constexpr uint32_t kStopListeningPostDisableDrainMs = 120;
 constexpr std::string_view kLocalCommandPrefix = "__local_cmd__:";
@@ -156,6 +167,9 @@ void Application::Initialize() {
         audio_service_.SetSfxMuted(ai_session);
         xEventGroupSetBits(event_group_, MAIN_EVENT_STATE_CHANGED);
     });
+
+    // Before anything formats a time: the clock holds UTC, TZ makes it local.
+    TimeSync::Begin();
 
     // Initialize care and level systems
     LevelSystem::Begin();
@@ -374,12 +388,20 @@ void Application::Run() {
             if (clock_ticks_ % 10 == 0) {
                 SystemInfo::PrintHeapStats();
             }
+
+            // Ask the console every 15 minutes whether our assets bundle changed.
+            // Riding the existing 1 Hz tick avoids a second timer; the work
+            // itself is pushed to a short-lived task, never done here.
+            if (clock_ticks_ % kAssetsRefreshIntervalSeconds == 0) {
+                MaybeRefreshAssetsBundle();
+            }
         }
     }
 }
 
 void Application::HandleNetworkConnectedEvent() {
     ESP_LOGI(TAG, "Network connected");
+    TimeSync::StartSntp();
     auto state = GetDeviceState();
 
     if (state == kDeviceStateStarting || state == kDeviceStateWifiConfiguring) {
@@ -468,6 +490,10 @@ void Application::ActivationTask() {
 
     // Initialize the protocol
     InitializeProtocol();
+
+    // From here on ota_ is no longer owned by this task, so the periodic
+    // assets refresh below is allowed to use it.
+    activation_done_ = true;
 
     // Signal completion to main loop
     xEventGroupSetBits(event_group_, MAIN_EVENT_ACTIVATION_DONE);
@@ -569,17 +595,36 @@ void Application::ProcessIncomingJsonMessage(const cJSON* root, uint64_t queue_w
         }
         if (strcmp(tts_state, "start") == 0) {
             Schedule([this]() {
+                // These arrive over the wire but are acted on later, off the
+                // main loop queue, and the channel can close in between. A
+                // server that announces an error over TTS and then drops the
+                // connection is exactly that case: the messages outlive the
+                // session that produced them.
+                if (protocol_ == nullptr || !protocol_->IsAudioChannelOpened()) {
+                    ESP_LOGW(TAG, "Ignoring tts start: audio channel is not open");
+                    return;
+                }
                 aborted_ = false;
                 SetDeviceState(kDeviceStateSpeaking);
             });
         } else if (strcmp(tts_state, "stop") == 0) {
             Schedule([this]() {
-                if (GetDeviceState() == kDeviceStateSpeaking) {
-                    if (listening_mode_ == kListeningModeManualStop) {
-                        SetDeviceState(kDeviceStateIdle);
-                    } else {
-                        SetDeviceState(kDeviceStateListening);
-                    }
+                if (GetDeviceState() != kDeviceStateSpeaking) {
+                    return;
+                }
+                // Without this the device lands in listening with nothing to
+                // listen to and no way out: the mic-stall watchdog sees a
+                // healthy mic, and the no-speech timeout is disarmed for the
+                // rest of the session as soon as VAD fires once.
+                if (protocol_ == nullptr || !protocol_->IsAudioChannelOpened()) {
+                    ESP_LOGW(TAG, "tts stop with no open audio channel, going idle");
+                    SetDeviceState(kDeviceStateIdle);
+                    return;
+                }
+                if (listening_mode_ == kListeningModeManualStop) {
+                    SetDeviceState(kDeviceStateIdle);
+                } else {
+                    SetDeviceState(kDeviceStateListening);
                 }
             });
         } else if (strcmp(tts_state, "sentence_start") == 0) {
@@ -794,7 +839,11 @@ void Application::CheckAssetsVersion() {
         board.SetPowerSaveLevel(PowerSaveLevel::PERFORMANCE);
         display->SetChatMessage("system", Lang::Strings::PLEASE_WAIT);
 
-        bool success = assets.Download(download_url, [this, display](int progress, size_t speed) -> void {
+        // Empty when the server offered no hash; Download() then falls back to the
+        // bundle's own 16-bit checksum and says so in the log.
+        std::string download_sha256 = settings.GetString("download_sha256");
+        bool success = assets.Download(download_url, download_sha256,
+                                       [this, display](int progress, size_t speed) -> void {
             char buffer[32];
             snprintf(buffer, sizeof(buffer), "%d%% %uKB/s", progress, speed / 1024);
             Schedule([display, message = std::string(buffer)]() {
@@ -813,14 +862,87 @@ void Application::CheckAssetsVersion() {
         }
 
         settings.EraseKey("download_url");
+        settings.EraseKey("download_sha256");
         // Remember this exact URL was applied so future boots don't redo it.
+        // Only reached when Download() returned true, which now means the bytes
+        // matched the server's SHA-256 as well as the bundle's own checksum -- so
+        // a corrupt download is retried on the next boot instead of being latched
+        // as installed.
         settings.SetString("applied_url", download_url);
     }
 
     // Apply assets
     assets.Apply();
+    // MenuSystem::Begin() (called well before this, during early boot) already
+    // resolved every menu/care icon into a raw pointer against whatever the
+    // partition held *then*. Download() just remapped it to new content, so
+    // those pointers are stale -- not dangling (partition_valid() guards that
+    // window elsewhere), just wrong: every icon would silently render garbage
+    // or vanish until the next full boot re-resolved them from scratch.
+    // Reproduced on hardware 2026-09-10 (all menu icons gone after the first
+    // OTA assets load, fine again after a reboot) before this call was added.
+    MenuSystem::RefreshIcons();
     display->SetChatMessage("system", "");
     display->SetEmotion("microchip_ai");
+}
+
+void Application::MaybeRefreshAssetsBundle() {
+    // The assets bundle carries the wake word model, and the console chooses it
+    // per device. CheckNewVersion() only ever runs once, at boot, so without
+    // this poll a wake word changed in the portal would not reach a device until
+    // it happened to be power-cycled.
+    if (!activation_done_ || ota_ == nullptr) {
+        return;
+    }
+    if (assets_refresh_running_.exchange(true)) {
+        return;  // a previous poll is still in flight
+    }
+    // Never interrupt a child mid-conversation. Re-checked after the HTTP call
+    // too, since that takes seconds and the state can change under us.
+    if (GetDeviceState() != kDeviceStateIdle) {
+        assets_refresh_running_ = false;
+        return;
+    }
+
+    BaseType_t ok = xTaskCreate([](void* arg) {
+        auto* app = static_cast<Application*>(arg);
+        app->AssetsRefreshTask();
+        app->assets_refresh_running_ = false;
+        vTaskDelete(NULL);
+    }, "assets_refresh", 4096 * 2, this, 1, nullptr);
+    if (ok != pdPASS) {
+        assets_refresh_running_ = false;
+        ESP_LOGW(TAG, "Failed to create assets_refresh task; will retry next tick");
+    }
+}
+
+void Application::AssetsRefreshTask() {
+    // Ota::CheckVersion() re-reads the console config; StoreAssetsDownloadUrl()
+    // inside it stamps assets/download_url only when the console offers a bundle
+    // that is not the one already applied.
+    if (ota_->CheckVersion() != ESP_OK) {
+        ESP_LOGD(TAG, "Assets refresh: version check failed, will retry later");
+        return;
+    }
+
+    Settings settings("assets", false);
+    std::string download_url = settings.GetString("download_url");
+    if (download_url.empty() || download_url == settings.GetString("applied_url")) {
+        return;
+    }
+
+    if (GetDeviceState() != kDeviceStateIdle) {
+        ESP_LOGI(TAG, "New assets bundle pending, but device is busy; deferring");
+        return;
+    }
+
+    // Deliberately reboot instead of downloading here. CheckAssetsVersion() on
+    // the boot path already owns the download, together with its progress UI,
+    // its failure alert and the partition-erase window; duplicating the riskiest
+    // routine in the firmware for a second caller is not worth it.
+    ESP_LOGI(TAG, "New assets bundle offered (%s), rebooting to install it",
+             download_url.c_str());
+    Reboot();
 }
 
 void Application::CheckNewVersion() {
@@ -1508,6 +1630,23 @@ void Application::CheckListeningInactivityTimeout() {
     uint64_t now_ms = esp_timer_get_time() / 1000ULL;
     AudioDebugSnapshot snapshot = audio_service_.GetDebugSnapshot();
     LogListeningDebugReport(now_ms, snapshot);
+
+    // Listening with no audio channel is never valid: there is nobody to send
+    // the audio to. This check comes first deliberately, because every timeout
+    // below it can be disarmed -- the mic-stall one by a healthy mic, the
+    // server-reply one by never having been armed, and the no-speech one
+    // permanently by a single VAD hit. Observed on hardware 2026-09-09: the
+    // device sat here for over 50 s encoding into a closed socket.
+    uint64_t listening_started_for_channel_ms = listening_started_ms_.load();
+    if (listening_started_for_channel_ms != 0 &&
+        now_ms - listening_started_for_channel_ms >= kListeningNoChannelTimeoutMs &&
+        (protocol_ == nullptr || !protocol_->IsAudioChannelOpened())) {
+        ESP_LOGW(TAG, "Listening with no open audio channel for %lums, returning to idle",
+                 static_cast<unsigned long>(now_ms - listening_started_for_channel_ms));
+        listening_started_ms_.store(0);
+        SetDeviceState(kDeviceStateIdle);
+        return;
+    }
 
     // Mic-stall watchdog. AudioInputTask parks on its event group whenever
     // neither the wake word nor the audio processor is running, so if the AFE

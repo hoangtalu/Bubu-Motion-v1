@@ -76,3 +76,6 @@ CONFIG_LV_USE_WIN=n
 CONFIG_LV_BUILD_EXAMPLES=n
 CONFIG_LV_BUILD_DEMOS=n
 
+
+# SNTP: pool.ntp.org + time.google.com (main/time_sync.cc)
+CONFIG_LWIP_SNTP_MAX_SERVERS=2

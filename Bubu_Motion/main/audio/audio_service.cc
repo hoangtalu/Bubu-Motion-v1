@@ -37,7 +37,9 @@
 
 #if CONFIG_IDF_TARGET_ESP32S3 || CONFIG_IDF_TARGET_ESP32P4
 #include "wake_words/afe_wake_word.h"
+#if CONFIG_USE_CUSTOM_WAKE_WORD
 #include "wake_words/custom_wake_word.h"
+#endif
 #else
 #include "wake_words/esp_wake_word.h"
 #endif
@@ -434,6 +436,13 @@ void AudioService::AudioOutputTask() {
             codec_->OutputData(voice_task->pcm);
         } else if (sfx_task) {
             codec_->OutputData(sfx_task->pcm);
+        }
+
+        if (voice_task) {
+            int rate = codec_->output_sample_rate();
+            if (rate > 0) {
+                voice_played_ms_.fetch_add(voice_task->pcm.size() * 1000ULL / rate);
+            }
         }
 
         /* Update the last output time */

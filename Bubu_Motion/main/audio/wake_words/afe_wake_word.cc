@@ -132,6 +132,48 @@ bool AfeWakeWord::Initialize(AudioCodec* codec, srmodel_list_t* models_list) {
     return true;
 }
 
+void AfeWakeWord::ReportMicLevelLocked(const std::vector<int16_t>& data) {
+    // Called with input_buffer_mutex_ held, on the audio input task, for every
+    // chunk. Keep it to integer arithmetic over the block: this runs at 16 kHz
+    // on the realtime path.
+    constexpr uint64_t kWindowMs = 2000;
+    for (int16_t sample : data) {
+        int32_t magnitude = sample < 0 ? -static_cast<int32_t>(sample) : sample;
+        if (magnitude > mic_window_peak_) {
+            mic_window_peak_ = static_cast<int16_t>(magnitude > 32767 ? 32767 : magnitude);
+        }
+        if (magnitude >= 32000) {
+            mic_window_clipped_++;
+        }
+        mic_window_abs_sum_ += static_cast<uint64_t>(magnitude);
+    }
+    mic_window_samples_ += data.size();
+
+    uint64_t now_ms = esp_timer_get_time() / 1000ULL;
+    if (mic_window_started_ms_ == 0) {
+        mic_window_started_ms_ = now_ms;
+        return;
+    }
+    if (now_ms - mic_window_started_ms_ < kWindowMs || mic_window_samples_ == 0) {
+        return;
+    }
+
+    uint32_t avg = static_cast<uint32_t>(mic_window_abs_sum_ / mic_window_samples_);
+    ESP_LOGI(TAG, "[MIC] %lums peak=%d avg=%lu clipped=%.1f%% samples=%lu model=%s",
+             static_cast<unsigned long>(now_ms - mic_window_started_ms_),
+             static_cast<int>(mic_window_peak_),
+             static_cast<unsigned long>(avg),
+             100.0f * mic_window_clipped_ / mic_window_samples_,
+             static_cast<unsigned long>(mic_window_samples_),
+             wakenet_model_ != nullptr ? wakenet_model_ : "<none>");
+
+    mic_window_started_ms_ = now_ms;
+    mic_window_samples_ = 0;
+    mic_window_clipped_ = 0;
+    mic_window_abs_sum_ = 0;
+    mic_window_peak_ = 0;
+}
+
 void AfeWakeWord::OnWakeWordDetected(std::function<void(const std::string& wake_word)> callback) {
     wake_word_detected_callback_ = callback;
 }
@@ -160,6 +202,7 @@ void AfeWakeWord::Feed(const std::vector<int16_t>& data) {
     if (!(xEventGroupGetBits(event_group_) & DETECTION_RUNNING_EVENT)) {
         return;
     }
+    ReportMicLevelLocked(data);
     input_buffer_.insert(input_buffer_.end(), data.begin(), data.end());
     size_t chunk_size = afe_iface_->get_feed_chunksize(afe_data_) * codec_->input_channels();
     while (input_buffer_.size() >= chunk_size) {

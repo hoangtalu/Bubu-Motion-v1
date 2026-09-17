@@ -211,6 +211,10 @@ public:
     // draining the rest of the current clip under the AI's voice.
     void SetSfxMuted(bool muted);
     bool IsSfxMuted() const { return sfx_muted_.load(); }
+    // Milliseconds of voice-lane audio handed to the codec since boot. Only
+    // advances while the speaker is actually playing voice, so it is a playback
+    // clock (the chat subtitles pace against it), not wall time.
+    uint64_t GetVoicePlayedMs() const { return voice_played_ms_.load(); }
 
 private:
     AudioCodec* codec_ = nullptr;
@@ -268,6 +272,7 @@ private:
     // Application's state-change listener. Atomic because it is read on the
     // audio tasks and written from whichever task drives the transition.
     std::atomic<bool> sfx_muted_{false};
+    std::atomic<uint64_t> voice_played_ms_{0};
     // For server AEC
     std::deque<uint32_t> timestamp_queue_;
 

@@ -18,6 +18,7 @@
 #include "pomodoro_timer.h"
 #include "quick_tap_game.h"
 #include "reminder_system.h"
+#include "snake_game.h"
 #include "lvgl_display/gif/lvgl_gif.h"
 #include "lvgl_display/lvgl_image.h"
 #include "lvgl_display/lvgl_theme.h"
@@ -39,6 +40,7 @@
 
 #include <esp_log.h>
 #include <esp_err.h>
+#include <esp_heap_caps.h>
 #include <esp_timer.h>
 #include <esp_system.h>
 #include <lvgl.h>
@@ -62,8 +64,13 @@ enum CareItem {
 };
 
 enum ConnectItem {
-    CONNECT_PHONE,
+    // Order here IS the on-screen order, and connectItemLabelTexts below is
+    // indexed by it -- change one without the other and the labels swap actions.
+    // On-device first because it is the path parents actually use: it needs
+    // nothing but the toy, while the phone route means joining another WiFi and
+    // opening 192.168.4.1.
     CONNECT_DEVICE,
+    CONNECT_PHONE,
     CONNECT_ITEM_COUNT
 };
 
@@ -82,6 +89,7 @@ enum GameSelection {
     GAME_SELECTION_EYE_TAP,
     GAME_SELECTION_CHECKER,
     GAME_SELECTION_QUICK_TAP,
+    GAME_SELECTION_SNAKE,
     GAME_SELECTION_COUNT
 };
 
@@ -89,7 +97,8 @@ enum ActiveGameType {
     ACTIVE_GAME_NONE,
     ACTIVE_GAME_EYE_TAP,
     ACTIVE_GAME_CHECKER,
-    ACTIVE_GAME_QUICK_TAP
+    ACTIVE_GAME_QUICK_TAP,
+    ACTIVE_GAME_SNAKE
 };
 
 constexpr size_t STAT_COUNT = 4;
@@ -99,7 +108,7 @@ constexpr size_t STAT_COUNT = 4;
 MenuState currentState = MENU_CLOSED;
 MenuItem selectedItem = MENU_CARE;
 CareItem selectedCareItem = CARE_FEED;
-ConnectItem selectedConnectItem = CONNECT_PHONE;
+ConnectItem selectedConnectItem = CONNECT_DEVICE;
 ConnectView connectView = CONNECT_VIEW_METHODS;
 SettingsItem selectedSettingsItem = SETTINGS_VOLUME;
 size_t selectedWifiIndex = 0;
@@ -140,11 +149,10 @@ lv_obj_t* connectDownButton = nullptr;
 lv_obj_t* connectWifiList = nullptr;
 
 lv_obj_t* keyboardPanel = nullptr;
-lv_obj_t* keyboardTitle = nullptr;
 lv_obj_t* keyboardSsid = nullptr;
 lv_obj_t* keyboardValue = nullptr;
 lv_obj_t* keyboardGrid = nullptr;
-std::array<lv_obj_t*, 15> keyboardButtons = {};
+std::array<lv_obj_t*, 13> keyboardButtons = {};
 
 lv_obj_t* settingsPanel = nullptr;
 lv_obj_t* settingsTitle = nullptr;
@@ -372,6 +380,133 @@ void StartQuickTapTimer();
 void StopQuickTapTimer();
 
 // ---------------------------------------------------------------------------
+// RẮN SĂN MỒI (Snake) -- the arcade classic on the round panel.
+//
+// The rules live in snake_game.cc; everything here is presentation and input.
+// Three things about this screen are not like the other games:
+//
+//   * The board is drawn into an lv_canvas by writing RGB565 straight into its
+//     buffer, not out of LVGL objects. A 15x15 board would be 225 widgets that
+//     exist for one game, and the snake can occupy every one of them; the eye
+//     animation already owns a full-screen canvas the same way, so this is the
+//     established pattern here rather than a new one.
+//   * Steering takes a swipe OR a tap, and a tap anywhere on the playfield
+//     counts -- the quadrant the tap falls in picks the direction. The drawn
+//     chevrons are affordances that flash on a turn, not hit targets. A child's
+//     finger is far bigger than a 24px arrow, and a steer that reads as
+//     "nothing happened" is the worst failure this game has.
+//   * There is no pause, for the same reason HỌC TẬP has none: the menu's 30s
+//     inactivity close-out would either fire under a paused game or have to be
+//     defeated, and a long press already quits from every other game here.
+//
+// Every y below was measured against the compiled faces with tools/lvwidth.py
+// before it was written, not adjusted afterwards, and
+// tools/verify_snake_layout.py re-tests all of them against the constants in
+// this file. Worst case is "ĂN HẾT BÀN!" at vn_22, which clears the r=109 ring
+// by 4.35px; the board's bottom corners clear it by 12.21px against the r=112
+// panel clip.
+// ---------------------------------------------------------------------------
+constexpr uint32_t kSnakeAccent     = 0x5BE36B;   // carousel + chrome
+constexpr uint32_t kSnakePanelBg    = 0x04080A;
+constexpr uint32_t kSnakePanelRing  = 0x122018;
+constexpr uint32_t kSnakeBoardBg    = 0x081410;
+constexpr uint32_t kSnakeGridLine   = 0x10241A;
+constexpr uint32_t kSnakeBody       = 0x3FCB5E;
+constexpr uint32_t kSnakeHead       = 0x9CFFAE;
+constexpr uint32_t kSnakePellet     = 0xFF5A3C;
+constexpr uint32_t kSnakeMuted      = 0x7E8C84;
+constexpr uint32_t kSnakePillDim    = 0x14201A;
+
+// 15 cells x 9px = 135px. Centred 6px low so the score line has room above it
+// without pushing the board's bottom corners into the bezel.
+constexpr int kSnakeCell = 9;
+constexpr int kSnakeBoardPx = SnakeGame::kBoardCells * kSnakeCell;   // 135
+constexpr int kSnakeBoardOffsetY = 6;
+// Left inside each cell so segments read as separate blocks rather than one
+// bar. 7px of 9 is the largest inset that still leaves a visible seam.
+constexpr int kSnakeCellInset = 1;
+
+// Every offset below is a dy for lv_obj_align(obj, LV_ALIGN_CENTER, 0, dy) on
+// the 240x240 panel, and every one was measured against the compiled faces
+// before it was written. tools/verify_snake_layout.py reads these back out of
+// this file and re-tests them, so changing one without re-measuring fails.
+constexpr int kSnakeScoreDy       = -93;
+constexpr int kSnakeChevronUpDy   = -72;
+constexpr int kSnakeChevronDownDy = 86;
+constexpr int kSnakeChevronSideDx = 90;
+constexpr int kSnakeTitleDy       = -76;
+constexpr int kSnakeBestDy        = -46;
+constexpr int kSnakeSpeedCapDy    = -20;
+constexpr int kSnakeSpeedDy       = 8;
+constexpr int kSnakePlayDy        = 46;
+constexpr int kSnakeHintDy        = 78;
+constexpr int kSnakeOverHeadDy    = -60;
+constexpr int kSnakeOverScoreDy   = -28;
+constexpr int kSnakeOverBestDy    = -2;
+constexpr int kSnakeAgainDy       = 36;
+constexpr int kSnakeMenuDy        = 76;
+constexpr int kSnakeSpeedPillW    = 118;
+constexpr int kSnakeSpeedPillH    = 30;
+constexpr int kSnakePlayPillW     = 120;
+constexpr int kSnakePlayPillH     = 34;
+constexpr int kSnakeAgainPillW    = 130;
+constexpr int kSnakeAgainPillH    = 32;
+constexpr int kSnakeMenuPillW     = 88;
+constexpr int kSnakeMenuPillH     = 28;
+
+constexpr uint32_t kSnakeTickMs = 33;
+constexpr uint32_t kSnakeChevronFlashMs = 140;
+// Long enough to read the cause of death before the scoreboard replaces it.
+constexpr uint32_t kSnakeOverHoldMs = 900;
+
+enum class SnakeScreen : uint8_t {
+    kSetup,      // title + record + speed picker + CHƠI
+    kPlaying,
+    kHold,       // dead board, held a beat so the cause is visible
+    kOver,       // cause, score, record, CHƠI LẠI / MENU
+};
+
+constexpr int kSnakeSpeedCount = static_cast<int>(SnakeGame::Speed::kSpeedCount);
+
+SnakeScreen snakeScreen = SnakeScreen::kSetup;
+SnakeGame::Speed snakeSpeed = SnakeGame::Speed::kNormal;
+bool snakeNewRecord = false;
+uint32_t snakeHoldStartMs = 0;
+lv_timer_t* snakeTimer = nullptr;
+// Best score per speed, so an easy grind cannot beat a fast run.
+std::array<uint16_t, kSnakeSpeedCount> snakeRecords = {};
+// Which chevron is lit, and until when. -1 is none. snakeFlashApplied is the
+// value the widgets were last styled for: without it the 33ms tick would set
+// four styles a frame forever, and every style write invalidates its object.
+int snakeFlashChevron = -1;
+int snakeFlashApplied = -2;
+uint32_t snakeFlashUntilMs = 0;
+
+lv_obj_t* snakeCanvas = nullptr;
+lv_color_t* snakeCanvasBuf = nullptr;
+lv_obj_t* snakeScoreLabel = nullptr;
+std::array<lv_obj_t*, 4> snakeChevrons = {};      // indexed by SnakeGame::Direction
+lv_obj_t* snakeSetupScreen = nullptr;
+lv_obj_t* snakeSetupRecord = nullptr;
+// One pill that cycles CHẬM -> VỪA -> NHANH, not three side by side: "NHANH"
+// alone is 79px at vn_20, so three pills each wide enough for their own label
+// would not fit the chord at this height.
+lv_obj_t* snakeSpeedBtn = nullptr;
+lv_obj_t* snakePlayBtn = nullptr;
+lv_obj_t* snakeOverScreen = nullptr;
+lv_obj_t* snakeOverHead = nullptr;
+lv_obj_t* snakeOverScore = nullptr;
+lv_obj_t* snakeOverBest = nullptr;
+lv_obj_t* snakeAgainBtn = nullptr;
+lv_obj_t* snakeMenuBtn = nullptr;
+
+void HideSnakeAll();
+void ShowSnakeScreen(SnakeScreen screen);
+void BeginSnakeRound();
+void StartSnakeTimer();
+void StopSnakeTimer();
+
+// ---------------------------------------------------------------------------
 // HỌC TẬP (Pomodoro) -- focus/break blocks on the round panel.
 //
 // The logic lives in pomodoro_timer.cc; everything here is presentation and
@@ -520,16 +655,16 @@ const char* careItemIconFiles[CARE_ITEM_COUNT] = {
 };
 
 const char* connectItemLabelTexts[CONNECT_ITEM_COUNT] = {
-    "BẰNG ĐIỆN THOẠI",
-    "TRÊN THIẾT BỊ",
+    "TRÊN THIẾT BỊ",     // CONNECT_DEVICE
+    "BẰNG ĐIỆN THOẠI",   // CONNECT_PHONE
 };
 
-const std::array<const char*, 15> keyboardButtonTexts = {
+const std::array<const char*, 13> keyboardButtonTexts = {
     "1!@", "2 abc", "3 def",
     "4 ghi", "5 jkl", "6 mno",
     "7 pqrs", "8 tuv", "9 wxyz",
-    "del", "0", "CAP",
-    LV_SYMBOL_UP, "OK", LV_SYMBOL_LEFT,
+    LV_SYMBOL_UP, "0", LV_SYMBOL_LEFT,
+    "OK",
 };
 
 std::vector<lv_obj_t*> connectWifiItems;
@@ -602,10 +737,19 @@ constexpr int kGamesRingBox = kGamesRingRadius * 2 + kGamesRingWidth;
 constexpr int kGamesRingInner = kGamesRingRadius - kGamesRingWidth / 2;   // 109
 constexpr uint32_t kGamesRingTrack = 0x1A2437;
 
-// One third of the rim is lit. LVGL angles start at 3 o'clock and run
-// clockwise, so segment 0 is centred on 12 o'clock (270 - 112/2 = 214).
-constexpr int kGamesSegmentSpan = 112;
-constexpr int kGamesSegmentStart[GAME_SELECTION_COUNT] = {214, 334, 94};
+// One slice of the rim per game, lit with a small gap either side so two
+// neighbouring segments never look like one arc. LVGL angles start at 3
+// o'clock and run clockwise, so segment 0 is centred on 12 o'clock (270°).
+//
+// Derived rather than tabulated: with three games this was a hand-written
+// {214, 334, 94}, which had to be recomputed by hand the moment a fourth was
+// added. lv_arc_set_angles() normalises internally, so an end past 360 is
+// fine and no wrapping is needed here.
+constexpr int kGamesSegmentGap = 8;
+constexpr int kGamesSegmentSpan = 360 / GAME_SELECTION_COUNT - kGamesSegmentGap;
+constexpr int GamesSegmentStart(int selection) {
+    return 270 - kGamesSegmentSpan / 2 + selection * (360 / GAME_SELECTION_COUNT);
+}
 
 constexpr int kGamesEmblemSize = 104;
 constexpr int kGamesEmblemTop = 38;
@@ -642,6 +786,10 @@ const char* GetSelectedGameTitle() {
             return "CỜ CA-RÔ";
         case GAME_SELECTION_QUICK_TAP:
             return "CHẠM NHANH";
+        case GAME_SELECTION_SNAKE:
+            // 157px at vn_22, clearing the ring by 12.57px at baseline y=176 --
+            // roomier than CHẠM NHANH, which clears by 6.99. Measured, not eyed.
+            return "RẮN SĂN MỒI";
         case GAME_SELECTION_COUNT:
             break;
     }
@@ -679,6 +827,21 @@ void SetGamesMenuStatusForSelection() {
             // "KỶ LỤC 9999" is 126px, i.e. 0.8px off the ring. The game cannot
             // score that high (33 hits + 33 streak x3 caps it near 132), but
             // this value comes back from NVS, so it is not ours to trust.
+            if (best > 0) {
+                std::snprintf(gameStatusMsg, sizeof(gameStatusMsg), "KỶ LỤC %u",
+                              static_cast<unsigned>(std::min<uint16_t>(best, 999)));
+            }
+            break;
+        }
+        case GAME_SELECTION_SNAKE: {
+            gamesActionColor = kSnakeAccent;
+            uint16_t best = 0;
+            for (uint16_t record : snakeRecords) {
+                best = std::max(best, record);
+            }
+            // Same three-digit clamp as Quick Tap: "KỶ LỤC 999" is 114px and
+            // clears the ring by 4.15px, and the value comes back from NVS, so
+            // it is not ours to trust. A perfect game caps the score at 222.
             if (best > 0) {
                 std::snprintf(gameStatusMsg, sizeof(gameStatusMsg), "KỶ LỤC %u",
                               static_cast<unsigned>(std::min<uint16_t>(best, 999)));
@@ -1167,13 +1330,13 @@ void UpdateKeyboardValue() {
 }
 
 void UpdateKeyboardCapsButtonStyle() {
-    if (displayHandle == nullptr || keyboardButtons[11] == nullptr) {
+    if (displayHandle == nullptr || keyboardButtons[9] == nullptr) {
         return;
     }
     DisplayLockGuard lock(displayHandle);
     lv_obj_set_style_bg_color(
-        keyboardButtons[11],
-        lv_color_hex(keyboardCaps ? 0x2EBE4E : 0x111111),
+        keyboardButtons[9],
+        lv_color_hex(keyboardCaps ? 0x2EBE4E : 0x1C2334),
         0);
 }
 
@@ -1965,19 +2128,17 @@ void CreateKeyboardPanel() {
     lv_obj_clear_flag(keyboardPanel, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(keyboardPanel, LV_OBJ_FLAG_HIDDEN);
 
-    keyboardTitle = lv_label_create(keyboardPanel);
-    lv_label_set_text(keyboardTitle, "PASSWORD");
-    lv_obj_set_style_text_color(keyboardTitle, lv_color_hex(COLOR_TEXT), 0);
-    lv_obj_set_style_text_font(keyboardTitle, &lv_font_montserrat_14, 0);
-    lv_obj_align(keyboardTitle, LV_ALIGN_TOP_MID, 0, 8);
-
+    // No separate "PASSWORD" title — it only ever showed near the top edge
+    // of the round bezel, where the circle is narrowest, so it read as
+    // clipped/cramped. Dropping it also frees ~24px of vertical room for
+    // bigger keys below.
     keyboardSsid = lv_label_create(keyboardPanel);
     lv_label_set_text(keyboardSsid, "");
     lv_obj_set_width(keyboardSsid, 180);
     lv_obj_set_style_text_color(keyboardSsid, lv_color_hex(COLOR_TEXT), 0);
     lv_obj_set_style_text_align(keyboardSsid, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_font(keyboardSsid, &lv_font_montserrat_14, 0);
-    lv_obj_align(keyboardSsid, LV_ALIGN_TOP_MID, 0, 30);
+    lv_obj_align(keyboardSsid, LV_ALIGN_TOP_MID, 0, 2);
 
     keyboardValue = lv_label_create(keyboardPanel);
     lv_label_set_text(keyboardValue, "");
@@ -1986,36 +2147,54 @@ void CreateKeyboardPanel() {
     lv_obj_set_style_text_color(keyboardValue, lv_color_hex(COLOR_TEXT), 0);
     lv_obj_set_style_text_align(keyboardValue, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_font(keyboardValue, &lv_font_montserrat_14, 0);
-    lv_obj_align(keyboardValue, LV_ALIGN_TOP_MID, 0, 52);
+    lv_obj_align(keyboardValue, LV_ALIGN_TOP_MID, 0, 18);
 
-    constexpr lv_coord_t kButtonWidth = 66;
-    constexpr lv_coord_t kButtonHeight = 26;
-    constexpr lv_coord_t kGapX = 6;
+    // The panel is a 240x240 circle (round display), so a uniform 3-column
+    // grid gets its outer columns clipped by the bezel in the rows farthest
+    // from vertical center. Each row's button width below is the widest that
+    // still keeps all 3 buttons fully inside the circular safe area at that
+    // row's vertical position, so every key is both bigger and fully usable.
+    // OK sits alone below the grid, narrower than the grid rows (it doesn't
+    // need to be as wide as a 3-column row), so it can sit lower and leave
+    // more of the header's freed-up vertical space to the keys above.
+    constexpr lv_coord_t kButtonHeight = 32;
+    constexpr lv_coord_t kGapX = 4;
     constexpr lv_coord_t kGapY = 4;
-    constexpr lv_coord_t kGridWidth = kButtonWidth * 3 + kGapX * 2;
-    constexpr lv_coord_t kGridHeight = kButtonHeight * 5 + kGapY * 4;
+    constexpr std::array<lv_coord_t, 4> kRowButtonWidths = {58, 71, 73, 62};
+    constexpr lv_coord_t kGridWidth = 73 * 3 + kGapX * 2;
+    constexpr lv_coord_t kGridHeight = kButtonHeight * 4 + kGapY * 3;
+    constexpr lv_coord_t kGridTopOffset = 46;
+    constexpr size_t kGridButtonCount = 12;
+    constexpr uint32_t kKeyBgColor = 0x1C2334;
+    constexpr uint32_t kKeyBorderColor = 0x38415A;
 
     keyboardGrid = lv_obj_create(keyboardPanel);
     lv_obj_set_size(keyboardGrid, kGridWidth, kGridHeight);
-    lv_obj_align(keyboardGrid, LV_ALIGN_TOP_MID, 0, 92);
+    lv_obj_align(keyboardGrid, LV_ALIGN_TOP_MID, 0, kGridTopOffset);
     lv_obj_set_style_bg_opa(keyboardGrid, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(keyboardGrid, 0, 0);
     lv_obj_set_style_pad_all(keyboardGrid, 0, 0);
     lv_obj_clear_flag(keyboardGrid, LV_OBJ_FLAG_SCROLLABLE);
 
-    for (size_t i = 0; i < keyboardButtons.size(); ++i) {
+    for (size_t i = 0; i < kGridButtonCount; ++i) {
         auto* button = lv_btn_create(keyboardGrid);
         keyboardButtons[i] = button;
-        lv_obj_set_size(button, kButtonWidth, kButtonHeight);
 
         const int row = static_cast<int>(i / 3);
         const int col = static_cast<int>(i % 3);
-        const lv_coord_t x = col * (kButtonWidth + kGapX);
+        const lv_coord_t buttonWidth = kRowButtonWidths[row];
+        lv_obj_set_size(button, buttonWidth, kButtonHeight);
+
+        const lv_coord_t rowWidth = buttonWidth * 3 + kGapX * 2;
+        const lv_coord_t rowXOffset = (kGridWidth - rowWidth) / 2;
+        const lv_coord_t x = rowXOffset + col * (buttonWidth + kGapX);
         const lv_coord_t y = row * (kButtonHeight + kGapY);
         lv_obj_set_pos(button, x, y);
-        lv_obj_set_style_bg_color(button, lv_color_hex(0x111111), 0);
+        lv_obj_set_style_bg_color(button, lv_color_hex(kKeyBgColor), 0);
         lv_obj_set_style_bg_opa(button, LV_OPA_COVER, 0);
-        lv_obj_set_style_border_width(button, 0, 0);
+        lv_obj_set_style_border_width(button, 1, 0);
+        lv_obj_set_style_border_color(button, lv_color_hex(kKeyBorderColor), 0);
+        lv_obj_set_style_border_opa(button, LV_OPA_COVER, 0);
         lv_obj_set_style_shadow_width(button, 0, 0);
         lv_obj_set_style_radius(button, 12, 0);
 
@@ -2025,6 +2204,29 @@ void CreateKeyboardPanel() {
         lv_obj_set_style_text_font(label, &lv_font_montserrat_14, 0);
         lv_obj_center(label);
     }
+
+    constexpr lv_coord_t kOkButtonWidth = 100;
+    constexpr lv_coord_t kOkButtonHeight = 32;
+    constexpr lv_coord_t kOkButtonTopOffset = kGridTopOffset + kGridHeight + 8;
+    constexpr size_t kOkButtonIndex = 12;
+
+    auto* okButton = lv_btn_create(keyboardPanel);
+    keyboardButtons[kOkButtonIndex] = okButton;
+    lv_obj_set_size(okButton, kOkButtonWidth, kOkButtonHeight);
+    lv_obj_align(okButton, LV_ALIGN_TOP_MID, 0, kOkButtonTopOffset);
+    lv_obj_set_style_bg_color(okButton, lv_color_hex(kKeyBgColor), 0);
+    lv_obj_set_style_bg_opa(okButton, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(okButton, 1, 0);
+    lv_obj_set_style_border_color(okButton, lv_color_hex(kKeyBorderColor), 0);
+    lv_obj_set_style_border_opa(okButton, LV_OPA_COVER, 0);
+    lv_obj_set_style_shadow_width(okButton, 0, 0);
+    lv_obj_set_style_radius(okButton, 16, 0);
+
+    auto* okLabel = lv_label_create(okButton);
+    lv_label_set_text(okLabel, keyboardButtonTexts[kOkButtonIndex]);
+    lv_obj_set_style_text_color(okLabel, lv_color_hex(COLOR_TEXT), 0);
+    lv_obj_set_style_text_font(okLabel, &lv_font_montserrat_14, 0);
+    lv_obj_center(okLabel);
 
     UpdateKeyboardCapsButtonStyle();
 }
@@ -2354,7 +2556,7 @@ void UpdateGamesUI() {
         lv_obj_set_style_border_width(gamesPanel, 0, 0);
         lv_obj_set_style_bg_color(gamesPanel, lv_color_hex(COLOR_BACKGROUND), 0);
 
-        const int segment = kGamesSegmentStart[selectedGame];
+        const int segment = GamesSegmentStart(static_cast<int>(selectedGame));
         lv_arc_set_angles(gamesRing, segment, segment + kGamesSegmentSpan);
         lv_obj_set_style_arc_color(gamesRing, lv_color_hex(accent), LV_PART_INDICATOR);
         lv_obj_remove_flag(gamesRing, LV_OBJ_FLAG_HIDDEN);
@@ -2405,6 +2607,22 @@ void UpdateGamesUI() {
             lv_obj_add_flag(checkerBotIcon, LV_OBJ_FLAG_HIDDEN);
         }
         HideQuickTapAll();
+        HideSnakeAll();
+    } else if (currentState == MENU_GAME_ACTIVE && activeGame == ACTIVE_GAME_SNAKE) {
+        // Snake owns the whole panel, same deal as Quick Tap: its own ground,
+        // no carousel chrome, and ShowSnakeScreen() drives what is visible.
+        lv_obj_set_style_bg_color(gamesPanel, lv_color_hex(kSnakePanelBg), 0);
+        lv_obj_set_style_border_width(gamesPanel, 8, 0);
+        lv_obj_set_style_border_color(gamesPanel, lv_color_hex(kSnakePanelRing), 0);
+        for (lv_obj_t* obj : {gamesRing, gamesEmblem, gamesAction, gamesStatus, gamesPrevBtn,
+                              gamesNextBtn, checkerGrid, checkerBotIcon, checkerDotsRow,
+                              checkerTitleScreen, checkerMatchupScreen,
+                              checkerPlayAgainScreen, checkerFx}) {
+            if (obj != nullptr) {
+                lv_obj_add_flag(obj, LV_OBJ_FLAG_HIDDEN);
+            }
+        }
+        HideQuickTapAll();
     } else if (currentState == MENU_GAME_ACTIVE && activeGame == ACTIVE_GAME_QUICK_TAP) {
         // Quick Tap owns the whole panel: black ground, no menu chrome, and
         // its own screens are driven by ShowQuickTapScreen().
@@ -2419,6 +2637,7 @@ void UpdateGamesUI() {
                 lv_obj_add_flag(obj, LV_OBJ_FLAG_HIDDEN);
             }
         }
+        HideSnakeAll();
     } else if (currentState == MENU_GAME_ACTIVE && activeGame == ACTIVE_GAME_CHECKER) {
         // Neon on black: the board owns the screen and the turn indicator moves
         // to a header row at the top, beside the Bubu glyph.
@@ -2479,6 +2698,7 @@ void UpdateGamesUI() {
                 lv_obj_add_flag(gamesStatus, LV_OBJ_FLAG_HIDDEN);
             }
         }
+        HideSnakeAll();
     }
 
     if (gamesStatus != nullptr) {
@@ -3330,6 +3550,588 @@ void CreateQuickTapUI() {
 }
 
 // ---------------------------------------------------------------------------
+// RẮN SĂN MỒI
+// ---------------------------------------------------------------------------
+
+void LoadSnakeRecords() {
+    Settings settings("snake", false);
+    for (size_t i = 0; i < snakeRecords.size(); ++i) {
+        char key[4] = {'b', static_cast<char>('0' + i), 0, 0};
+        const int value = settings.GetInt(key, 0);
+        snakeRecords[i] = static_cast<uint16_t>(value < 0 ? 0 : value);
+    }
+}
+
+void SaveSnakeRecord(int index) {
+    if (index < 0 || index >= static_cast<int>(snakeRecords.size())) {
+        return;
+    }
+    Settings settings("snake", true);
+    char key[4] = {'b', static_cast<char>('0' + index), 0, 0};
+    settings.SetInt(key, snakeRecords[index]);
+}
+
+const char* SnakeSpeedName(SnakeGame::Speed speed) {
+    switch (speed) {
+        case SnakeGame::Speed::kSlow:   return "CHẬM";
+        case SnakeGame::Speed::kNormal: return "VỪA";
+        case SnakeGame::Speed::kFast:   return "NHANH";
+        default: break;
+    }
+    return "VỪA";
+}
+
+void PlaySnakeSound(const std::string_view& sound) {
+    Application::GetInstance().Schedule([sound]() {
+        Application::GetInstance().PlayOverlaySound(sound);
+    });
+}
+
+// ---- Board painting -------------------------------------------------------
+//
+// Straight RGB565 writes into the canvas buffer, the same way the eye
+// animation paints its fog (eye_animation.cc, CanvasBlendPixel565) and for the
+// same reason: these are solid blocks, so going through an lv_draw layer would
+// cost a layer set-up per frame to produce identical pixels.
+
+uint16_t SnakeColor565(uint32_t rgb) {
+    const uint8_t r = static_cast<uint8_t>((rgb >> 16) & 0xFF);
+    const uint8_t g = static_cast<uint8_t>((rgb >> 8) & 0xFF);
+    const uint8_t b = static_cast<uint8_t>(rgb & 0xFF);
+    return static_cast<uint16_t>(((r & 0xF8U) << 8U) | ((g & 0xFCU) << 3U) | (b >> 3U));
+}
+
+void SnakeFillRect(uint16_t* buf, int x, int y, int w, int h, uint16_t color) {
+    if (buf == nullptr) {
+        return;
+    }
+    const int x0 = std::max(x, 0);
+    const int y0 = std::max(y, 0);
+    const int x1 = std::min(x + w, kSnakeBoardPx);
+    const int y1 = std::min(y + h, kSnakeBoardPx);
+    for (int row = y0; row < y1; ++row) {
+        uint16_t* line = buf + row * kSnakeBoardPx;
+        for (int col = x0; col < x1; ++col) {
+            line[col] = color;
+        }
+    }
+}
+
+void SnakeFillCell(uint16_t* buf, const SnakeGame::Cell& cell, uint16_t color) {
+    SnakeFillRect(buf, cell.x * kSnakeCell + kSnakeCellInset,
+                  cell.y * kSnakeCell + kSnakeCellInset,
+                  kSnakeCell - kSnakeCellInset, kSnakeCell - kSnakeCellInset, color);
+}
+
+void RedrawSnakeBoard() {
+    if (snakeCanvasBuf == nullptr || snakeCanvas == nullptr) {
+        return;
+    }
+    uint16_t* buf = reinterpret_cast<uint16_t*>(snakeCanvasBuf);
+
+    SnakeFillRect(buf, 0, 0, kSnakeBoardPx, kSnakeBoardPx, SnakeColor565(kSnakeBoardBg));
+    // A 1px seam on every cell boundary. Without it a 15x15 field of flat
+    // colour gives the eye nothing to judge the snake's speed against.
+    const uint16_t grid = SnakeColor565(kSnakeGridLine);
+    for (int i = 1; i < SnakeGame::kBoardCells; ++i) {
+        SnakeFillRect(buf, i * kSnakeCell, 0, 1, kSnakeBoardPx, grid);
+        SnakeFillRect(buf, 0, i * kSnakeCell, kSnakeBoardPx, 1, grid);
+    }
+
+    SnakeFillCell(buf, SnakeGame::GetPellet(), SnakeColor565(kSnakePellet));
+
+    const uint16_t body = SnakeColor565(kSnakeBody);
+    const uint16_t head = SnakeColor565(kSnakeHead);
+    const int length = static_cast<int>(SnakeGame::GetLength());
+    // Tail first, so the head paints over the overlap on the one step where it
+    // enters the cell the tail is leaving.
+    for (int i = length - 1; i >= 0; --i) {
+        SnakeFillCell(buf, SnakeGame::GetSegment(static_cast<uint16_t>(i)),
+                      i == 0 ? head : body);
+    }
+    lv_obj_invalidate(snakeCanvas);
+}
+
+void UpdateSnakeChevrons() {
+    const uint32_t now = lv_tick_get();
+    if (snakeFlashChevron >= 0 && static_cast<int32_t>(now - snakeFlashUntilMs) >= 0) {
+        snakeFlashChevron = -1;
+    }
+    if (snakeFlashChevron == snakeFlashApplied) {
+        return;
+    }
+    snakeFlashApplied = snakeFlashChevron;
+    for (size_t i = 0; i < snakeChevrons.size(); ++i) {
+        if (snakeChevrons[i] == nullptr) {
+            continue;
+        }
+        const bool lit = (static_cast<int>(i) == snakeFlashChevron);
+        lv_obj_t* line = lv_obj_get_child(snakeChevrons[i], 0);
+        if (line != nullptr) {
+            lv_obj_set_style_line_color(line, lv_color_hex(lit ? kSnakeHead : kSnakeMuted), 0);
+            lv_obj_set_style_line_opa(line, lit ? LV_OPA_COVER : LV_OPA_40, 0);
+        }
+    }
+}
+
+void FlashSnakeChevron(SnakeGame::Direction direction) {
+    snakeFlashChevron = static_cast<int>(direction);
+    snakeFlashUntilMs = lv_tick_get() + kSnakeChevronFlashMs;
+    UpdateSnakeChevrons();
+}
+
+void UpdateSnakeScore() {
+    if (snakeScoreLabel != nullptr) {
+        lv_label_set_text_fmt(snakeScoreLabel, "%u",
+                              static_cast<unsigned>(SnakeGame::GetScore()));
+    }
+}
+
+void UpdateSnakeSetupUI() {
+    if (snakeSpeedBtn != nullptr) {
+        lv_obj_t* label = lv_obj_get_child(snakeSpeedBtn, 0);
+        if (label != nullptr) {
+            lv_label_set_text(label, SnakeSpeedName(snakeSpeed));
+        }
+        StyleQuickTapPill(snakeSpeedBtn, kSnakePillDim, kSnakeAccent, kSnakeAccent);
+    }
+    if (snakeSetupRecord != nullptr) {
+        lv_label_set_text_fmt(
+            snakeSetupRecord, "KỶ LỤC %u",
+            static_cast<unsigned>(
+                std::min<uint16_t>(snakeRecords[static_cast<int>(snakeSpeed)], 999)));
+    }
+}
+
+const char* SnakeOutcomeHeadline(SnakeGame::Result result) {
+    switch (result) {
+        // "VÁCH" and not the more natural "TƯỜNG" purely on width: "ĐỤNG
+        // TƯỜNG" is 161px at vn_22 and clears the ring by 1.33px, tighter than
+        // anything else on the panel. "ĐỤNG VÁCH" is 141px and clears by 8.59.
+        case SnakeGame::Result::kHitWall:     return "ĐỤNG VÁCH";
+        case SnakeGame::Result::kHitSelf:     return "CẮN ĐUÔI";
+        case SnakeGame::Result::kFilledBoard: return "ĂN HẾT BÀN!";
+        default: break;
+    }
+    return "ĐÃ DỪNG";
+}
+
+void UpdateSnakeOverUI() {
+    const int speed_index = static_cast<int>(SnakeGame::GetSpeed());
+    const bool won = SnakeGame::GetResult() == SnakeGame::Result::kFilledBoard;
+    if (snakeOverHead != nullptr) {
+        lv_label_set_text(snakeOverHead, SnakeOutcomeHeadline(SnakeGame::GetResult()));
+        lv_obj_set_style_text_color(snakeOverHead,
+                                    lv_color_hex(won ? kSnakeAccent : kSnakePellet), 0);
+    }
+    if (snakeOverScore != nullptr) {
+        if (snakeNewRecord) {
+            lv_label_set_text(snakeOverScore, "KỶ LỤC MỚI!");
+            lv_obj_set_style_text_color(snakeOverScore, lv_color_hex(kSnakeAccent), 0);
+        } else {
+            lv_label_set_text_fmt(snakeOverScore, "ĐIỂM %u",
+                                  static_cast<unsigned>(SnakeGame::GetScore()));
+            lv_obj_set_style_text_color(snakeOverScore, lv_color_hex(COLOR_TEXT), 0);
+        }
+    }
+    if (snakeOverBest != nullptr) {
+        lv_label_set_text_fmt(
+            snakeOverBest, "KỶ LỤC %u",
+            static_cast<unsigned>(std::min<uint16_t>(snakeRecords[speed_index], 999)));
+    }
+}
+
+void HideSnakeAll() {
+    for (lv_obj_t* obj : {snakeCanvas, snakeScoreLabel, snakeSetupScreen, snakeOverScreen}) {
+        if (obj != nullptr) {
+            lv_obj_add_flag(obj, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+    for (lv_obj_t* obj : snakeChevrons) {
+        if (obj != nullptr) {
+            lv_obj_add_flag(obj, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+}
+
+void ShowSnakeScreen(SnakeScreen screen) {
+    snakeScreen = screen;
+
+    auto set_hidden = [](lv_obj_t* obj, bool hidden) {
+        if (obj == nullptr) return;
+        if (hidden) lv_obj_add_flag(obj, LV_OBJ_FLAG_HIDDEN);
+        else        lv_obj_remove_flag(obj, LV_OBJ_FLAG_HIDDEN);
+    };
+
+    // The board stays up through kHold -- that is the whole point of kHold.
+    const bool board_up = (screen == SnakeScreen::kPlaying || screen == SnakeScreen::kHold);
+    set_hidden(snakeSetupScreen, screen != SnakeScreen::kSetup);
+    set_hidden(snakeOverScreen, screen != SnakeScreen::kOver);
+    set_hidden(snakeCanvas, !board_up);
+    set_hidden(snakeScoreLabel, !board_up);
+    for (lv_obj_t* obj : snakeChevrons) {
+        set_hidden(obj, screen != SnakeScreen::kPlaying);
+    }
+
+    switch (screen) {
+        case SnakeScreen::kSetup:
+            UpdateSnakeSetupUI();
+            break;
+        case SnakeScreen::kPlaying:
+            UpdateSnakeScore();
+            UpdateSnakeChevrons();
+            RedrawSnakeBoard();
+            break;
+        case SnakeScreen::kHold:
+            RedrawSnakeBoard();
+            break;
+        case SnakeScreen::kOver:
+            UpdateSnakeOverUI();
+            break;
+    }
+    // Same reasoning as ShowQuickTapScreen: gamesPanel is opaque and covers the
+    // screen, so one repaint is the cheap and reliable way to clear whatever the
+    // previous screen left behind.
+    if (gamesPanel != nullptr) {
+        lv_obj_invalidate(gamesPanel);
+    }
+    UpdateGamesUI();
+}
+
+// Round over: bank the record, pay the care reward, show the scoreboard.
+void FinishSnakeRound() {
+    const int index = static_cast<int>(SnakeGame::GetSpeed());
+    const int score = static_cast<int>(SnakeGame::GetScore());
+    snakeNewRecord = score > 0 && score > static_cast<int>(snakeRecords[index]);
+    if (snakeNewRecord) {
+        snakeRecords[index] = static_cast<uint16_t>(score);
+    }
+
+    PlaySnakeSound(snakeNewRecord ? Lang::Sounds::OGG_SUCCESS : Lang::Sounds::OGG_POPUP);
+    ShowSnakeScreen(SnakeScreen::kOver);
+
+    // Both of these commit to NVS synchronously (AddMood can level up, and a
+    // level-up saves immediately). This runs on the LVGL task with the display
+    // lock held, so the writes go to the main task rather than stalling the
+    // frame that is drawing the scoreboard -- same hand-off as Quick Tap.
+    const bool save_record = snakeNewRecord;
+    Application::GetInstance().Schedule([index, score, save_record]() {
+        if (save_record) {
+            SaveSnakeRecord(index);
+        }
+        // Scaled but capped, matching Quick Tap, so a long snake does not turn
+        // into a mood farm next to the other games' flat kGamesBoost.
+        CareSystem::AddMood(std::min(5 + score / 3, 25));
+    });
+}
+
+void BeginSnakeRound() {
+    snakeNewRecord = false;
+    snakeFlashChevron = -1;
+    snakeFlashApplied = -2;
+    SnakeGame::Start(snakeSpeed);
+    ShowSnakeScreen(SnakeScreen::kPlaying);
+}
+
+// Runs on the LVGL task inside lv_timer_handler, which already holds the
+// display lock -- taking DisplayLockGuard here would deadlock on it.
+void SnakeTimerCb(lv_timer_t* timer) {
+    (void)timer;
+    if (activeGame != ACTIVE_GAME_SNAKE) {
+        return;
+    }
+
+    if (snakeScreen == SnakeScreen::kPlaying) {
+        // The menu's 30s inactivity close-out would otherwise drop a player
+        // mid-round, since steering by swipe never reaches MarkMenuActivity().
+        // Deliberately NOT done on setup/scoreboard: an abandoned game should
+        // close out like any other idle panel.
+        MarkMenuActivity();
+
+        const bool stepped = SnakeGame::Update();
+        UpdateSnakeChevrons();
+        if (stepped) {
+            UpdateSnakeScore();
+            RedrawSnakeBoard();
+        }
+        if (!SnakeGame::IsRunning()) {
+            PlaySnakeSound(SnakeGame::GetResult() == SnakeGame::Result::kFilledBoard
+                               ? Lang::Sounds::OGG_SUCCESS
+                               : Lang::Sounds::OGG_BUBU_SAD1);
+            snakeHoldStartMs = lv_tick_get();
+            ShowSnakeScreen(SnakeScreen::kHold);
+        }
+        return;
+    }
+
+    if (snakeScreen == SnakeScreen::kHold) {
+        MarkMenuActivity();
+        if (lv_tick_elaps(snakeHoldStartMs) >= kSnakeOverHoldMs) {
+            FinishSnakeRound();
+        }
+    }
+}
+
+void StartSnakeTimer() {
+    if (snakeTimer == nullptr) {
+        snakeTimer = lv_timer_create(SnakeTimerCb, kSnakeTickMs, nullptr);
+    }
+}
+
+void StopSnakeTimer() {
+    if (snakeTimer != nullptr) {
+        lv_timer_delete(snakeTimer);
+        snakeTimer = nullptr;
+    }
+}
+
+// Resolves a tap anywhere on the playfield into a direction: whichever axis the
+// tap is further out on, then the sign. Deliberately not a hit-test on the
+// drawn chevrons -- a child's fingertip is wider than a 23px arrow, and the
+// only thing a tap can mean during play is "turn".
+SnakeGame::Direction SnakeDirectionForTap(int x, int y) {
+    const int dx = x - 120;
+    const int dy = y - (120 + kSnakeBoardOffsetY);
+    if (std::abs(dx) >= std::abs(dy)) {
+        return dx < 0 ? SnakeGame::Direction::kLeft : SnakeGame::Direction::kRight;
+    }
+    return dy < 0 ? SnakeGame::Direction::kUp : SnakeGame::Direction::kDown;
+}
+
+// A chevron: one 3-point polyline in a transparent box. Drawn rather than set
+// as text because the VN faces carry no arrow glyph -- the same reason the
+// checker game builds its X out of two lv_line strokes. The point arrays are
+// static because lv_line stores the pointer instead of copying.
+lv_obj_t* CreateSnakeChevron(lv_obj_t* parent, SnakeGame::Direction direction,
+                             int offset_x, int offset_y) {
+    static const lv_point_precise_t kUp[]    = {{0, 9}, {11, 0}, {22, 9}};
+    static const lv_point_precise_t kDown[]  = {{0, 0}, {11, 9}, {22, 0}};
+    static const lv_point_precise_t kLeft[]  = {{9, 0}, {0, 11}, {9, 22}};
+    static const lv_point_precise_t kRight[] = {{0, 0}, {9, 11}, {0, 22}};
+
+    const lv_point_precise_t* points = kUp;
+    int w = 23;
+    int h = 10;
+    switch (direction) {
+        case SnakeGame::Direction::kUp:    points = kUp;    w = 23; h = 10; break;
+        case SnakeGame::Direction::kDown:  points = kDown;  w = 23; h = 10; break;
+        case SnakeGame::Direction::kLeft:  points = kLeft;  w = 10; h = 23; break;
+        case SnakeGame::Direction::kRight: points = kRight; w = 10; h = 23; break;
+    }
+
+    lv_obj_t* box = lv_obj_create(parent);
+    lv_obj_remove_style_all(box);
+    lv_obj_set_size(box, w, h);
+    lv_obj_align(box, LV_ALIGN_CENTER, offset_x, offset_y);
+    lv_obj_remove_flag(box, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* line = lv_line_create(box);
+    lv_line_set_points(line, points, 3);
+    lv_obj_set_style_line_width(line, 3, 0);
+    lv_obj_set_style_line_rounded(line, true, 0);
+    lv_obj_set_style_line_color(line, lv_color_hex(kSnakeMuted), 0);
+    lv_obj_set_style_line_opa(line, LV_OPA_40, 0);
+    lv_obj_set_pos(line, 0, 0);
+
+    lv_obj_add_flag(box, LV_OBJ_FLAG_HIDDEN);
+    return box;
+}
+
+void CreateSnakeUI() {
+    if (gamesPanel == nullptr || snakeSetupScreen != nullptr) {
+        return;
+    }
+
+    // ---- Playfield --------------------------------------------------------
+    const size_t canvas_bytes =
+        static_cast<size_t>(kSnakeBoardPx) * kSnakeBoardPx * sizeof(lv_color_t);
+    snakeCanvasBuf = static_cast<lv_color_t*>(
+        heap_caps_malloc(canvas_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    if (snakeCanvasBuf == nullptr) {
+        // ~36 KB against megabytes of free PSRAM, so this is close to
+        // impossible -- but the board simply does not appear rather than
+        // dereferencing null. Every draw path null-checks the buffer.
+        ESP_LOGE(TAG, "Snake: failed to allocate the %u-byte board canvas",
+                 static_cast<unsigned>(canvas_bytes));
+    } else {
+        snakeCanvas = lv_canvas_create(gamesPanel);
+        lv_obj_remove_style_all(snakeCanvas);
+        lv_obj_set_size(snakeCanvas, kSnakeBoardPx, kSnakeBoardPx);
+        lv_obj_align(snakeCanvas, LV_ALIGN_CENTER, 0, kSnakeBoardOffsetY);
+        lv_canvas_set_buffer(snakeCanvas, snakeCanvasBuf, kSnakeBoardPx, kSnakeBoardPx,
+                             LV_COLOR_FORMAT_RGB565);
+        lv_obj_add_flag(snakeCanvas, LV_OBJ_FLAG_HIDDEN);
+    }
+
+    snakeScoreLabel = lv_label_create(gamesPanel);
+    lv_obj_set_style_text_font(snakeScoreLabel, &lv_font_montserrat_vn_20, 0);
+    lv_obj_set_style_text_color(snakeScoreLabel, lv_color_hex(COLOR_TEXT), 0);
+    lv_label_set_text(snakeScoreLabel, "0");
+    lv_obj_align(snakeScoreLabel, LV_ALIGN_CENTER, 0, kSnakeScoreDy);
+    lv_obj_add_flag(snakeScoreLabel, LV_OBJ_FLAG_HIDDEN);
+
+    // In the gaps the board leaves. The board spans +-67.5px about a centre 6px
+    // low, so the side chevrons sit 90px out and the vertical pair clear both
+    // the board edge and the score line above it.
+    snakeChevrons[static_cast<int>(SnakeGame::Direction::kUp)] =
+        CreateSnakeChevron(gamesPanel, SnakeGame::Direction::kUp, 0, kSnakeChevronUpDy);
+    snakeChevrons[static_cast<int>(SnakeGame::Direction::kDown)] =
+        CreateSnakeChevron(gamesPanel, SnakeGame::Direction::kDown, 0, kSnakeChevronDownDy);
+    snakeChevrons[static_cast<int>(SnakeGame::Direction::kLeft)] =
+        CreateSnakeChevron(gamesPanel, SnakeGame::Direction::kLeft,
+                           -kSnakeChevronSideDx, kSnakeBoardOffsetY);
+    snakeChevrons[static_cast<int>(SnakeGame::Direction::kRight)] =
+        CreateSnakeChevron(gamesPanel, SnakeGame::Direction::kRight,
+                           kSnakeChevronSideDx, kSnakeBoardOffsetY);
+
+    // ---- Setup ------------------------------------------------------------
+    snakeSetupScreen = lv_obj_create(gamesPanel);
+    lv_obj_remove_style_all(snakeSetupScreen);
+    lv_obj_set_size(snakeSetupScreen, 224, 224);
+    lv_obj_center(snakeSetupScreen);
+    lv_obj_remove_flag(snakeSetupScreen, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* title = lv_label_create(snakeSetupScreen);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_vn_28, 0);
+    lv_obj_set_style_text_color(title, lv_color_hex(kSnakeAccent), 0);
+    // "RẮN" alone here: the carousel already said "RẮN SĂN MỒI", and the full
+    // name at vn_28 does not clear the ring this far from centre.
+    lv_label_set_text(title, "RẮN");
+    lv_obj_align(title, LV_ALIGN_CENTER, 0, kSnakeTitleDy);
+
+    snakeSetupRecord = lv_label_create(snakeSetupScreen);
+    lv_obj_set_style_text_font(snakeSetupRecord, &lv_font_montserrat_vn_20, 0);
+    lv_obj_set_style_text_color(snakeSetupRecord, lv_color_hex(kSnakeMuted), 0);
+    lv_label_set_text(snakeSetupRecord, "KỶ LỤC 0");
+    lv_obj_align(snakeSetupRecord, LV_ALIGN_CENTER, 0, kSnakeBestDy);
+
+    lv_obj_t* speed_caption = lv_label_create(snakeSetupScreen);
+    lv_obj_set_style_text_font(speed_caption, &lv_font_montserrat_vn_20, 0);
+    lv_obj_set_style_text_color(speed_caption, lv_color_hex(kSnakeMuted), 0);
+    lv_label_set_text(speed_caption, "TỐC ĐỘ");
+    lv_obj_align(speed_caption, LV_ALIGN_CENTER, 0, kSnakeSpeedCapDy);
+
+    snakeSpeedBtn = CreateQuickTapPill(snakeSetupScreen, kSnakeSpeedPillW, kSnakeSpeedPillH,
+                                       0, kSnakeSpeedDy, "VỪA", &lv_font_montserrat_vn_20);
+
+    snakePlayBtn = CreateQuickTapPill(snakeSetupScreen, kSnakePlayPillW, kSnakePlayPillH,
+                                      0, kSnakePlayDy, "CHƠI", &lv_font_montserrat_vn_22);
+    StyleQuickTapPill(snakePlayBtn, kSnakeAccent, kSnakeAccent, 0x04180B);
+
+    lv_obj_t* hint = lv_label_create(snakeSetupScreen);
+    lv_obj_set_style_text_font(hint, &lv_font_montserrat_vn_20, 0);
+    lv_obj_set_style_text_color(hint, lv_color_hex(kSnakeMuted), 0);
+    // 109px, clears the ring by 7.61. The fuller "Vuốt hoặc chạm mũi tên" is
+    // 252px -- wider than the glass, never mind the chord at this height.
+    lv_label_set_text(hint, "Vuốt để lái");
+    lv_obj_align(hint, LV_ALIGN_CENTER, 0, kSnakeHintDy);
+
+    lv_obj_add_flag(snakeSetupScreen, LV_OBJ_FLAG_HIDDEN);
+
+    // ---- Scoreboard -------------------------------------------------------
+    snakeOverScreen = lv_obj_create(gamesPanel);
+    lv_obj_remove_style_all(snakeOverScreen);
+    lv_obj_set_size(snakeOverScreen, 224, 224);
+    lv_obj_center(snakeOverScreen);
+    lv_obj_remove_flag(snakeOverScreen, LV_OBJ_FLAG_SCROLLABLE);
+
+    snakeOverHead = lv_label_create(snakeOverScreen);
+    lv_obj_set_style_text_font(snakeOverHead, &lv_font_montserrat_vn_22, 0);
+    lv_obj_set_style_text_color(snakeOverHead, lv_color_hex(kSnakePellet), 0);
+    lv_label_set_text(snakeOverHead, "ĐỤNG VÁCH");
+    lv_obj_align(snakeOverHead, LV_ALIGN_CENTER, 0, kSnakeOverHeadDy);
+
+    snakeOverScore = lv_label_create(snakeOverScreen);
+    lv_obj_set_style_text_font(snakeOverScore, &lv_font_montserrat_vn_20, 0);
+    lv_obj_set_style_text_color(snakeOverScore, lv_color_hex(COLOR_TEXT), 0);
+    lv_label_set_text(snakeOverScore, "ĐIỂM 0");
+    lv_obj_align(snakeOverScore, LV_ALIGN_CENTER, 0, kSnakeOverScoreDy);
+
+    snakeOverBest = lv_label_create(snakeOverScreen);
+    lv_obj_set_style_text_font(snakeOverBest, &lv_font_montserrat_vn_20, 0);
+    lv_obj_set_style_text_color(snakeOverBest, lv_color_hex(kSnakeMuted), 0);
+    lv_label_set_text(snakeOverBest, "KỶ LỤC 0");
+    lv_obj_align(snakeOverBest, LV_ALIGN_CENTER, 0, kSnakeOverBestDy);
+
+    snakeAgainBtn = CreateQuickTapPill(snakeOverScreen, kSnakeAgainPillW, kSnakeAgainPillH,
+                                       0, kSnakeAgainDy, "CHƠI LẠI", &lv_font_montserrat_vn_20);
+    StyleQuickTapPill(snakeAgainBtn, kSnakeAccent, kSnakeAccent, 0x04180B);
+    snakeMenuBtn = CreateQuickTapPill(snakeOverScreen, kSnakeMenuPillW, kSnakeMenuPillH,
+                                      0, kSnakeMenuDy, "MENU", &lv_font_montserrat_vn_20);
+    StyleQuickTapPill(snakeMenuBtn, kSnakePillDim, 0x27362C, COLOR_TEXT);
+    lv_obj_add_flag(snakeOverScreen, LV_OBJ_FLAG_HIDDEN);
+
+    LoadSnakeRecords();
+    UpdateSnakeSetupUI();
+}
+
+// ---------------------------------------------------------------------------
+// MẮT XANH
+//
+// Driven by its own 33ms lv_timer, like Quick Tap and Snake. It used to be
+// ticked from Render(), which only runs on the 1Hz clock tick -- while the
+// game re-rolls both colours every 1-2s. So the screen lagged the logic by up
+// to a second: whole rounds were never drawn, a correct tap re-rolled colours
+// the child could not see yet, and a tap on an eye that still LOOKED green was
+// judged against the hidden new colour and ended the game as a wrong tap.
+// ---------------------------------------------------------------------------
+constexpr uint32_t kEyeGameTickMs = 33;
+lv_timer_t* eyeGameTimer = nullptr;
+// Set when the timer sees the game end on its own (last round), so the
+// hand-off to HandleGameFinished() is queued exactly once.
+bool eyeGameFinishPending = false;
+
+void PushEyeGameColors() {
+    auto* eye_display = GetEyeDisplay();
+    if (eye_display == nullptr) {
+        return;
+    }
+    const EyeGame::RgbColor left = EyeGame::GetLeftColor();
+    const EyeGame::RgbColor right = EyeGame::GetRightColor();
+    eye_display->SetLeftEyeColor(left.r, left.g, left.b);
+    eye_display->SetRightEyeColor(right.r, right.g, right.b);
+}
+
+// Runs on the LVGL task inside lv_timer_handler, which already holds the
+// display lock -- so it must not call HandleGameFinished(), which takes it.
+void EyeGameTimerCb(lv_timer_t* timer) {
+    (void)timer;
+    if (currentState != MENU_GAME_ACTIVE || activeGame != ACTIVE_GAME_EYE_TAP) {
+        return;
+    }
+    if (EyeGame::IsRunning()) {
+        // 40 rounds of 1-2s is longer than the menu's 30s inactivity close-out,
+        // and a child waiting for a green eye is playing, not idle.
+        MarkMenuActivity();
+        EyeGame::Update();
+        PushEyeGameColors();
+    }
+    if (!EyeGame::IsRunning() && !eyeGameFinishPending) {
+        eyeGameFinishPending = true;
+        Application::GetInstance().Schedule([]() {
+            eyeGameFinishPending = false;
+            // A long press or a close may have ended the game in between.
+            if (currentState == MENU_GAME_ACTIVE && activeGame == ACTIVE_GAME_EYE_TAP) {
+                MenuSystem::HandleGameFinished();
+            }
+        });
+    }
+}
+
+void StartEyeGameTimer() {
+    if (eyeGameTimer == nullptr) {
+        eyeGameTimer = lv_timer_create(EyeGameTimerCb, kEyeGameTickMs, nullptr);
+    }
+}
+
+void StopEyeGameTimer() {
+    if (eyeGameTimer != nullptr) {
+        lv_timer_delete(eyeGameTimer);
+        eyeGameTimer = nullptr;
+    }
+}
+
+// ---------------------------------------------------------------------------
 // HỌC TẬP
 // ---------------------------------------------------------------------------
 
@@ -3799,6 +4601,16 @@ void CreateGamesEmblemMarks() {
         lv_obj_set_style_arc_color(sweep, lv_color_hex(kQuickTapRing), LV_PART_INDICATOR);
         lv_obj_set_style_arc_rounded(sweep, true, LV_PART_INDICATOR);
     }
+
+    // RẮN SĂN MỒI: three body blocks curling towards the pellet. Blocks rather
+    // than a smooth line so it reads as the same grid the game is played on.
+    lv_obj_t* snake = CreateEmblemBox(gamesEmblem);
+    gamesEmblemMarks[GAME_SELECTION_SNAKE] = snake;
+    AddEmblemSolid(snake, 20, 56, 16, 16, 3, kSnakeBody);
+    AddEmblemSolid(snake, 38, 56, 16, 16, 3, kSnakeBody);
+    AddEmblemSolid(snake, 38, 38, 16, 16, 3, kSnakeBody);
+    AddEmblemSolid(snake, 38, 20, 16, 16, 3, kSnakeHead);
+    AddEmblemSolid(snake, 62, 22, 12, 12, LV_RADIUS_CIRCLE, kSnakePellet);
 }
 
 void CreateGamesPanel() {
@@ -4111,6 +4923,7 @@ void CreateGamesPanel() {
     lv_obj_add_flag(checkerFx, LV_OBJ_FLAG_HIDDEN);
 
     CreateQuickTapUI();
+    CreateSnakeUI();
 
     SetGamesMenuStatusForSelection();
     UpdateGamesUI();
@@ -4159,6 +4972,7 @@ namespace MenuSystem {
 
 void StartChecker3x3();
 void StartQuickTap();
+void StartSnake();
 void OpenFortuneTeller();
 void CloseFortuneToMenu();
 
@@ -4197,12 +5011,62 @@ void Begin(Display* display) {
     ESP_LOGI(TAG, "Menu system ready");
 }
 
+// Re-resolves every menu/care icon against whatever is currently mapped in
+// the assets partition. Call this after a successful Assets::Download() +
+// Apply() -- CreateMenuRoller()/CreateCarePanel() already resolved every icon
+// once at boot into a raw pointer via ResolvePersistentAssetImage(), and nothing
+// re-fetches it afterwards on its own. A download that lands *after* that
+// first resolve (the assets-refresh poll in application.cc runs for the whole
+// session, not just at boot) re-maps the partition to a new location/layout,
+// so those boot-time pointers go stale -- not a crash (the fix for that is
+// partition_valid() gating in Open()), but every icon silently pointing at
+// wrong/garbage bytes until the icon is re-resolved. Reproduced on hardware
+// 2026-09-10 across 3 devices: "OTA + first assets load -> every menu icon
+// gone; reboot + re-load -> icons fine" -- fine on reboot only because that
+// second load starts from a stale-pointer-free boot.
+void RefreshIcons() {
+    DisplayLockGuard lock(displayHandle);
+    for (int i = 0; i < MENU_ITEM_COUNT; ++i) {
+        const LvglImage* icon = ResolvePersistentAssetImage(menuItemIconFiles[i], menuItemIcons[i]);
+        menuItemIsIcon[i] = (icon != nullptr);
+        if (icon == nullptr) {
+            ESP_LOGW(TAG, "No menu image for item %d ('%s') after assets refresh, falling back to text",
+                     i, menuItemLabelTexts[i]);
+        }
+    }
+    for (int i = 0; i < CARE_ITEM_COUNT; ++i) {
+        const LvglImage* icon = ResolvePersistentAssetImage(careItemIconFiles[i], careItemIcons[i]);
+        careItemIsIcon[i] = (icon != nullptr);
+        if (icon == nullptr) {
+            ESP_LOGW(TAG, "No care image for item %d ('%s') after assets refresh, falling back to text",
+                     i, careItemLabelTexts[i]);
+        }
+    }
+    // Force whichever hero image is currently on screen to pick up the fresh
+    // pointer immediately, instead of waiting for the next selection change.
+    UpdateMenuItemStyles();
+    UpdateCareItemStyles();
+}
+
 void TriggerLevelUpAnimation(int level) {
     TriggerLevelUpAnimationImpl(level);
 }
 
 void Open() {
     if (currentState == MENU_OPEN) {
+        return;
+    }
+
+    // Every menu/care icon was resolved once at boot into a raw pointer inside
+    // the assets partition's mmap (ResolvePersistentAssetImage, not re-fetched
+    // per draw). Assets::Download() unmaps that partition before it writes a
+    // single byte, and leaves it unmapped for good if the download then fails
+    // -- partition_valid() tracks exactly that window. Showing the menu while
+    // it's false means LVGL redraws a dangling pointer: a Cache error / MMU
+    // fault, reproduced on hardware 2026-09-10. No-op instead; the eyes screen
+    // stays up and the tap is simply not consumed.
+    if (!Assets::GetInstance().partition_valid()) {
+        ESP_LOGW(TAG, "Assets partition unavailable (download in progress or failed) -- not opening menu");
         return;
     }
 
@@ -4230,6 +5094,10 @@ void Close() {
     // here, so if it is not stopped here it outlives the menu and keeps waking
     // the LVGL task at 30Hz for the rest of the session.
     bool closing_quick_tap = false;
+    // Snake owns a 33ms lv_timer for exactly the same reason, and Close() is
+    // the funnel for every close path here too.
+    bool closing_snake = false;
+    bool closing_eye_game = false;
     // Same trap as Quick Tap: this screen owns a 200ms lv_timer, and Close() is
     // the funnel for every close path. With no pause, leaving also discards a
     // running focus block -- there is no background tick to keep it alive.
@@ -4242,6 +5110,7 @@ void Close() {
     if (currentState == MENU_GAME_ACTIVE) {
         if (activeGame == ACTIVE_GAME_EYE_TAP) {
             EyeGame::Stop();
+            closing_eye_game = true;
             if (auto* eye_display = GetEyeDisplay(); eye_display != nullptr) {
                 eye_display->SetEyeGameMode(false);
                 eye_display->SetEyeMoodColorAuto(true);
@@ -4251,6 +5120,9 @@ void Close() {
         } else if (activeGame == ACTIVE_GAME_QUICK_TAP) {
             QuickTapGame::Stop();
             closing_quick_tap = true;
+        } else if (activeGame == ACTIVE_GAME_SNAKE) {
+            SnakeGame::Stop();
+            closing_snake = true;
         }
         activeGame = ACTIVE_GAME_NONE;
     }
@@ -4268,6 +5140,14 @@ void Close() {
         StopQuickTapTimer();
         HideQuickTapAll();
         quickTapScreen = QuickTapScreen::kSetup;
+    }
+    if (closing_eye_game) {
+        StopEyeGameTimer();
+    }
+    if (closing_snake) {
+        StopSnakeTimer();
+        HideSnakeAll();
+        snakeScreen = SnakeScreen::kSetup;
     }
     if (closing_pomodoro) {
         StopPomodoroTimer();
@@ -4328,6 +5208,9 @@ ScreenManager::ScreenId ActiveScreen() {
             if (activeGame == ACTIVE_GAME_QUICK_TAP) {
                 return ScreenId::QuickTapGame;
             }
+            if (activeGame == ACTIVE_GAME_SNAKE) {
+                return ScreenId::SnakeGame;
+            }
             return ScreenId::CheckerGame;
         case MENU_CLOSED:
             break;
@@ -4386,7 +5269,8 @@ void ActivateSelected() {
             ShowPanel(connectPanel);
             SetMenuState(MENU_CONNECT_OPEN);
             connectView = CONNECT_VIEW_METHODS;
-            selectedConnectItem = CONNECT_PHONE;
+            // Opens on the on-device method, matching the list order.
+            selectedConnectItem = CONNECT_DEVICE;
             ApplyConnectView();
             ScrollConnectToIndex(static_cast<uint8_t>(selectedConnectItem), LV_ANIM_OFF);
             break;
@@ -4608,6 +5492,9 @@ void ActivateCurrent() {
                     break;
                 case GAME_SELECTION_QUICK_TAP:
                     StartQuickTap();
+                    break;
+                case GAME_SELECTION_SNAKE:
+                    StartSnake();
                     break;
                 case GAME_SELECTION_COUNT:
                     break;
@@ -4850,21 +5737,16 @@ bool HandleKeyboardTap(uint16_t x, uint16_t y) {
         return false;
     }
 
-    if (tapped_index == 9 || tapped_index == 14) {
+    if (tapped_index == 11) {
         HandleKeyboardBackspace();
         return true;
     }
-    if (tapped_index == 11) {
+    if (tapped_index == 9) {
         keyboardCaps = !keyboardCaps;
         UpdateKeyboardCapsButtonStyle();
         return true;
     }
     if (tapped_index == 12) {
-        keyboardCaps = true;
-        UpdateKeyboardCapsButtonStyle();
-        return true;
-    }
-    if (tapped_index == 13) {
         if (!selectedWifiSsid.empty()) {
             std::string password(keyboardText, keyboardLen);
             WifiConnectService::GetInstance().ConnectTo(selectedWifiSsid, password);
@@ -5133,11 +6015,16 @@ void StartTapTheGreens() {
         eye_display->CancelBathing();
     }
     EyeGame::Start(CareSystem::STAT_MOOD);
+    eyeGameFinishPending = false;
+    // Now, not on the first tick: until this the eyes still wear Bubu's mood
+    // colour, and nothing tells a child the game has not started yet.
+    PushEyeGameColors();
 
     // Keep MENU_GAME_ACTIVE to suppress idle motion/sfx, but hide menu panel for full eye space.
     DisplayLockGuard lock(displayHandle);
     HidePanel(gamesPanel);
     SetMenuState(MENU_GAME_ACTIVE);
+    StartEyeGameTimer();
 }
 
 void StartQuickTap() {
@@ -5162,6 +6049,39 @@ void StartQuickTap() {
     SetMenuState(MENU_GAME_ACTIVE);
     ShowQuickTapScreen(QuickTapScreen::kSetup);
     StartQuickTapTimer();
+}
+
+void StartSnake() {
+    if (currentState != MENU_GAMES_OPEN) {
+        return;
+    }
+
+    // Only reachable if the PSRAM allocation in CreateSnakeUI() failed, which
+    // has never been seen -- but an invisible board is worse than an honest no.
+    if (snakeCanvas == nullptr || snakeCanvasBuf == nullptr) {
+        if (displayHandle != nullptr) {
+            displayHandle->ShowNotification("Lỗi trò chơi");
+        }
+        return;
+    }
+
+    activeGame = ACTIVE_GAME_SNAKE;
+    snakeNewRecord = false;
+    gamesActionColor = kSnakeAccent;
+    gamesStatusColor = COLOR_TEXT;
+    // Snake draws its own panel; the eyes stay in their normal mode underneath
+    // rather than being driven by the game, same as Quick Tap.
+    if (auto* eye_display = GetEyeDisplay(); eye_display != nullptr) {
+        eye_display->SetEyeGameMode(false);
+        eye_display->SetEyeMoodColorAuto(true);
+        eye_display->CancelBathing();
+    }
+
+    DisplayLockGuard lock(displayHandle);
+    ShowPanel(gamesPanel);
+    SetMenuState(MENU_GAME_ACTIVE);
+    ShowSnakeScreen(SnakeScreen::kSetup);
+    StartSnakeTimer();
 }
 
 void OpenFortuneTeller() {
@@ -5253,6 +6173,10 @@ void HandleGameFinished() {
             eye_display->SetEyeGameMode(false);
             eye_display->SetEyeMoodColorAuto(true);
         }
+        if (displayHandle != nullptr) {
+            DisplayLockGuard teardown_lock(displayHandle);
+            StopEyeGameTimer();   // lv_timer_delete needs the LVGL lock
+        }
     } else if (activeGame == ACTIVE_GAME_CHECKER) {
         const CheckerGame::Result result = CheckerGame::GetResult();
         auto* eye_display = GetEyeDisplay();
@@ -5320,6 +6244,15 @@ void HandleGameFinished() {
             StopQuickTapTimer();   // lv_timer_delete needs the LVGL lock
             HideQuickTapAll();
         }
+    } else if (activeGame == ACTIVE_GAME_SNAKE) {
+        snakeScreen = SnakeScreen::kSetup;
+        gamesActionColor = kSnakeAccent;
+        gamesStatusColor = COLOR_TEXT;
+        if (displayHandle != nullptr) {
+            DisplayLockGuard teardown_lock(displayHandle);
+            StopSnakeTimer();   // lv_timer_delete needs the LVGL lock
+            HideSnakeAll();
+        }
     }
 
     activeGame = ACTIVE_GAME_NONE;
@@ -5353,6 +6286,9 @@ bool HandleGameTap(uint16_t x, uint16_t y) {
         const EyeGame::TapOutcome tap_outcome = EyeGame::HandleTap(static_cast<int>(x), static_cast<int>(y));
         if (tap_outcome == EyeGame::TapOutcome::kCorrect) {
             eye_display->TriggerEyeGamePlus(static_cast<int>(x) < 120);
+            // A hit re-rolls both eyes; show that now rather than on the next
+            // tick, or a fast second tap is aimed at colours already gone.
+            PushEyeGameColors();
         }
         if (!EyeGame::IsRunning()) {
             HandleGameFinished();
@@ -5400,6 +6336,50 @@ bool HandleGameTap(uint16_t x, uint16_t y) {
                 } else if (IsPointInside(quickTapMenuBtn, x, y)) {
                     DisplayLockGuard lock(displayHandle);
                     ShowQuickTapScreen(QuickTapScreen::kSetup);
+                }
+                return true;
+        }
+        return true;
+    }
+
+    if (activeGame == ACTIVE_GAME_SNAKE) {
+        // Screens of the same game: route the tap to whichever is on screen.
+        switch (snakeScreen) {
+            case SnakeScreen::kSetup: {
+                DisplayLockGuard lock(displayHandle);
+                if (IsPointInside(snakePlayBtn, x, y)) {
+                    BeginSnakeRound();
+                } else if (IsPointInside(snakeSpeedBtn, x, y)) {
+                    // One pill, tapped to cycle. Wrapping means a child who
+                    // overshoots NHANH gets back to CHẬM without hunting for a
+                    // second control.
+                    snakeSpeed = static_cast<SnakeGame::Speed>(
+                        (static_cast<int>(snakeSpeed) + 1) % kSnakeSpeedCount);
+                    UpdateSnakeSetupUI();
+                }
+                return true;
+            }
+            case SnakeScreen::kPlaying: {
+                const SnakeGame::Direction direction =
+                    SnakeDirectionForTap(static_cast<int>(x), static_cast<int>(y));
+                // Flash whatever was aimed at even when Steer() refuses it (a
+                // reversal, or a queue already two deep). The tap was read; the
+                // rule is what declined it, and silence here reads as a dropped
+                // touch -- the one failure this control cannot afford.
+                DisplayLockGuard lock(displayHandle);
+                SnakeGame::Steer(direction);
+                FlashSnakeChevron(direction);
+                return true;
+            }
+            case SnakeScreen::kHold:
+                return true;   // let the dead board hold its beat
+            case SnakeScreen::kOver:
+                if (IsPointInside(snakeAgainBtn, x, y)) {
+                    DisplayLockGuard lock(displayHandle);
+                    BeginSnakeRound();
+                } else if (IsPointInside(snakeMenuBtn, x, y)) {
+                    DisplayLockGuard lock(displayHandle);
+                    ShowSnakeScreen(SnakeScreen::kSetup);
                 }
                 return true;
         }
@@ -5482,6 +6462,8 @@ void HandleGameLongPress() {
         CheckerGame::Stop();
     } else if (activeGame == ACTIVE_GAME_QUICK_TAP) {
         QuickTapGame::Stop();
+    } else if (activeGame == ACTIVE_GAME_SNAKE) {
+        SnakeGame::Stop();
     }
     HandleGameFinished();
 }
@@ -5836,17 +6818,9 @@ void Render() {
 
     if (currentState == MENU_GAME_ACTIVE) {
         if (activeGame == ACTIVE_GAME_EYE_TAP) {
-            EyeGame::Update();
-            auto* eye_display = GetEyeDisplay();
-            if (eye_display != nullptr) {
-                const EyeGame::RgbColor left = EyeGame::GetLeftColor();
-                const EyeGame::RgbColor right = EyeGame::GetRightColor();
-                eye_display->SetLeftEyeColor(left.r, left.g, left.b);
-                eye_display->SetRightEyeColor(right.r, right.g, right.b);
-            }
-            if (!EyeGame::IsRunning()) {
-                HandleGameFinished();
-            }
+            // Nothing here: EyeGameTimerCb ticks the game, pushes its colours
+            // and hands the finish off. This path ran at 1Hz, far too slowly
+            // for rounds that last 1-2s.
         } else if (activeGame == ACTIVE_GAME_CHECKER) {
             if (checkerScreen == CheckerScreen::kTitle) {
                 return;   // waits for the play button
@@ -6099,6 +7073,29 @@ bool HandleTap(uint16_t x, uint16_t y) {
         default:
             return false;
     }
+}
+
+bool HandleSwipe(SwipeDirection direction) {
+    // Snake is the only consumer today. Everything else returns false, which is
+    // what lets the board dispatch every non-tap release here unconditionally
+    // instead of switching on the active screen itself -- the same rule the
+    // other input entry points in this header follow.
+    if (currentState != MENU_GAME_ACTIVE || activeGame != ACTIVE_GAME_SNAKE ||
+        snakeScreen != SnakeScreen::kPlaying) {
+        return false;
+    }
+    SnakeGame::Direction mapped = SnakeGame::Direction::kUp;
+    switch (direction) {
+        case SwipeDirection::kUp:    mapped = SnakeGame::Direction::kUp;    break;
+        case SwipeDirection::kDown:  mapped = SnakeGame::Direction::kDown;  break;
+        case SwipeDirection::kLeft:  mapped = SnakeGame::Direction::kLeft;  break;
+        case SwipeDirection::kRight: mapped = SnakeGame::Direction::kRight; break;
+    }
+    MarkMenuActivity();
+    DisplayLockGuard lock(displayHandle);
+    SnakeGame::Steer(mapped);
+    FlashSnakeChevron(mapped);
+    return true;
 }
 
 bool HandleLongPress(uint16_t x, uint16_t y, bool close_by_default) {

@@ -1346,6 +1346,12 @@ void EyeAnimation::UpdateEyeColor(uint32_t now_ms) {
     uint32_t dt = now_ms - color_last_ms_;
     color_last_ms_ = now_ms;
     float alpha = ClampFloat(static_cast<float>(dt) / EYE_COLOR_FADE_MS, 0.0f, 1.0f);
+    // MẮT XANH is judged on the colour the logic holds, so the screen must show
+    // that colour, not a 500ms blend towards it. Mid-fade, red->green reads as
+    // olive and a child tapping what already looks green was scored wrong.
+    if (game_mode_active_) {
+        alpha = 1.0f;
+    }
     l_cr_ += (l_tr_ - l_cr_) * alpha;
     l_cg_ += (l_tg_ - l_cg_) * alpha;
     l_cb_ += (l_tb_ - l_cb_) * alpha;

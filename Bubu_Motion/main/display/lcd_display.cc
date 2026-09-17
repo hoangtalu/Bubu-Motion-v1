@@ -20,12 +20,17 @@
 
 LV_FONT_DECLARE(BUILTIN_TEXT_FONT);
 LV_FONT_DECLARE(BUILTIN_ICON_FONT);
-LV_FONT_DECLARE(font_awesome_30_4);
+// large_icon_font, unlike text_font and icon_font, really is unreachable here:
+// SetTheme() only applies it to the status icons when text_font->line_height >= 40,
+// and the text font is lv_font_montserrat_vn_20 (line_height 27). So the branch is
+// dead and font_awesome_30_4 (58,616 B) does not need to ship. If a larger text
+// font is ever chosen, restore font_awesome_30_4 with it or the icons will vanish.
+LV_FONT_DECLARE(lv_font_montserrat_14);
 
 void LcdDisplay::InitializeLcdThemes() {
     auto text_font = std::make_shared<LvglBuiltInFont>(&BUILTIN_TEXT_FONT);
     auto icon_font = std::make_shared<LvglBuiltInFont>(&BUILTIN_ICON_FONT);
-    auto large_icon_font = std::make_shared<LvglBuiltInFont>(&font_awesome_30_4);
+    auto large_icon_font = std::make_shared<LvglBuiltInFont>(&lv_font_montserrat_14);
 
     // light theme
     auto light_theme = new LvglTheme("light");
@@ -117,16 +122,23 @@ SpiLcdDisplay::SpiLcdDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_h
     // lv image cache, currently only PNG is supported
     size_t psram_size_mb = esp_psram_get_size() / 1024 / 1024;
     if (psram_size_mb >= 8) {
-#if CONFIG_USE_CUSTOM_WAKE_WORD
-        constexpr size_t kImageCacheSize = 512 * 1024;
-        lv_image_cache_resize(kImageCacheSize, true);
-        ESP_LOGI(TAG, "Use %uKB of PSRAM for image cache (custom wake word enabled)",
-            static_cast<unsigned>(kImageCacheSize / 1024));
-#else
+        /* 2 MB, and this is now a measurement rather than an inherited guess.
+         *
+         * This used to be gated on CONFIG_USE_CUSTOM_WAKE_WORD: 512 KB with it,
+         * 2 MB without. The real reason was never the wake word engine as such,
+         * it was that MultiNet spent ~2.36 MB of PSRAM and left no room. Moving
+         * to WakeNet dropped PSRAM in use from ~2781 KB to ~938 KB, so the old
+         * gate would have silently tripled the cache as a side effect of an
+         * unrelated change -- which is exactly what it did until this comment.
+         *
+         * Measured on hardware 2026-09-09 with WakeNet running: idle PSRAM free
+         * 3.80 MB of a 4832 KB pool. lv_image_cache_resize sets a ceiling, not
+         * an allocation, and the worst case behind it is the 12 menu PNGs at
+         * 240x240 RGB565 (~1.38 MB), so 2 MB is affordable with room to spare
+         * and saves re-decoding those PNGs on every menu open. */
         constexpr size_t kImageCacheSize = 2 * 1024 * 1024;
         lv_image_cache_resize(kImageCacheSize, true);
         ESP_LOGI(TAG, "Use %uKB of PSRAM for image cache", static_cast<unsigned>(kImageCacheSize / 1024));
-#endif
     } else if (psram_size_mb >= 2) {
         lv_image_cache_resize(512 * 1024, true);
         ESP_LOGI(TAG, "Use 512KB of PSRAM for image cache");
