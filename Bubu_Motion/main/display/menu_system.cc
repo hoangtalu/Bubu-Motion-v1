@@ -1,5 +1,5 @@
 // Menu system ported from bubu_ota in stages.
-// This pass ports the CARE menu and the STATS arc, backed by xiaozhi CareSystem.
+// This pass ports the CARE menu and the STATS arc, backed by CareSystem.
 
 #include "menu_system.h"
 
@@ -11,7 +11,7 @@
 #include "boards/common/wifi_board.h"
 #include "boards/common/wifi_connect_service.h"
 #include "eye_display.h"
-#include "eye_game.h"
+#include "green_eye_game.h"
 #include "fortune_system.h"
 #include "level_system.h"
 #include "notes_system.h"
@@ -19,11 +19,14 @@
 #include "quick_tap_game.h"
 #include "reminder_system.h"
 #include "snake_game.h"
+#include "tilt_maze_game.h"
+#include "traffic_runner_game.h"
 #include "lvgl_display/gif/lvgl_gif.h"
 #include "lvgl_display/lvgl_image.h"
 #include "lvgl_display/lvgl_theme.h"
 #include "settings.h"
 #include "assets/lang_config.h"
+#include "audio/vox.h"
 #include <font_awesome.h>
 #include "display/display.h"
 #include "application.h"
@@ -47,9 +50,20 @@
 
 #define TAG "MenuSystem"
 
+namespace {
+// Every finished game makes Bubu happier. Care stats commit to NVS (a level-up
+// saves immediately), so the write goes to the main task, as the games' other
+// end-of-round saves do.
+void RewardGameMood(const char* game, int amount) {
+    ESP_LOGI(TAG, "Game reward: %s +%d mood", game, amount);
+    Application::GetInstance().Schedule([amount]() { CareSystem::AddMood(amount); });
+}
+}  // namespace
+
 extern const lv_font_t lv_font_montserrat_vn_20;
 extern const lv_font_t lv_font_montserrat_vn_22;
 extern const lv_font_t lv_font_montserrat_vn_28;
+extern const lv_font_t font_awesome_20_4;
 
 namespace {
 
@@ -86,19 +100,23 @@ enum SettingsItem {
 };
 
 enum GameSelection {
-    GAME_SELECTION_EYE_TAP,
+    GAME_SELECTION_GREEN_EYE,
     GAME_SELECTION_CHECKER,
     GAME_SELECTION_QUICK_TAP,
     GAME_SELECTION_SNAKE,
+    GAME_SELECTION_TILT_MAZE,
+    GAME_SELECTION_TRAFFIC_RUNNER,
     GAME_SELECTION_COUNT
 };
 
 enum ActiveGameType {
     ACTIVE_GAME_NONE,
-    ACTIVE_GAME_EYE_TAP,
+    ACTIVE_GAME_GREEN_EYE,
     ACTIVE_GAME_CHECKER,
     ACTIVE_GAME_QUICK_TAP,
-    ACTIVE_GAME_SNAKE
+    ACTIVE_GAME_SNAKE,
+    ACTIVE_GAME_TILT_MAZE,
+    ACTIVE_GAME_TRAFFIC_RUNNER
 };
 
 constexpr size_t STAT_COUNT = 4;
@@ -227,10 +245,12 @@ TransientAnimationType transientAnimationType = TransientAnimationType::NONE;
 bool levelOpenedFromCare = false;
 bool gamesOpenedFromCare = false;
 CareItem gamesReturnCareItem = CARE_STATS;
-GameSelection selectedGame = GAME_SELECTION_EYE_TAP;
+GameSelection selectedGame = GAME_SELECTION_GREEN_EYE;
 ActiveGameType activeGame = ACTIVE_GAME_NONE;
 lv_obj_t* gamesPrevBtn = nullptr;
 lv_obj_t* gamesNextBtn = nullptr;
+// "ĐANG TẢI..." shown while a game's screens are being built.
+lv_obj_t* gamesLoadingLabel = nullptr;
 lv_obj_t* checkerGrid = nullptr;
 std::array<lv_obj_t*, 9> checkerCellButtons = {};
 // Screens of the one checker game -- not separate games.
@@ -311,6 +331,106 @@ const lv_point_precise_t kCheckerXStrokeB[] = {{kCheckerMarkBox - 3, 3}, {3, kCh
 constexpr int kCheckerBigMarkBox = 40;
 const lv_point_precise_t kCheckerBigXStrokeA[] = {{4, 4}, {kCheckerBigMarkBox - 4, kCheckerBigMarkBox - 4}};
 const lv_point_precise_t kCheckerBigXStrokeB[] = {{kCheckerBigMarkBox - 4, 4}, {4, kCheckerBigMarkBox - 4}};
+
+// ---------------------------------------------------------------------------
+// MẮT XANH -- colour reflex on the round panel: tap the leaf-green eye.
+//
+// The rules live in green_eye_game.cc; everything here is presentation and
+// input routing. The HUD is deliberately colourless -- white rim, white score,
+// white hearts -- because colour on this screen is the question being asked,
+// and chrome in red or blue would be one more thing to mistake for an eye.
+// ---------------------------------------------------------------------------
+constexpr uint32_t kGreenEyePanelBg = 0x000000;
+constexpr uint32_t kGreenEyePanelRing = 0x14161C;
+constexpr uint32_t kGreenEyeRimTrack = 0x23262E;
+constexpr uint32_t kGreenEyeChrome = 0xECEEF2;
+constexpr uint32_t kGreenEyeMuted = 0x8A8F9C;
+constexpr uint32_t kGreenEyeHeartLost = 0x30343D;
+constexpr uint32_t kGreenEyePillDim = 0x1A1C22;
+// CẢM XÚC's own colour in the stats panel (statColors[1]), so the reward reads
+// as the same stat the parent sees there.
+constexpr uint32_t kGreenEyeMood = 0x70C1FF;
+constexpr uint32_t kGreenEyeMoodDim = 0x3F6A8C;   // the same, half into the track
+constexpr uint32_t kGreenEyeTickMs = 33;
+constexpr uint32_t kGreenEyeBannerMs = 1300;      // HẾT LƯỢT! before the scoreboard
+constexpr uint32_t kGreenEyeBarDelayMs = 250;     // scoreboard up, then the bar grows
+constexpr uint32_t kGreenEyeBarFillMs = 700;
+constexpr uint32_t kGreenEyeDemoPulseMs = 1200;
+// Buttons are small for a child's finger; a press this close still counts.
+constexpr int kGreenEyeButtonSlackPx = 8;
+
+// Geometry, as offsets from the panel centre. tools/verify_green_eye_layout.py
+// reads these and checks every eye layout in green_eye_game.cc against them --
+// change them together and re-run it.
+constexpr int kGreenEyeRimSize = 224;
+constexpr int kGreenEyeRimWidth = 6;
+constexpr int kGreenEyeScoreY = -88;      // score label centre
+constexpr int kGreenEyeHeartsY = 80;      // hearts row centre
+constexpr int kGreenEyeHeartPitch = 28;
+constexpr int kGreenEyeMoodBarW = 140;
+constexpr int kGreenEyeMoodBarH = 10;
+
+// Screens of the one MẮT XANH game -- not separate games.
+enum class GreenEyeScreen : uint8_t {
+    kSetup,      // how to play + CHƠI
+    kPlaying,    // countdown and rounds
+    kBanner,     // HẾT LƯỢT!
+    kScore,
+};
+
+// What each eye object last had applied, so a frame that changes nothing
+// touches no style and invalidates nothing.
+struct GreenEyeDrawn {
+    bool hidden = true;
+    int16_t w = -1;
+    int16_t h = -1;
+    int16_t x = 0;
+    int16_t y = 0;
+    uint32_t color = 0;
+    uint8_t opa = 0;
+    uint8_t border = 0;
+    bool glint = false;
+};
+
+GreenEyeScreen greenEyeScreen = GreenEyeScreen::kSetup;
+lv_timer_t* greenEyeTimer = nullptr;
+uint32_t greenEyeScreenStartMs = 0;
+uint16_t greenEyeBest = 0;              // NVS "greeneye"/"best", loaded at boot
+bool greenEyeNewRecord = false;
+// True whenever there is nothing (left) to pay: before the first CHƠI, and
+// once a game's reward has gone to CareSystem.
+bool greenEyeRewardPaid = true;
+int greenEyeMoodBefore = 0;
+int greenEyeMoodAfter = 0;
+uint16_t greenEyeSeenDecisions = 0;
+int greenEyeDrawnScore = -1;
+int greenEyeDrawnCountdown = -1;
+int greenEyeDrawnBarW = -1;
+std::array<int8_t, GreenEyeGame::kLives> greenEyeDrawnHearts = {};
+std::array<GreenEyeDrawn, GreenEyeGame::kMaxEyes> greenEyeDrawn = {};
+
+lv_obj_t* greenEyeRim = nullptr;
+lv_obj_t* greenEyeScoreLabel = nullptr;
+std::array<lv_obj_t*, GreenEyeGame::kLives> greenEyeHearts = {};
+std::array<lv_obj_t*, GreenEyeGame::kMaxEyes> greenEyeEyes = {};
+std::array<lv_obj_t*, GreenEyeGame::kMaxEyes> greenEyeGlints = {};
+lv_obj_t* greenEyePlus = nullptr;
+lv_obj_t* greenEyeCenterLabel = nullptr;   // 3-2-1, then HẾT LƯỢT!
+lv_obj_t* greenEyeSetupScreen = nullptr;
+lv_obj_t* greenEyeSetupRecord = nullptr;
+lv_obj_t* greenEyeDemoGreen = nullptr;
+lv_obj_t* greenEyePlayBtn = nullptr;
+lv_obj_t* greenEyeScoreScreen = nullptr;
+lv_obj_t* greenEyeResultValue = nullptr;
+lv_obj_t* greenEyeResultCaption = nullptr;
+lv_obj_t* greenEyeRewardLabel = nullptr;
+lv_obj_t* greenEyeMoodGain = nullptr;
+lv_obj_t* greenEyeMoodBase = nullptr;
+lv_obj_t* greenEyeAgainBtn = nullptr;
+lv_obj_t* greenEyeMenuBtn = nullptr;
+
+void HideGreenEyeAll();
+void StopGreenEyeTimer();
 
 // ---------------------------------------------------------------------------
 // CHẠM NHANH (Quick Tap) -- 30s reflex game on the round panel.
@@ -505,6 +625,92 @@ void ShowSnakeScreen(SnakeScreen screen);
 void BeginSnakeRound();
 void StartSnakeTimer();
 void StopSnakeTimer();
+
+// ---------------------------------------------------------------------------
+// MÊ CUNG NGHIÊNG -- IMU marble maze for the 240x240 round panel.
+//
+// Physics and level data live in tilt_maze_game.cc. This file owns only LVGL,
+// raw RGB565 painting and touch routing. The 240x240 canvas is ~113 KiB in
+// PSRAM; one canvas is substantially cheaper than hundreds of tile widgets.
+// ---------------------------------------------------------------------------
+constexpr uint32_t kMazeAccent = 0x42E8F5;
+constexpr uint32_t kMazePanelBg = 0x071A2B;
+constexpr uint32_t kMazeFloor = 0x0A2135;
+constexpr uint32_t kMazeFloorDot = 0x123A55;
+constexpr uint32_t kMazeWall = 0x31CDE3;
+constexpr uint32_t kMazeWallLight = 0x8AFAFF;
+constexpr uint32_t kMazeWallShade = 0x16869F;
+constexpr uint32_t kMazeGold = 0xFFD84A;
+constexpr uint32_t kMazeGoal = 0x53E06F;
+constexpr uint32_t kMazeBreakable = 0xFF755F;
+constexpr uint32_t kMazeWormA = 0xF75CCF;
+constexpr uint32_t kMazeWormB = 0x9B73FF;
+constexpr uint32_t kMazeMuted = 0x8DB2C8;
+constexpr uint32_t kMazeTickMs = 33;
+constexpr int kMazeCanvasPx = 240;
+
+lv_timer_t* mazeTimer = nullptr;
+lv_obj_t* mazeCanvas = nullptr;
+uint16_t* mazeCanvasBuf = nullptr;
+lv_obj_t* mazeHud = nullptr;
+lv_obj_t* mazeCalibrationScreen = nullptr;
+lv_obj_t* mazeCalibrationStatus = nullptr;
+lv_obj_t* mazeCalibrateBtn = nullptr;
+lv_obj_t* mazeCountdownLabel = nullptr;
+lv_obj_t* mazePlanningTitle = nullptr;
+lv_obj_t* mazePlanUpBtn = nullptr;
+lv_obj_t* mazePlanDownBtn = nullptr;
+lv_obj_t* mazePlanLeftBtn = nullptr;
+lv_obj_t* mazePlanRightBtn = nullptr;
+lv_obj_t* mazePlanResumeBtn = nullptr;
+lv_obj_t* mazeResultScreen = nullptr;
+std::array<lv_obj_t*, 3> mazeResultStars = {};
+lv_obj_t* mazeResultSummary = nullptr;
+lv_obj_t* mazeResultPrimaryBtn = nullptr;
+lv_obj_t* mazeResultRetryBtn = nullptr;
+TiltMazeGame::Phase mazeVisiblePhase = TiltMazeGame::Phase::kStopped;
+
+void HideTiltMazeAll();
+void CreateTiltMazeUI();
+void UpdateTiltMazeUI();
+void StartTiltMazeTimer();
+void StopTiltMazeTimer();
+
+// ---------------------------------------------------------------------------
+// ĐƯỜNG PHỐ -- three-lane endless runner controlled by the IMU.
+// ---------------------------------------------------------------------------
+constexpr uint32_t kRunnerAccent = 0x42E8F5;
+constexpr uint32_t kRunnerPanelBg = 0x06131D;
+constexpr uint32_t kRunnerRoad = 0x102936;
+constexpr uint32_t kRunnerLane = 0x557482;
+constexpr uint32_t kRunnerGold = 0xFFD84A;
+constexpr uint32_t kRunnerMuted = 0x8DB2C8;
+constexpr uint32_t kRunnerTickMs = 33;
+constexpr int kRunnerCanvasPx = 240;
+
+lv_timer_t* runnerTimer = nullptr;
+lv_obj_t* runnerCanvas = nullptr;
+uint16_t* runnerCanvasBuf = nullptr;
+lv_obj_t* runnerHudScore = nullptr;
+lv_obj_t* runnerHudGold = nullptr;
+lv_obj_t* runnerHudBoost = nullptr;
+lv_obj_t* runnerSetupScreen = nullptr;
+lv_obj_t* runnerSetupBest = nullptr;
+lv_obj_t* runnerPlayBtn = nullptr;
+lv_obj_t* runnerPhaseLabel = nullptr;
+lv_obj_t* runnerOverScreen = nullptr;
+lv_obj_t* runnerOverTitle = nullptr;
+lv_obj_t* runnerOverScore = nullptr;
+lv_obj_t* runnerOverBest = nullptr;
+lv_obj_t* runnerAgainBtn = nullptr;
+lv_obj_t* runnerMenuBtn = nullptr;
+TrafficRunnerGame::Phase runnerVisiblePhase = TrafficRunnerGame::Phase::kStopped;
+
+void HideTrafficRunnerAll();
+void CreateTrafficRunnerUI();
+void UpdateTrafficRunnerUI();
+void StartTrafficRunnerTimer();
+void StopTrafficRunnerTimer();
 
 // ---------------------------------------------------------------------------
 // HỌC TẬP (Pomodoro) -- focus/break blocks on the round panel.
@@ -712,7 +918,8 @@ constexpr std::array<uint32_t, 10> kLevelArcStrongColors = {{
     0xD500F9,
     0xC51162,
 }};
-constexpr int kEyeGameUnlockLevel = 1;
+// The whole TRÒ CHƠI list opens at this level.
+constexpr int kGamesUnlockLevel = 1;
 
 // ---------------------------------------------------------------------------
 // TRÒ CHƠI list -- the carousel of the three games.
@@ -774,13 +981,13 @@ void MarkMenuActivity() {
     lastMenuActivityMs = lv_tick_get();
 }
 
-bool IsEyeGameUnlocked() {
-    return LevelSystem::GetLevel() >= kEyeGameUnlockLevel;
+bool IsGamesUnlocked() {
+    return LevelSystem::GetLevel() >= kGamesUnlockLevel;
 }
 
 const char* GetSelectedGameTitle() {
     switch (selectedGame) {
-        case GAME_SELECTION_EYE_TAP:
+        case GAME_SELECTION_GREEN_EYE:
             return "MẮT XANH";
         case GAME_SELECTION_CHECKER:
             return "CỜ CA-RÔ";
@@ -790,6 +997,10 @@ const char* GetSelectedGameTitle() {
             // 157px at vn_22, clearing the ring by 12.57px at baseline y=176 --
             // roomier than CHẠM NHANH, which clears by 6.99. Measured, not eyed.
             return "RẮN SĂN MỒI";
+        case GAME_SELECTION_TILT_MAZE:
+            return "MÊ CUNG";
+        case GAME_SELECTION_TRAFFIC_RUNNER:
+            return "ĐƯỜNG PHỐ";
         case GAME_SELECTION_COUNT:
             break;
     }
@@ -801,16 +1012,22 @@ const char* GetSelectedGameTitle() {
 // sentence does not fit here -- the instruction copy the old pill carried has
 // no home on this layout and the emblem says it instead.
 //
-// Only CHẠM NHANH persists a score (quickTapRecords, NVS namespace "quicktap").
-// MẮT XANH and CỜ CA-RÔ store nothing, so their line is blank rather than an
-// invented number. Give them a record and they light up with no layout change.
+// A game that persists a score shows its best here (MẮT XANH "greeneye",
+// CHẠM NHANH "quicktap", RẮN SĂN MỒI "snake", ĐƯỜNG PHỐ). CỜ CA-RÔ stores
+// nothing, so its line is blank rather than an invented number.
 void SetGamesMenuStatusForSelection() {
     gameStatusMsg[0] = '\0';
     gamesStatusColor = kGamesChipColor;
 
     switch (selectedGame) {
-        case GAME_SELECTION_EYE_TAP:
-            gamesActionColor = COLOR_MINT;
+        case GAME_SELECTION_GREEN_EYE:
+            gamesActionColor = GreenEyeGame::HueRgb(GreenEyeGame::Hue::kGreen);
+            // "KỶ LỤC 999" is 114px at vn_20 -- the same string Snake already
+            // fits here. A score cannot really reach it; the clamp is for NVS.
+            if (greenEyeBest > 0) {
+                std::snprintf(gameStatusMsg, sizeof(gameStatusMsg), "KỶ LỤC %u",
+                              static_cast<unsigned>(std::min<uint16_t>(greenEyeBest, 999)));
+            }
             break;
         case GAME_SELECTION_CHECKER:
             gamesActionColor = 0xA7D8FF;
@@ -848,6 +1065,20 @@ void SetGamesMenuStatusForSelection() {
             }
             break;
         }
+        case GAME_SELECTION_TILT_MAZE:
+            gamesActionColor = kMazeAccent;
+            std::snprintf(gameStatusMsg, sizeof(gameStatusMsg), "LEVEL %u",
+                          static_cast<unsigned>(TiltMazeGame::GetCurrentLevel() + 1));
+            break;
+        case GAME_SELECTION_TRAFFIC_RUNNER: {
+            gamesActionColor = kRunnerAccent;
+            const uint32_t best = TrafficRunnerGame::GetHighScore();
+            if (best > 0) {
+                std::snprintf(gameStatusMsg, sizeof(gameStatusMsg), "KỶ LỤC %u",
+                              static_cast<unsigned>(std::min<uint32_t>(best, 999)));
+            }
+            break;
+        }
         case GAME_SELECTION_COUNT:
             gamesActionColor = COLOR_MINT;
             break;
@@ -865,7 +1096,12 @@ void SetMenuState(MenuState state) {
     if (currentState == state) {
         return;
     }
+    const bool was_game_active = currentState == MENU_GAME_ACTIVE;
+    const bool will_be_game_active = state == MENU_GAME_ACTIVE;
     currentState = state;
+    if (was_game_active != will_be_game_active) {
+        Application::GetInstance().SetInteractiveGameActive(will_be_game_active);
+    }
     // EyeDisplay owns the derivation so precedence stays in one place: hatching
     // and sleep outrank any panel, and a closed menu hands the screen back to
     // the eyes (or to feeding/bathing, whichever is running).
@@ -2608,6 +2844,40 @@ void UpdateGamesUI() {
         }
         HideQuickTapAll();
         HideSnakeAll();
+        HideTiltMazeAll();
+        HideTrafficRunnerAll();
+        HideGreenEyeAll();
+    } else if (currentState == MENU_GAME_ACTIVE &&
+               activeGame == ACTIVE_GAME_TRAFFIC_RUNNER) {
+        lv_obj_set_style_bg_color(gamesPanel, lv_color_hex(kRunnerPanelBg), 0);
+        lv_obj_set_style_border_width(gamesPanel, 0, 0);
+        for (lv_obj_t* obj : {gamesRing, gamesEmblem, gamesAction, gamesStatus, gamesPrevBtn,
+                              gamesNextBtn, checkerGrid, checkerBotIcon, checkerDotsRow,
+                              checkerTitleScreen, checkerMatchupScreen,
+                              checkerPlayAgainScreen, checkerFx}) {
+            if (obj != nullptr) {
+                lv_obj_add_flag(obj, LV_OBJ_FLAG_HIDDEN);
+            }
+        }
+        HideQuickTapAll();
+        HideSnakeAll();
+        HideTiltMazeAll();
+        UpdateTrafficRunnerUI();
+    } else if (currentState == MENU_GAME_ACTIVE && activeGame == ACTIVE_GAME_TILT_MAZE) {
+        lv_obj_set_style_bg_color(gamesPanel, lv_color_hex(kMazePanelBg), 0);
+        lv_obj_set_style_border_width(gamesPanel, 0, 0);
+        for (lv_obj_t* obj : {gamesRing, gamesEmblem, gamesAction, gamesStatus, gamesPrevBtn,
+                              gamesNextBtn, checkerGrid, checkerBotIcon, checkerDotsRow,
+                              checkerTitleScreen, checkerMatchupScreen,
+                              checkerPlayAgainScreen, checkerFx}) {
+            if (obj != nullptr) {
+                lv_obj_add_flag(obj, LV_OBJ_FLAG_HIDDEN);
+            }
+        }
+        HideQuickTapAll();
+        HideSnakeAll();
+        HideTrafficRunnerAll();
+        UpdateTiltMazeUI();
     } else if (currentState == MENU_GAME_ACTIVE && activeGame == ACTIVE_GAME_SNAKE) {
         // Snake owns the whole panel, same deal as Quick Tap: its own ground,
         // no carousel chrome, and ShowSnakeScreen() drives what is visible.
@@ -2623,6 +2893,27 @@ void UpdateGamesUI() {
             }
         }
         HideQuickTapAll();
+        HideTiltMazeAll();
+        HideTrafficRunnerAll();
+    } else if (currentState == MENU_GAME_ACTIVE && activeGame == ACTIVE_GAME_GREEN_EYE) {
+        // MẮT XANH owns the whole panel the way Quick Tap does: black ground so
+        // the colours carry, no carousel chrome, and ShowGreenEyeScreen()
+        // drives what is visible.
+        lv_obj_set_style_bg_color(gamesPanel, lv_color_hex(kGreenEyePanelBg), 0);
+        lv_obj_set_style_border_width(gamesPanel, 8, 0);
+        lv_obj_set_style_border_color(gamesPanel, lv_color_hex(kGreenEyePanelRing), 0);
+        for (lv_obj_t* obj : {gamesRing, gamesEmblem, gamesAction, gamesStatus, gamesPrevBtn,
+                              gamesNextBtn, checkerGrid, checkerBotIcon, checkerDotsRow,
+                              checkerTitleScreen, checkerMatchupScreen,
+                              checkerPlayAgainScreen, checkerFx}) {
+            if (obj != nullptr) {
+                lv_obj_add_flag(obj, LV_OBJ_FLAG_HIDDEN);
+            }
+        }
+        HideQuickTapAll();
+        HideSnakeAll();
+        HideTiltMazeAll();
+        HideTrafficRunnerAll();
     } else if (currentState == MENU_GAME_ACTIVE && activeGame == ACTIVE_GAME_QUICK_TAP) {
         // Quick Tap owns the whole panel: black ground, no menu chrome, and
         // its own screens are driven by ShowQuickTapScreen().
@@ -2638,6 +2929,8 @@ void UpdateGamesUI() {
             }
         }
         HideSnakeAll();
+        HideTiltMazeAll();
+        HideTrafficRunnerAll();
     } else if (currentState == MENU_GAME_ACTIVE && activeGame == ACTIVE_GAME_CHECKER) {
         // Neon on black: the board owns the screen and the turn indicator moves
         // to a header row at the top, beside the Bubu glyph.
@@ -2699,6 +2992,8 @@ void UpdateGamesUI() {
             }
         }
         HideSnakeAll();
+        HideTiltMazeAll();
+        HideTrafficRunnerAll();
     }
 
     if (gamesStatus != nullptr) {
@@ -3297,7 +3592,9 @@ void FinishQuickTapRound() {
         }
         // Scales with the real score but capped, so Quick Tap does not become
         // a mood farm next to the other games' flat kGamesBoost.
-        CareSystem::AddMood(std::min(5 + score / 8, 25));
+        const int mood = std::min(5 + score / 8, 25);
+        ESP_LOGI(TAG, "Game reward: quick_tap +%d mood", mood);
+        CareSystem::AddMood(mood);
     });
 }
 
@@ -3337,7 +3634,7 @@ void QuickTapTimerCb(lv_timer_t* timer) {
         UpdateQuickTapPlayfield();
         if (!QuickTapGame::IsRunning()) {
             if (QuickTapGame::GetResult() == QuickTapGame::Result::kTappedRed) {
-                PlayQuickTapSound(Lang::Sounds::OGG_BUBU_SAD1);
+                PlayQuickTapSound(Vox::Pick(Lang::Sounds::OGG_VOX_SAD_1_A, Lang::Sounds::OGG_VOX_SAD_1_B));
                 EnterQuickTapBanner("CHẠM NHẦM!", kQuickTapRedHoldMs);
             } else {
                 EnterQuickTapBanner("HẾT GIỜ!", kQuickTapTimeUpHoldMs);
@@ -3821,7 +4118,9 @@ void FinishSnakeRound() {
         }
         // Scaled but capped, matching Quick Tap, so a long snake does not turn
         // into a mood farm next to the other games' flat kGamesBoost.
-        CareSystem::AddMood(std::min(5 + score / 3, 25));
+        const int mood = std::min(5 + score / 3, 25);
+        ESP_LOGI(TAG, "Game reward: snake +%d mood", mood);
+        CareSystem::AddMood(mood);
     });
 }
 
@@ -3857,7 +4156,7 @@ void SnakeTimerCb(lv_timer_t* timer) {
         if (!SnakeGame::IsRunning()) {
             PlaySnakeSound(SnakeGame::GetResult() == SnakeGame::Result::kFilledBoard
                                ? Lang::Sounds::OGG_SUCCESS
-                               : Lang::Sounds::OGG_BUBU_SAD1);
+                               : Vox::Pick(Lang::Sounds::OGG_VOX_SAD_1_A, Lang::Sounds::OGG_VOX_SAD_1_B));
             snakeHoldStartMs = lv_tick_get();
             ShowSnakeScreen(SnakeScreen::kHold);
         }
@@ -4066,69 +4365,1619 @@ void CreateSnakeUI() {
 }
 
 // ---------------------------------------------------------------------------
-// MẮT XANH
-//
-// Driven by its own 33ms lv_timer, like Quick Tap and Snake. It used to be
-// ticked from Render(), which only runs on the 1Hz clock tick -- while the
-// game re-rolls both colours every 1-2s. So the screen lagged the logic by up
-// to a second: whole rounds were never drawn, a correct tap re-rolled colours
-// the child could not see yet, and a tap on an eye that still LOOKED green was
-// judged against the hidden new colour and ended the game as a wrong tap.
+// MÊ CUNG NGHIÊNG rendering + UI
 // ---------------------------------------------------------------------------
-constexpr uint32_t kEyeGameTickMs = 33;
-lv_timer_t* eyeGameTimer = nullptr;
-// Set when the timer sees the game end on its own (last round), so the
-// hand-off to HandleGameFinished() is queued exactly once.
-bool eyeGameFinishPending = false;
 
-void PushEyeGameColors() {
-    auto* eye_display = GetEyeDisplay();
-    if (eye_display == nullptr) {
+void MazeFillRect(uint16_t* buffer, int x, int y, int width, int height, uint16_t color) {
+    if (buffer == nullptr || width <= 0 || height <= 0) {
         return;
     }
-    const EyeGame::RgbColor left = EyeGame::GetLeftColor();
-    const EyeGame::RgbColor right = EyeGame::GetRightColor();
-    eye_display->SetLeftEyeColor(left.r, left.g, left.b);
-    eye_display->SetRightEyeColor(right.r, right.g, right.b);
+    const int x0 = std::max(0, x);
+    const int y0 = std::max(0, y);
+    const int x1 = std::min(kMazeCanvasPx, x + width);
+    const int y1 = std::min(kMazeCanvasPx, y + height);
+    // A world object can legitimately be completely outside the camera. In
+    // that case clipping produces a reversed/empty interval (for example
+    // x0=300, x1=240). Passing that to std::fill is undefined behavior: it
+    // walks forward through PSRAM looking for an end pointer behind it.
+    if (x0 >= x1 || y0 >= y1) {
+        return;
+    }
+    for (int row = y0; row < y1; ++row) {
+        std::fill(buffer + row * kMazeCanvasPx + x0,
+                  buffer + row * kMazeCanvasPx + x1, color);
+    }
 }
 
-// Runs on the LVGL task inside lv_timer_handler, which already holds the
-// display lock -- so it must not call HandleGameFinished(), which takes it.
-void EyeGameTimerCb(lv_timer_t* timer) {
-    (void)timer;
-    if (currentState != MENU_GAME_ACTIVE || activeGame != ACTIVE_GAME_EYE_TAP) {
+void MazeFillCircle(uint16_t* buffer, int center_x, int center_y, int radius, uint16_t color) {
+    if (buffer == nullptr || radius < 0 ||
+        center_x + radius < 0 || center_x - radius >= kMazeCanvasPx ||
+        center_y + radius < 0 || center_y - radius >= kMazeCanvasPx) {
         return;
     }
-    if (EyeGame::IsRunning()) {
-        // 40 rounds of 1-2s is longer than the menu's 30s inactivity close-out,
-        // and a child waiting for a green eye is playing, not idle.
-        MarkMenuActivity();
-        EyeGame::Update();
-        PushEyeGameColors();
+    for (int dy = -radius; dy <= radius; ++dy) {
+        const int half = static_cast<int>(std::sqrt(
+            static_cast<float>(radius * radius - dy * dy)));
+        MazeFillRect(buffer, center_x - half, center_y + dy, half * 2 + 1, 1, color);
     }
-    if (!EyeGame::IsRunning() && !eyeGameFinishPending) {
-        eyeGameFinishPending = true;
+}
+
+void MazeDrawLine(uint16_t* buffer, int x0, int y0, int x1, int y1,
+                  int thickness, uint16_t color) {
+    const int dx = std::abs(x1 - x0);
+    const int sx = x0 < x1 ? 1 : -1;
+    const int dy = -std::abs(y1 - y0);
+    const int sy = y0 < y1 ? 1 : -1;
+    int error = dx + dy;
+    while (true) {
+        MazeFillCircle(buffer, x0, y0, std::max(0, thickness / 2), color);
+        if (x0 == x1 && y0 == y1) {
+            break;
+        }
+        const int twice = error * 2;
+        if (twice >= dy) {
+            error += dy;
+            x0 += sx;
+        }
+        if (twice <= dx) {
+            error += dx;
+            y0 += sy;
+        }
+    }
+}
+
+int MazeWorldToScreen(float value, float camera) {
+    return static_cast<int>(std::lround(value - camera));
+}
+
+float MazeCellCenter(uint8_t coordinate) {
+    return coordinate * TiltMazeGame::kCellSize + TiltMazeGame::kCellSize * 0.5f;
+}
+
+void DrawMazeWormhole(uint16_t* buffer, int x, int y, uint32_t rgb, uint8_t style) {
+    const uint16_t outer = SnakeColor565(rgb);
+    const uint16_t inner = SnakeColor565(kMazePanelBg);
+    MazeFillCircle(buffer, x, y, 7, outer);
+    MazeFillCircle(buffer, x, y, 4, inner);
+    if (style == 0) {
+        MazeFillRect(buffer, x - 1, y - 6, 3, 3, SnakeColor565(0xFFFFFF));
+    } else {
+        MazeFillRect(buffer, x + 3, y - 4, 3, 3, SnakeColor565(0xFFFFFF));
+        MazeFillRect(buffer, x - 5, y + 2, 2, 2, SnakeColor565(0xFFFFFF));
+    }
+}
+
+void RedrawTiltMaze() {
+    if (mazeCanvasBuf == nullptr || mazeCanvas == nullptr) {
+        return;
+    }
+    uint16_t* buffer = mazeCanvasBuf;
+    std::fill(buffer, buffer + kMazeCanvasPx * kMazeCanvasPx,
+              SnakeColor565(kMazePanelBg));
+
+    const TiltMazeGame::State& state = TiltMazeGame::GetState();
+    const TiltMazeGame::LevelDefinition& level = TiltMazeGame::GetLevel(state.level_index);
+    const float camera_x = state.camera_x;
+    const float camera_y = state.camera_y;
+
+    for (uint8_t row = 0; row < level.height; ++row) {
+        for (uint8_t col = 0; col < level.width; ++col) {
+            const int x = MazeWorldToScreen(col * TiltMazeGame::kCellSize, camera_x);
+            const int y = MazeWorldToScreen(row * TiltMazeGame::kCellSize, camera_y);
+            if (x >= kMazeCanvasPx || y >= kMazeCanvasPx ||
+                x + TiltMazeGame::kCellSize <= 0 || y + TiltMazeGame::kCellSize <= 0) {
+                continue;
+            }
+            const char tile = level.rows[row][col];
+            const bool breakable = tile == 'X' && !TiltMazeGame::IsBreakableBroken(col, row);
+            if (tile == '#' || breakable) {
+                const uint32_t main_color = breakable ? kMazeBreakable : kMazeWall;
+                const uint32_t shade_color = breakable ? 0xB94347 : kMazeWallShade;
+                MazeFillRect(buffer, x, y, TiltMazeGame::kCellSize,
+                             TiltMazeGame::kCellSize, SnakeColor565(shade_color));
+                MazeFillRect(buffer, x + 2, y + 2, TiltMazeGame::kCellSize - 4,
+                             TiltMazeGame::kCellSize - 4, SnakeColor565(main_color));
+                MazeFillRect(buffer, x + 4, y + 4, TiltMazeGame::kCellSize - 8, 3,
+                             SnakeColor565(breakable ? 0xFFB09B : kMazeWallLight));
+                if (breakable) {
+                    MazeDrawLine(buffer, x + 20, y + 5, x + 15, y + 18, 2,
+                                 SnakeColor565(0x6D3040));
+                    MazeDrawLine(buffer, x + 15, y + 18, x + 26, y + 25, 2,
+                                 SnakeColor565(0x6D3040));
+                    MazeDrawLine(buffer, x + 26, y + 25, x + 20, y + 38, 2,
+                                 SnakeColor565(0x6D3040));
+                }
+            } else {
+                MazeFillRect(buffer, x, y, TiltMazeGame::kCellSize,
+                             TiltMazeGame::kCellSize, SnakeColor565(kMazeFloor));
+                if (((row * 3 + col) & 3U) == 0) {
+                    MazeFillCircle(buffer, x + 8, y + 8, 1, SnakeColor565(kMazeFloorDot));
+                }
+            }
+        }
+    }
+
+    // Destination under every moving/collectible object.
+    const int goal_x = MazeWorldToScreen(MazeCellCenter(level.goal.col), camera_x);
+    const int goal_y = MazeWorldToScreen(MazeCellCenter(level.goal.row), camera_y);
+    MazeFillCircle(buffer, goal_x, goal_y, 15, SnakeColor565(0x1D6F4B));
+    MazeFillCircle(buffer, goal_x, goal_y, 11, SnakeColor565(kMazeGoal));
+    MazeFillCircle(buffer, goal_x, goal_y, 6, SnakeColor565(kMazeFloor));
+    MazeDrawLine(buffer, goal_x - 3, goal_y, goal_x, goal_y + 4, 2,
+                 SnakeColor565(0xFFFFFF));
+    MazeDrawLine(buffer, goal_x, goal_y + 4, goal_x + 6, goal_y - 5, 2,
+                 SnakeColor565(0xFFFFFF));
+
+    for (uint8_t i = 0; i < level.gold_count; ++i) {
+        if (TiltMazeGame::IsGoldCollected(i)) {
+            continue;
+        }
+        const int x = MazeWorldToScreen(MazeCellCenter(level.gold[i].col), camera_x);
+        const int y = MazeWorldToScreen(MazeCellCenter(level.gold[i].row), camera_y);
+        MazeFillCircle(buffer, x, y, 7, SnakeColor565(0x9A6315));
+        MazeFillCircle(buffer, x, y, 5, SnakeColor565(kMazeGold));
+        MazeFillRect(buffer, x - 1, y - 4, 3, 9, SnakeColor565(0xFFF7B0));
+        MazeFillRect(buffer, x - 4, y - 1, 9, 3, SnakeColor565(0xFFF7B0));
+    }
+
+    for (uint8_t i = 0; i < level.wormhole_count; ++i) {
+        const auto& pair = level.wormholes[i];
+        DrawMazeWormhole(
+            buffer,
+            MazeWorldToScreen(MazeCellCenter(pair.a.col) + pair.a_offset_x, camera_x),
+            MazeWorldToScreen(MazeCellCenter(pair.a.row) + pair.a_offset_y, camera_y),
+            pair.style == 0 ? kMazeWormA : kMazeWormB, pair.style);
+        DrawMazeWormhole(
+            buffer,
+            MazeWorldToScreen(MazeCellCenter(pair.b.col) + pair.b_offset_x, camera_x),
+            MazeWorldToScreen(MazeCellCenter(pair.b.row) + pair.b_offset_y, camera_y),
+            pair.style == 0 ? kMazeWormA : kMazeWormB, pair.style);
+    }
+
+    for (uint8_t i = 0; i < level.boost_count; ++i) {
+        const auto& boost = level.boosts[i];
+        const int x = MazeWorldToScreen(MazeCellCenter(boost.cell.col), camera_x);
+        const int y = MazeWorldToScreen(MazeCellCenter(boost.cell.row), camera_y);
+        const int dx = boost.direction_x;
+        const int dy = boost.direction_y;
+        // Two bright chevrons. Level 4 points right, while this remains generic
+        // for future up/down/left pads.
+        for (int offset : {-5, 4}) {
+            const int cx = x + dx * offset;
+            const int cy = y + dy * offset;
+            const int px = -dy;
+            const int py = dx;
+            MazeDrawLine(buffer, cx - dx * 5 + px * 5, cy - dy * 5 + py * 5,
+                         cx + dx * 5, cy + dy * 5, 3, SnakeColor565(kMazeAccent));
+            MazeDrawLine(buffer, cx + dx * 5, cy + dy * 5,
+                         cx - dx * 5 - px * 5, cy - dy * 5 - py * 5,
+                         3, SnakeColor565(kMazeAccent));
+        }
+    }
+
+    const int ball_x = MazeWorldToScreen(state.ball_x, camera_x);
+    const int ball_y = MazeWorldToScreen(state.ball_y, camera_y);
+    MazeFillCircle(buffer, ball_x + 2, ball_y + 3, TiltMazeGame::kBallRadius,
+                   SnakeColor565(0x06111D));
+    MazeFillCircle(buffer, ball_x, ball_y, TiltMazeGame::kBallRadius,
+                   SnakeColor565(state.boost_style ? kMazeAccent : 0xFFFFFF));
+    MazeFillCircle(buffer, ball_x - 2, ball_y - 2, 2, SnakeColor565(0xFFFFFF));
+
+    lv_obj_invalidate(mazeCanvas);
+}
+
+lv_obj_t* CreateMazeControl(lv_obj_t* parent, int x, int y, int size, const char* text,
+                            uint32_t color) {
+    lv_obj_t* button = lv_obj_create(parent);
+    lv_obj_remove_style_all(button);
+    lv_obj_set_size(button, size, size);
+    lv_obj_set_pos(button, x, y);
+    lv_obj_set_style_radius(button, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(button, lv_color_hex(kMazePanelBg), 0);
+    lv_obj_set_style_bg_opa(button, LV_OPA_80, 0);
+    lv_obj_set_style_border_width(button, 2, 0);
+    lv_obj_set_style_border_color(button, lv_color_hex(color), 0);
+    lv_obj_set_style_border_opa(button, LV_OPA_COVER, 0);
+    lv_obj_remove_flag(button, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t* label = lv_label_create(button);
+    lv_obj_set_style_text_font(label, &lv_font_montserrat_vn_22, 0);
+    lv_obj_set_style_text_color(label, lv_color_hex(color), 0);
+    lv_label_set_text(label, text);
+    lv_obj_center(label);
+    lv_obj_add_flag(button, LV_OBJ_FLAG_HIDDEN);
+    return button;
+}
+
+void HideTiltMazeAll() {
+    for (lv_obj_t* object : {mazeCanvas, mazeHud, mazeCalibrationScreen,
+                             mazeCountdownLabel, mazePlanningTitle, mazePlanUpBtn,
+                             mazePlanDownBtn, mazePlanLeftBtn, mazePlanRightBtn,
+                             mazePlanResumeBtn, mazeResultScreen}) {
+        if (object != nullptr) {
+            lv_obj_add_flag(object, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+    mazeVisiblePhase = TiltMazeGame::Phase::kStopped;
+}
+
+void KeepTiltMazeHudVisible() {
+    if (mazeHud == nullptr) {
+        return;
+    }
+    lv_obj_remove_flag(mazeHud, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_foreground(mazeHud);
+}
+
+void ApplyTiltMazePhase(TiltMazeGame::Phase phase) {
+    HideTiltMazeAll();
+    if (phase == TiltMazeGame::Phase::kComplete && mazeVisiblePhase != phase) {
+        // A cleared level pays the flat game boost plus 5 per star, capped
+        // like Quick Tap and Snake.
+        const uint8_t stars = TiltMazeGame::GetState().last_run_stars;
+        const int earned = ((stars & 1U) ? 1 : 0) + ((stars & 2U) ? 1 : 0) + ((stars & 4U) ? 1 : 0);
+        RewardGameMood("tilt_maze", std::min(CareSystem::kGamesBoost + 5 * earned, 25));
+    }
+    mazeVisiblePhase = phase;
+    switch (phase) {
+        case TiltMazeGame::Phase::kCalibrating:
+            lv_obj_remove_flag(mazeCalibrationScreen, LV_OBJ_FLAG_HIDDEN);
+            break;
+        case TiltMazeGame::Phase::kCountdown:
+            lv_obj_remove_flag(mazeCanvas, LV_OBJ_FLAG_HIDDEN);
+            KeepTiltMazeHudVisible();
+            lv_obj_remove_flag(mazeCountdownLabel, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_move_foreground(mazeCountdownLabel);
+            break;
+        case TiltMazeGame::Phase::kPlaying:
+            lv_obj_remove_flag(mazeCanvas, LV_OBJ_FLAG_HIDDEN);
+            KeepTiltMazeHudVisible();
+            break;
+        case TiltMazeGame::Phase::kPlanning:
+            // Keep the canvas behind every overlay. Moving it to the foreground here
+            // used to leave it above the HUD after planning mode was closed.
+            lv_obj_remove_flag(mazeCanvas, LV_OBJ_FLAG_HIDDEN);
+            for (lv_obj_t* object : {mazePlanningTitle, mazePlanUpBtn, mazePlanDownBtn,
+                                     mazePlanLeftBtn, mazePlanRightBtn, mazePlanResumeBtn}) {
+                lv_obj_remove_flag(object, LV_OBJ_FLAG_HIDDEN);
+                lv_obj_move_foreground(object);
+            }
+            break;
+        case TiltMazeGame::Phase::kComplete:
+            lv_obj_remove_flag(mazeResultScreen, LV_OBJ_FLAG_HIDDEN);
+            break;
+        case TiltMazeGame::Phase::kStopped:
+            break;
+    }
+}
+
+void UpdateTiltMazeUI() {
+    const TiltMazeGame::State& state = TiltMazeGame::GetState();
+    const TiltMazeGame::LevelDefinition& level = TiltMazeGame::GetLevel(state.level_index);
+    if (state.phase != mazeVisiblePhase) {
+        ApplyTiltMazePhase(state.phase);
+    }
+
+    if (state.phase == TiltMazeGame::Phase::kCalibrating) {
+        lv_label_set_text(mazeCalibrationStatus,
+                          state.neutral_stable ? "ĐÃ ỔN ĐỊNH" : "GIỮ YÊN MỘT CHÚT");
+        lv_obj_set_style_text_color(mazeCalibrationStatus,
+                                    lv_color_hex(state.neutral_stable ? kMazeGoal : kMazeGold), 0);
+        lv_obj_set_style_border_color(mazeCalibrateBtn,
+                                      lv_color_hex(state.neutral_stable ? kMazeGoal : kMazeMuted), 0);
+        return;
+    }
+
+    if (state.phase == TiltMazeGame::Phase::kPlaying ||
+        state.phase == TiltMazeGame::Phase::kCountdown ||
+        state.phase == TiltMazeGame::Phase::kPlanning) {
+        RedrawTiltMaze();
+    }
+
+    if (state.phase == TiltMazeGame::Phase::kPlaying ||
+        state.phase == TiltMazeGame::Phase::kCountdown) {
+        // Reassert both visibility and z-order every frame so another overlay cannot
+        // leave the always-on play HUD hidden or behind the full-screen canvas.
+        KeepTiltMazeHudVisible();
+        const uint32_t seconds = state.elapsed_ms / 1000U;
+        lv_label_set_text_fmt(mazeHud, "L%u   %u/%u   %02u:%02u",
+                              static_cast<unsigned>(state.level_index + 1),
+                              static_cast<unsigned>(TiltMazeGame::CountCollectedGold()),
+                              static_cast<unsigned>(level.gold_count),
+                              static_cast<unsigned>(seconds / 60U),
+                              static_cast<unsigned>(seconds % 60U));
+    }
+    if (state.phase == TiltMazeGame::Phase::kCountdown) {
+        const unsigned count = static_cast<unsigned>(
+            std::max<uint32_t>(1U, (state.countdown_remaining_ms + 999U) / 1000U));
+        lv_label_set_text_fmt(mazeCountdownLabel, "%u", count);
+        lv_obj_move_foreground(mazeCountdownLabel);
+    }
+    if (state.phase == TiltMazeGame::Phase::kComplete) {
+        for (size_t i = 0; i < mazeResultStars.size(); ++i) {
+            const bool earned = (state.last_run_stars & (1U << i)) != 0;
+            lv_obj_set_style_bg_color(mazeResultStars[i],
+                                      lv_color_hex(earned ? kMazeGold : 0x263D50), 0);
+            lv_obj_set_style_border_color(mazeResultStars[i],
+                                          lv_color_hex(earned ? 0xFFF2A1 : kMazeMuted), 0);
+        }
+        lv_label_set_text_fmt(mazeResultSummary, "%u/%u VÀNG  ·  %u GIÂY",
+                              static_cast<unsigned>(TiltMazeGame::CountCollectedGold()),
+                              static_cast<unsigned>(level.gold_count),
+                              static_cast<unsigned>(state.elapsed_ms / 1000U));
+        lv_obj_t* primary_label = lv_obj_get_child(mazeResultPrimaryBtn, 0);
+        if (primary_label != nullptr) {
+            lv_label_set_text(primary_label,
+                              state.level_index + 1 < TiltMazeGame::kImplementedLevels
+                                  ? "LEVEL TIẾP" : "HOÀN TẤT");
+        }
+    }
+}
+
+void TiltMazeTimerCb(lv_timer_t*) {
+    if (currentState != MENU_GAME_ACTIVE || activeGame != ACTIVE_GAME_TILT_MAZE) {
+        return;
+    }
+    TiltMazeGame::Tick(lv_tick_get());
+    UpdateTiltMazeUI();
+}
+
+void StartTiltMazeTimer() {
+    if (mazeTimer == nullptr) {
+        mazeTimer = lv_timer_create(TiltMazeTimerCb, kMazeTickMs, nullptr);
+    }
+}
+
+void StopTiltMazeTimer() {
+    if (mazeTimer != nullptr) {
+        lv_timer_delete(mazeTimer);
+        mazeTimer = nullptr;
+    }
+}
+
+void CreateTiltMazeUI() {
+    if (gamesPanel == nullptr || mazeCalibrationScreen != nullptr) {
+        return;
+    }
+
+    // LVGL 9's lv_color_t is a 24-bit logical color, while this canvas stores
+    // packed RGB565 pixels. Size the backing memory for the actual format.
+    const size_t bytes = static_cast<size_t>(kMazeCanvasPx) * kMazeCanvasPx *
+                         sizeof(uint16_t);
+    mazeCanvasBuf = static_cast<uint16_t*>(
+        heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    if (mazeCanvasBuf == nullptr) {
+        ESP_LOGE(TAG, "Tilt maze: failed to allocate the %u-byte canvas",
+                 static_cast<unsigned>(bytes));
+    } else {
+        mazeCanvas = lv_canvas_create(gamesPanel);
+        lv_obj_remove_style_all(mazeCanvas);
+        lv_obj_set_size(mazeCanvas, kMazeCanvasPx, kMazeCanvasPx);
+        lv_obj_center(mazeCanvas);
+        lv_canvas_set_buffer(mazeCanvas, mazeCanvasBuf, kMazeCanvasPx, kMazeCanvasPx,
+                             LV_COLOR_FORMAT_RGB565);
+        lv_obj_add_flag(mazeCanvas, LV_OBJ_FLAG_HIDDEN);
+    }
+
+    mazeHud = lv_label_create(gamesPanel);
+    lv_obj_set_style_text_font(mazeHud, &lv_font_montserrat_vn_20, 0);
+    lv_obj_set_style_text_color(mazeHud, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_bg_color(mazeHud, lv_color_hex(kMazePanelBg), 0);
+    lv_obj_set_style_bg_opa(mazeHud, LV_OPA_80, 0);
+    lv_obj_set_style_radius(mazeHud, 12, 0);
+    lv_obj_set_style_pad_left(mazeHud, 10, 0);
+    lv_obj_set_style_pad_right(mazeHud, 10, 0);
+    lv_obj_set_style_pad_top(mazeHud, 3, 0);
+    lv_obj_set_style_pad_bottom(mazeHud, 3, 0);
+    lv_label_set_text(mazeHud, "L1   0/2   00:00");
+    lv_obj_align(mazeHud, LV_ALIGN_TOP_MID, 0, 10);
+    lv_obj_add_flag(mazeHud, LV_OBJ_FLAG_HIDDEN);
+
+    mazeCountdownLabel = lv_label_create(gamesPanel);
+    lv_obj_set_style_text_font(mazeCountdownLabel, &lv_font_montserrat_vn_28, 0);
+    lv_obj_set_style_text_color(mazeCountdownLabel, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_bg_color(mazeCountdownLabel, lv_color_hex(kMazeAccent), 0);
+    lv_obj_set_style_bg_opa(mazeCountdownLabel, LV_OPA_80, 0);
+    lv_obj_set_style_radius(mazeCountdownLabel, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_pad_all(mazeCountdownLabel, 16, 0);
+    lv_label_set_text(mazeCountdownLabel, "3");
+    lv_obj_center(mazeCountdownLabel);
+    lv_obj_add_flag(mazeCountdownLabel, LV_OBJ_FLAG_HIDDEN);
+
+    mazeCalibrationScreen = lv_obj_create(gamesPanel);
+    lv_obj_remove_style_all(mazeCalibrationScreen);
+    lv_obj_set_size(mazeCalibrationScreen, 224, 224);
+    lv_obj_center(mazeCalibrationScreen);
+    lv_obj_set_style_bg_color(mazeCalibrationScreen, lv_color_hex(kMazePanelBg), 0);
+    lv_obj_set_style_bg_opa(mazeCalibrationScreen, LV_OPA_COVER, 0);
+    lv_obj_remove_flag(mazeCalibrationScreen, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* calibration_title = lv_label_create(mazeCalibrationScreen);
+    lv_obj_set_style_text_font(calibration_title, &lv_font_montserrat_vn_22, 0);
+    lv_obj_set_style_text_color(calibration_title, lv_color_hex(kMazeAccent), 0);
+    lv_label_set_text(calibration_title, "VÀO VỊ TRÍ");
+    lv_obj_align(calibration_title, LV_ALIGN_CENTER, 0, -72);
+
+    lv_obj_t* calibration_hint = lv_label_create(mazeCalibrationScreen);
+    lv_obj_set_style_text_font(calibration_hint, &lv_font_montserrat_vn_20, 0);
+    lv_obj_set_style_text_color(calibration_hint, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_text_align(calibration_hint, LV_TEXT_ALIGN_CENTER, 0);
+    lv_label_set_text(calibration_hint, "NGỬA MẶT\nBUBU LÊN");
+    lv_obj_align(calibration_hint, LV_ALIGN_CENTER, 0, -24);
+
+    mazeCalibrationStatus = lv_label_create(mazeCalibrationScreen);
+    lv_obj_set_style_text_font(mazeCalibrationStatus, &lv_font_montserrat_vn_20, 0);
+    lv_obj_set_style_text_color(mazeCalibrationStatus, lv_color_hex(kMazeGold), 0);
+    lv_label_set_text(mazeCalibrationStatus, "GIỮ YÊN MỘT CHÚT");
+    lv_obj_align(mazeCalibrationStatus, LV_ALIGN_CENTER, 0, 24);
+
+    mazeCalibrateBtn = CreateMazeControl(mazeCalibrationScreen, 84, 148, 56, "OK", kMazeGoal);
+    lv_obj_set_style_text_font(lv_obj_get_child(mazeCalibrateBtn, 0), &font_awesome_20_4, 0);
+    lv_label_set_text(lv_obj_get_child(mazeCalibrateBtn, 0), FONT_AWESOME_CHECK);
+    lv_obj_remove_flag(mazeCalibrateBtn, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(mazeCalibrationScreen, LV_OBJ_FLAG_HIDDEN);
+
+    mazePlanningTitle = lv_label_create(gamesPanel);
+    lv_obj_set_style_text_font(mazePlanningTitle, &lv_font_montserrat_vn_20, 0);
+    lv_obj_set_style_text_color(mazePlanningTitle, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_bg_color(mazePlanningTitle, lv_color_hex(kMazePanelBg), 0);
+    lv_obj_set_style_bg_opa(mazePlanningTitle, LV_OPA_80, 0);
+    lv_obj_set_style_radius(mazePlanningTitle, 10, 0);
+    lv_obj_set_style_pad_hor(mazePlanningTitle, 8, 0);
+    lv_obj_set_style_pad_ver(mazePlanningTitle, 3, 0);
+    lv_label_set_text(mazePlanningTitle, "XEM MAP");
+    lv_obj_align(mazePlanningTitle, LV_ALIGN_TOP_MID, 0, 10);
+    lv_obj_add_flag(mazePlanningTitle, LV_OBJ_FLAG_HIDDEN);
+
+    mazePlanUpBtn = CreateMazeControl(gamesPanel, 102, 42, 36, "^", kMazeAccent);
+    mazePlanDownBtn = CreateMazeControl(gamesPanel, 102, 162, 36, "v", kMazeAccent);
+    mazePlanLeftBtn = CreateMazeControl(gamesPanel, 42, 102, 36, "<", kMazeAccent);
+    mazePlanRightBtn = CreateMazeControl(gamesPanel, 162, 102, 36, ">", kMazeAccent);
+    mazePlanResumeBtn = CreateMazeControl(gamesPanel, 92, 92, 56, "OK", kMazeGoal);
+    lv_obj_set_style_text_font(lv_obj_get_child(mazePlanResumeBtn, 0), &font_awesome_20_4, 0);
+    lv_label_set_text(lv_obj_get_child(mazePlanResumeBtn, 0), FONT_AWESOME_CHECK);
+
+    mazeResultScreen = lv_obj_create(gamesPanel);
+    lv_obj_remove_style_all(mazeResultScreen);
+    lv_obj_set_size(mazeResultScreen, 224, 224);
+    lv_obj_center(mazeResultScreen);
+    lv_obj_set_style_bg_color(mazeResultScreen, lv_color_hex(kMazePanelBg), 0);
+    lv_obj_set_style_bg_opa(mazeResultScreen, LV_OPA_COVER, 0);
+    lv_obj_remove_flag(mazeResultScreen, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* result_title = lv_label_create(mazeResultScreen);
+    lv_obj_set_style_text_font(result_title, &lv_font_montserrat_vn_22, 0);
+    lv_obj_set_style_text_color(result_title, lv_color_hex(kMazeGoal), 0);
+    lv_label_set_text(result_title, "HOÀN THÀNH!");
+    lv_obj_align(result_title, LV_ALIGN_CENTER, 0, -76);
+
+    for (size_t i = 0; i < mazeResultStars.size(); ++i) {
+        lv_obj_t* medal = lv_obj_create(mazeResultScreen);
+        mazeResultStars[i] = medal;
+        lv_obj_remove_style_all(medal);
+        lv_obj_set_size(medal, 34, 34);
+        lv_obj_set_pos(medal, 48 + static_cast<int>(i) * 47, 57);
+        lv_obj_set_style_radius(medal, LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_bg_color(medal, lv_color_hex(0x263D50), 0);
+        lv_obj_set_style_bg_opa(medal, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_width(medal, 2, 0);
+        lv_obj_set_style_border_color(medal, lv_color_hex(kMazeMuted), 0);
+        lv_obj_t* mark = lv_label_create(medal);
+        lv_obj_set_style_text_font(mark, &font_awesome_20_4, 0);
+        lv_obj_set_style_text_color(mark, lv_color_hex(kMazePanelBg), 0);
+        lv_label_set_text(mark, FONT_AWESOME_STAR);
+        lv_obj_center(mark);
+    }
+
+    mazeResultSummary = lv_label_create(mazeResultScreen);
+    lv_obj_set_style_text_font(mazeResultSummary, &lv_font_montserrat_vn_20, 0);
+    lv_obj_set_style_text_color(mazeResultSummary, lv_color_hex(0xFFFFFF), 0);
+    lv_label_set_text(mazeResultSummary, "0/0 VÀNG · 0 GIÂY");
+    lv_obj_align(mazeResultSummary, LV_ALIGN_CENTER, 0, 14);
+
+    mazeResultPrimaryBtn = CreateQuickTapPill(mazeResultScreen, 136, 34, 0, 52,
+                                              "LEVEL TIẾP", &lv_font_montserrat_vn_20);
+    StyleQuickTapPill(mazeResultPrimaryBtn, kMazeGoal, kMazeGoal, kMazePanelBg);
+    mazeResultRetryBtn = CreateQuickTapPill(mazeResultScreen, 112, 28, 0, 86,
+                                            "CHƠI LẠI", &lv_font_montserrat_vn_20);
+    StyleQuickTapPill(mazeResultRetryBtn, 0x173B4F, kMazeMuted, 0xFFFFFF);
+    lv_obj_add_flag(mazeResultScreen, LV_OBJ_FLAG_HIDDEN);
+
+    TiltMazeGame::Initialize();
+    HideTiltMazeAll();
+}
+
+// ---------------------------------------------------------------------------
+// ĐƯỜNG PHỐ rendering + UI
+// ---------------------------------------------------------------------------
+
+int RunnerLaneX(int8_t lane) {
+    constexpr int kLaneCenters[] = {64, 120, 176};
+    return kLaneCenters[std::clamp<int>(lane, 0, 2)];
+}
+
+void DrawRunnerBoost(uint16_t* buffer, int x, int y) {
+    MazeFillCircle(buffer, x + 1, y + 2, 13, SnakeColor565(0x06131D));
+    MazeFillCircle(buffer, x, y, 11, SnakeColor565(kRunnerAccent));
+    MazeFillCircle(buffer, x, y, 9, SnakeColor565(0xB8F8FF));
+    MazeFillCircle(buffer, x, y, 8, SnakeColor565(kRunnerRoad));
+    MazeDrawLine(buffer, x + 3, y - 6, x - 3, y, 3, SnakeColor565(0xFFFFFF));
+    MazeDrawLine(buffer, x - 3, y, x + 2, y, 3, SnakeColor565(0xFFFFFF));
+    MazeDrawLine(buffer, x + 2, y, x - 2, y + 7, 3, SnakeColor565(0xFFFFFF));
+}
+
+void RedrawTrafficRunner() {
+    if (runnerCanvasBuf == nullptr || runnerCanvas == nullptr) {
+        return;
+    }
+
+    uint16_t* buffer = runnerCanvasBuf;
+    const auto& state = TrafficRunnerGame::GetState();
+    std::fill(buffer, buffer + kRunnerCanvasPx * kRunnerCanvasPx,
+              SnakeColor565(kRunnerPanelBg));
+
+    // Layered road and shoulders give the simple geometry enough depth for
+    // the small round display without turning any object into a car sprite.
+    MazeFillRect(buffer, 31, 0, 178, 240, SnakeColor565(0x081A24));
+    MazeFillRect(buffer, 34, 0, 172, 240, SnakeColor565(0x284553));
+    MazeFillRect(buffer, 38, 0, 164, 240, SnakeColor565(kRunnerRoad));
+    MazeFillRect(buffer, 40, 0, 51, 240, SnakeColor565(0x112D3A));
+    MazeFillRect(buffer, 94, 0, 53, 240, SnakeColor565(0x0E2633));
+    MazeFillRect(buffer, 150, 0, 50, 240, SnakeColor565(0x112D3A));
+
+    // The divider and shoulder markers share the world scroll offset. Moving
+    // them downward at the actual game speed makes the road feel in motion.
+    const int road_offset = static_cast<int>(std::lround(state.road_scroll_px));
+    for (int y = -24 + road_offset; y < 240; y += 32) {
+        MazeFillRect(buffer, 91, y + 1, 4, 15, SnakeColor565(0x071721));
+        MazeFillRect(buffer, 147, y + 1, 4, 15, SnakeColor565(0x071721));
+        MazeFillRect(buffer, 92, y, 2, 14, SnakeColor565(kRunnerLane));
+        MazeFillRect(buffer, 148, y, 2, 14, SnakeColor565(kRunnerLane));
+        MazeFillRect(buffer, 34, y, 4, 12, SnakeColor565(kRunnerAccent));
+        MazeFillRect(buffer, 202, y, 4, 12, SnakeColor565(kRunnerAccent));
+    }
+
+    constexpr uint32_t kObstacleColors[] = {
+        0xFF6B5C, 0x9B73FF, 0x53E06F, 0xFF9F43,
+    };
+    constexpr uint32_t kObstacleHighlights[] = {
+        0xFFAAA1, 0xC4ADFF, 0x9CF0AA, 0xFFD09B,
+    };
+    const TrafficRunnerGame::Entity* entities = TrafficRunnerGame::GetEntities();
+    for (size_t index = 0; index < TrafficRunnerGame::GetEntityCount(); ++index) {
+        const auto& entity = entities[index];
+        if (!entity.active) {
+            continue;
+        }
+        const int x = RunnerLaneX(entity.lane);
+        const int y = static_cast<int>(std::lround(entity.y));
+        if (entity.type == TrafficRunnerGame::EntityType::kObstacle) {
+            const int height = 20 + static_cast<int>(entity.length) * 14;
+            const size_t style = entity.style % 4;
+            MazeFillRect(buffer, x - 18, y - height / 2 + 4, 36, height,
+                         SnakeColor565(0x06131D));
+            MazeFillRect(buffer, x - 17, y - height / 2, 34, height,
+                         SnakeColor565(0x263743));
+            MazeFillRect(buffer, x - 15, y - height / 2 + 2, 30, height - 4,
+                         SnakeColor565(kObstacleColors[style]));
+            MazeFillRect(buffer, x - 11, y - height / 2 + 6, 22, 3,
+                         SnakeColor565(kObstacleHighlights[style]));
+            MazeFillRect(buffer, x - 11, y + height / 2 - 9, 22, 3,
+                         SnakeColor565(0x263743));
+        } else if (entity.type == TrafficRunnerGame::EntityType::kCoin) {
+            MazeFillCircle(buffer, x + 1, y + 2, 10, SnakeColor565(0x06131D));
+            MazeFillCircle(buffer, x, y, 8, SnakeColor565(0xA86C13));
+            MazeFillCircle(buffer, x, y, 6, SnakeColor565(kRunnerGold));
+            MazeFillRect(buffer, x - 1, y - 5, 3, 10, SnakeColor565(0xFFF4A8));
+            MazeFillCircle(buffer, x - 3, y - 3, 1, SnakeColor565(0xFFFFFF));
+        } else {
+            DrawRunnerBoost(buffer, x, y);
+        }
+    }
+
+    const int player_x = RunnerLaneX(state.player_lane);
+    MazeFillCircle(buffer, player_x + 1, 198, 13, SnakeColor565(0x06131D));
+    if (TrafficRunnerGame::IsBoostActive()) {
+        MazeFillCircle(buffer, player_x, 224, 3, SnakeColor565(0x247C8C));
+        MazeFillCircle(buffer, player_x, 214, 5, SnakeColor565(kRunnerAccent));
+        MazeFillCircle(buffer, player_x, 194, 15, SnakeColor565(kRunnerAccent));
+        MazeFillCircle(buffer, player_x, 194, 12, SnakeColor565(kRunnerRoad));
+    }
+    MazeFillCircle(buffer, player_x, 194, 12, SnakeColor565(0xB8F8FF));
+    MazeFillCircle(buffer, player_x, 194, 10, SnakeColor565(0xFFFFFF));
+    MazeFillCircle(buffer, player_x - 3, 191, 2, SnakeColor565(0xE8FDFF));
+
+    lv_obj_invalidate(runnerCanvas);
+}
+
+void HideTrafficRunnerAll() {
+    for (lv_obj_t* object : {runnerCanvas, runnerHudScore, runnerHudGold, runnerHudBoost,
+                             runnerSetupScreen, runnerPhaseLabel, runnerOverScreen}) {
+        if (object != nullptr) {
+            lv_obj_add_flag(object, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+    runnerVisiblePhase = TrafficRunnerGame::Phase::kStopped;
+}
+
+void KeepRunnerPlayfieldVisible() {
+    for (lv_obj_t* object : {runnerCanvas, runnerHudScore, runnerHudGold}) {
+        if (object != nullptr) {
+            lv_obj_remove_flag(object, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_move_foreground(object);
+        }
+    }
+    if (runnerCanvas != nullptr) {
+        lv_obj_move_background(runnerCanvas);
+    }
+}
+
+void ApplyTrafficRunnerPhase(TrafficRunnerGame::Phase phase) {
+    HideTrafficRunnerAll();
+    if (phase == TrafficRunnerGame::Phase::kGameOver && runnerVisiblePhase != phase &&
+        runnerVisiblePhase != TrafficRunnerGame::Phase::kStopped) {
+        // A run that ended (not the setup screen, which is shown by forcing the
+        // visible phase to kGameOver when the game opens). Scaled and capped.
+        const uint32_t score = TrafficRunnerGame::GetState().score;
+        RewardGameMood("traffic_runner", std::min<int>(5 + static_cast<int>(score / 100), 25));
+    }
+    runnerVisiblePhase = phase;
+    switch (phase) {
+        case TrafficRunnerGame::Phase::kStopped:
+            if (runnerSetupScreen != nullptr) {
+                lv_obj_remove_flag(runnerSetupScreen, LV_OBJ_FLAG_HIDDEN);
+            }
+            break;
+        case TrafficRunnerGame::Phase::kCalibrating:
+        case TrafficRunnerGame::Phase::kCountdown:
+            KeepRunnerPlayfieldVisible();
+            if (runnerPhaseLabel != nullptr) {
+                lv_obj_remove_flag(runnerPhaseLabel, LV_OBJ_FLAG_HIDDEN);
+                lv_obj_move_foreground(runnerPhaseLabel);
+            }
+            break;
+        case TrafficRunnerGame::Phase::kPlaying:
+            KeepRunnerPlayfieldVisible();
+            break;
+        case TrafficRunnerGame::Phase::kGameOver:
+            if (runnerOverScreen != nullptr) {
+                lv_obj_remove_flag(runnerOverScreen, LV_OBJ_FLAG_HIDDEN);
+                lv_obj_move_foreground(runnerOverScreen);
+            }
+            break;
+    }
+}
+
+void UpdateTrafficRunnerUI() {
+    const auto& state = TrafficRunnerGame::GetState();
+    if (state.phase != runnerVisiblePhase) {
+        ApplyTrafficRunnerPhase(state.phase);
+    }
+
+    if (state.phase == TrafficRunnerGame::Phase::kStopped) {
+        if (runnerSetupBest != nullptr) {
+            lv_label_set_text_fmt(runnerSetupBest, "KỶ LỤC %u",
+                                  static_cast<unsigned>(state.high_score));
+        }
+        return;
+    }
+
+    if (state.phase == TrafficRunnerGame::Phase::kCalibrating ||
+        state.phase == TrafficRunnerGame::Phase::kCountdown ||
+        state.phase == TrafficRunnerGame::Phase::kPlaying) {
+        RedrawTrafficRunner();
+        KeepRunnerPlayfieldVisible();
+        lv_label_set_text_fmt(runnerHudScore, "%u", static_cast<unsigned>(state.score));
+        lv_label_set_text_fmt(runnerHudGold, "VÀNG %u", static_cast<unsigned>(state.gold));
+    }
+
+    if (state.phase == TrafficRunnerGame::Phase::kCalibrating) {
+        lv_label_set_text(runnerPhaseLabel, "GIỮ BUBU THẲNG");
+    } else if (state.phase == TrafficRunnerGame::Phase::kCountdown) {
+        const unsigned count = static_cast<unsigned>(
+            std::max<uint32_t>(1, (state.countdown_remaining_ms + 999) / 1000));
+        lv_label_set_text_fmt(runnerPhaseLabel, "%u", count);
+    }
+
+    if (state.phase == TrafficRunnerGame::Phase::kPlaying &&
+        state.boost_remaining_ms > 0) {
+        lv_label_set_text_fmt(runnerHudBoost, "BOOST %.1fs",
+                              static_cast<double>(state.boost_remaining_ms) / 1000.0);
+        lv_obj_remove_flag(runnerHudBoost, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_move_foreground(runnerHudBoost);
+    } else if (runnerHudBoost != nullptr) {
+        lv_obj_add_flag(runnerHudBoost, LV_OBJ_FLAG_HIDDEN);
+    }
+
+    if (state.phase == TrafficRunnerGame::Phase::kGameOver) {
+        lv_label_set_text(runnerOverTitle, state.new_high_score ? "KỶ LỤC MỚI!" : "VA CHẠM");
+        lv_obj_set_style_text_color(runnerOverTitle,
+                                    lv_color_hex(state.new_high_score ? kRunnerGold : 0xFF6B5C), 0);
+        lv_label_set_text_fmt(runnerOverScore, "ĐIỂM %u",
+                              static_cast<unsigned>(state.score));
+        lv_label_set_text_fmt(runnerOverBest, "KỶ LỤC %u",
+                              static_cast<unsigned>(state.high_score));
+    }
+}
+
+void TrafficRunnerTimerCb(lv_timer_t*) {
+    if (currentState != MENU_GAME_ACTIVE || activeGame != ACTIVE_GAME_TRAFFIC_RUNNER) {
+        return;
+    }
+    TrafficRunnerGame::Tick(lv_tick_get());
+    UpdateTrafficRunnerUI();
+}
+
+void StartTrafficRunnerTimer() {
+    if (runnerTimer == nullptr) {
+        runnerTimer = lv_timer_create(TrafficRunnerTimerCb, kRunnerTickMs, nullptr);
+    }
+}
+
+void StopTrafficRunnerTimer() {
+    if (runnerTimer != nullptr) {
+        lv_timer_delete(runnerTimer);
+        runnerTimer = nullptr;
+    }
+}
+
+lv_obj_t* CreateRunnerLabel(lv_obj_t* parent, const lv_font_t* font,
+                            uint32_t color, const char* text, int y) {
+    lv_obj_t* label = lv_label_create(parent);
+    lv_obj_set_style_text_font(label, font, 0);
+    lv_obj_set_style_text_color(label, lv_color_hex(color), 0);
+    lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_label_set_text(label, text);
+    lv_obj_align(label, LV_ALIGN_CENTER, 0, y);
+    return label;
+}
+
+void CreateTrafficRunnerUI() {
+    if (gamesPanel == nullptr || runnerSetupScreen != nullptr) {
+        return;
+    }
+
+    const size_t bytes = static_cast<size_t>(kRunnerCanvasPx) * kRunnerCanvasPx *
+                         sizeof(uint16_t);
+    runnerCanvasBuf = static_cast<uint16_t*>(
+        heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    if (runnerCanvasBuf == nullptr) {
+        ESP_LOGE(TAG, "Traffic runner: failed to allocate the %u-byte canvas",
+                 static_cast<unsigned>(bytes));
+    } else {
+        runnerCanvas = lv_canvas_create(gamesPanel);
+        lv_obj_remove_style_all(runnerCanvas);
+        lv_obj_set_size(runnerCanvas, kRunnerCanvasPx, kRunnerCanvasPx);
+        lv_obj_center(runnerCanvas);
+        lv_canvas_set_buffer(runnerCanvas, runnerCanvasBuf, kRunnerCanvasPx,
+                             kRunnerCanvasPx, LV_COLOR_FORMAT_RGB565);
+        lv_obj_add_flag(runnerCanvas, LV_OBJ_FLAG_HIDDEN);
+    }
+
+    runnerHudScore = lv_label_create(gamesPanel);
+    lv_obj_set_style_text_font(runnerHudScore, &lv_font_montserrat_vn_22, 0);
+    lv_obj_set_style_text_color(runnerHudScore, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_bg_color(runnerHudScore, lv_color_hex(kRunnerPanelBg), 0);
+    lv_obj_set_style_bg_opa(runnerHudScore, LV_OPA_80, 0);
+    lv_obj_set_style_radius(runnerHudScore, 9, 0);
+    lv_obj_set_style_pad_hor(runnerHudScore, 7, 0);
+    lv_obj_set_style_pad_ver(runnerHudScore, 1, 0);
+    lv_label_set_text(runnerHudScore, "0");
+    lv_obj_align(runnerHudScore, LV_ALIGN_TOP_MID, 0, 7);
+
+    runnerHudGold = lv_label_create(gamesPanel);
+    lv_obj_set_style_text_font(runnerHudGold, &lv_font_montserrat_vn_20, 0);
+    lv_obj_set_style_text_color(runnerHudGold, lv_color_hex(kRunnerGold), 0);
+    lv_obj_set_style_bg_color(runnerHudGold, lv_color_hex(kRunnerPanelBg), 0);
+    lv_obj_set_style_bg_opa(runnerHudGold, LV_OPA_80, 0);
+    lv_obj_set_style_radius(runnerHudGold, 8, 0);
+    lv_obj_set_style_pad_hor(runnerHudGold, 5, 0);
+    lv_label_set_text(runnerHudGold, "VÀNG 0");
+    lv_obj_align(runnerHudGold, LV_ALIGN_TOP_MID, 0, 34);
+
+    runnerHudBoost = lv_label_create(gamesPanel);
+    lv_obj_set_style_text_font(runnerHudBoost, &lv_font_montserrat_vn_20, 0);
+    lv_obj_set_style_text_color(runnerHudBoost, lv_color_hex(kRunnerAccent), 0);
+    lv_label_set_text(runnerHudBoost, "BOOST 3.0s");
+    lv_obj_align(runnerHudBoost, LV_ALIGN_TOP_MID, 0, 60);
+
+    runnerPhaseLabel = lv_label_create(gamesPanel);
+    lv_obj_set_style_text_font(runnerPhaseLabel, &lv_font_montserrat_vn_22, 0);
+    lv_obj_set_style_text_color(runnerPhaseLabel, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_bg_color(runnerPhaseLabel, lv_color_hex(kRunnerPanelBg), 0);
+    lv_obj_set_style_bg_opa(runnerPhaseLabel, LV_OPA_90, 0);
+    lv_obj_set_style_radius(runnerPhaseLabel, 12, 0);
+    lv_obj_set_style_pad_all(runnerPhaseLabel, 9, 0);
+    lv_label_set_text(runnerPhaseLabel, "GIỮ BUBU THẲNG");
+    lv_obj_center(runnerPhaseLabel);
+
+    runnerSetupScreen = lv_obj_create(gamesPanel);
+    lv_obj_remove_style_all(runnerSetupScreen);
+    lv_obj_set_size(runnerSetupScreen, 224, 224);
+    lv_obj_center(runnerSetupScreen);
+    lv_obj_set_style_bg_color(runnerSetupScreen, lv_color_hex(kRunnerPanelBg), 0);
+    lv_obj_set_style_bg_opa(runnerSetupScreen, LV_OPA_COVER, 0);
+    lv_obj_remove_flag(runnerSetupScreen, LV_OBJ_FLAG_SCROLLABLE);
+    CreateRunnerLabel(runnerSetupScreen, &lv_font_montserrat_vn_22,
+                      kRunnerAccent, "ĐƯỜNG PHỐ", -72);
+    runnerSetupBest = CreateRunnerLabel(runnerSetupScreen, &lv_font_montserrat_vn_20,
+                                        kRunnerGold, "KỶ LỤC 0", -37);
+    lv_obj_t* hint = CreateRunnerLabel(runnerSetupScreen, &lv_font_montserrat_vn_20,
+                                       0xFFFFFF, "NGHIÊNG BUBU\nĐỂ ĐỔI LÀN", 4);
+    lv_obj_set_style_text_align(hint, LV_TEXT_ALIGN_CENTER, 0);
+    runnerPlayBtn = CreateQuickTapPill(runnerSetupScreen, 104, 38, 0, 66,
+                                       "CHƠI", &lv_font_montserrat_vn_22);
+    StyleQuickTapPill(runnerPlayBtn, kRunnerAccent, kRunnerAccent, kRunnerPanelBg);
+
+    runnerOverScreen = lv_obj_create(gamesPanel);
+    lv_obj_remove_style_all(runnerOverScreen);
+    lv_obj_set_size(runnerOverScreen, 224, 224);
+    lv_obj_center(runnerOverScreen);
+    lv_obj_set_style_bg_color(runnerOverScreen, lv_color_hex(kRunnerPanelBg), 0);
+    lv_obj_set_style_bg_opa(runnerOverScreen, LV_OPA_COVER, 0);
+    lv_obj_remove_flag(runnerOverScreen, LV_OBJ_FLAG_SCROLLABLE);
+    runnerOverTitle = CreateRunnerLabel(runnerOverScreen, &lv_font_montserrat_vn_22,
+                                        0xFF6B5C, "VA CHẠM", -72);
+    runnerOverScore = CreateRunnerLabel(runnerOverScreen, &lv_font_montserrat_vn_22,
+                                        0xFFFFFF, "ĐIỂM 0", -31);
+    runnerOverBest = CreateRunnerLabel(runnerOverScreen, &lv_font_montserrat_vn_20,
+                                       kRunnerGold, "KỶ LỤC 0", 2);
+    runnerAgainBtn = CreateQuickTapPill(runnerOverScreen, 124, 34, 0, 48,
+                                        "CHƠI LẠI", &lv_font_montserrat_vn_20);
+    StyleQuickTapPill(runnerAgainBtn, kRunnerAccent, kRunnerAccent, kRunnerPanelBg);
+    runnerMenuBtn = CreateQuickTapPill(runnerOverScreen, 82, 28, 0, 84,
+                                       "MENU", &lv_font_montserrat_vn_20);
+    StyleQuickTapPill(runnerMenuBtn, 0x173B4F, kRunnerMuted, 0xFFFFFF);
+
+    TrafficRunnerGame::Initialize();
+    HideTrafficRunnerAll();
+}
+
+// ---------------------------------------------------------------------------
+// MẮT XANH
+//
+// Built on demand like the other games (CreateGreenEyeUI via LoadGameUi) and
+// driven by its own 33ms lv_timer. One game is: setup -> 3-2-1 -> rounds until
+// the three hearts are gone -> HẾT LƯỢT! -> scoreboard with the CẢM XÚC it paid.
+// ---------------------------------------------------------------------------
+
+void LoadGreenEyeBest() {
+    Settings settings("greeneye", false);
+    const int best = static_cast<int>(settings.GetInt("best", 0));
+    greenEyeBest = static_cast<uint16_t>(std::clamp(best, 0, 999));
+}
+
+void SaveGreenEyeBest(uint16_t best) {
+    Settings settings("greeneye", true);
+    settings.SetInt("best", best);
+}
+
+void PlayGreenEyeSound(const std::string_view& sound) {
+    Application::GetInstance().Schedule([sound]() {
+        Application::GetInstance().PlayOverlaySound(sound);
+    });
+}
+
+void SetGreenEyeHidden(lv_obj_t* obj, bool hidden) {
+    if (obj == nullptr) {
+        return;
+    }
+    if (hidden) {
+        lv_obj_add_flag(obj, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_remove_flag(obj, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+// IsPointInside() with a margin: the pills are small for a child's finger.
+bool IsPointNear(lv_obj_t* obj, uint16_t x, uint16_t y, int slack) {
+    if (obj == nullptr) {
+        return false;
+    }
+    lv_area_t area;
+    lv_obj_get_coords(obj, &area);
+    return x >= area.x1 - slack && x <= area.x2 + slack &&
+           y >= area.y1 - slack && y <= area.y2 + slack;
+}
+
+float GreenEyeEaseOut(float t) {
+    const float u = 1.0f - t;
+    return 1.0f - u * u * u;
+}
+
+int GreenEyeMoodBarWidth(int mood) {
+    // CareSystem stats run 0..100.
+    return std::clamp(mood, 0, 100) * kGreenEyeMoodBarW / 100;
+}
+
+// A bar narrower than its own round cap is drawn as nothing rather than a dot.
+void SetGreenEyeBarWidth(lv_obj_t* bar, int width) {
+    if (bar == nullptr) {
+        return;
+    }
+    if (width < kGreenEyeMoodBarH) {
+        lv_obj_add_flag(bar, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+    lv_obj_set_width(bar, width);
+    lv_obj_remove_flag(bar, LV_OBJ_FLAG_HIDDEN);
+}
+
+// Forget what the eyes and HUD last showed, and hide the eyes, so the next
+// frame redraws everything from the game state.
+void ResetGreenEyeDrawn() {
+    greenEyeDrawnScore = -1;
+    greenEyeDrawnCountdown = -1;
+    greenEyeDrawnBarW = -1;
+    greenEyeDrawnHearts.fill(-1);
+    for (int i = 0; i < GreenEyeGame::kMaxEyes; ++i) {
+        SetGreenEyeHidden(greenEyeEyes[i], true);
+        SetGreenEyeHidden(greenEyeGlints[i], true);
+        greenEyeDrawn[i] = GreenEyeDrawn{};
+    }
+}
+
+// One eye's look for this frame. Only what changed is touched, so a still
+// frame -- most of every round -- costs nothing but the rim.
+void DrawGreenEye(int index, bool hidden, int w, int h, int cx, int cy, int radius,
+                  uint32_t color, uint8_t opa, uint8_t border, bool glint) {
+    lv_obj_t* eye = greenEyeEyes[index];
+    if (eye == nullptr) {
+        return;
+    }
+    GreenEyeDrawn& drawn = greenEyeDrawn[index];
+    if (hidden) {
+        if (!drawn.hidden) {
+            lv_obj_add_flag(eye, LV_OBJ_FLAG_HIDDEN);
+            drawn.hidden = true;
+        }
+        return;
+    }
+    if (drawn.hidden) {
+        lv_obj_remove_flag(eye, LV_OBJ_FLAG_HIDDEN);
+        drawn.hidden = false;
+    }
+    if (w != drawn.w || h != drawn.h) {
+        lv_obj_set_size(eye, w, h);
+        // A closing eye is a flat bar, not a squashed rounded square.
+        lv_obj_set_style_radius(eye, std::min(radius, h / 2), 0);
+        if (greenEyeGlints[index] != nullptr) {
+            const int glint_size = std::max(8, w / 7);
+            lv_obj_set_size(greenEyeGlints[index], glint_size, glint_size);
+            lv_obj_align(greenEyeGlints[index], LV_ALIGN_TOP_RIGHT, -w / 5, w / 6);
+        }
+        drawn.w = static_cast<int16_t>(w);
+        drawn.h = static_cast<int16_t>(h);
+        drawn.x = INT16_MIN;   // re-centre at the new size
+    }
+    if (cx != drawn.x || cy != drawn.y) {
+        lv_obj_align(eye, LV_ALIGN_CENTER, cx - 120, cy - 120);
+        drawn.x = static_cast<int16_t>(cx);
+        drawn.y = static_cast<int16_t>(cy);
+    }
+    if (color != drawn.color) {
+        lv_obj_set_style_bg_color(eye, lv_color_hex(color), 0);
+        drawn.color = color;
+    }
+    if (opa != drawn.opa) {
+        lv_obj_set_style_bg_opa(eye, opa, 0);
+        drawn.opa = opa;
+    }
+    if (border != drawn.border) {
+        lv_obj_set_style_border_width(eye, border, 0);
+        drawn.border = border;
+    }
+    if (glint != drawn.glint) {
+        SetGreenEyeHidden(greenEyeGlints[index], !glint);
+        drawn.glint = glint;
+    }
+}
+
+void UpdateGreenEyePlayfield() {
+    using GreenEyeGame::Outcome;
+    using GreenEyeGame::Phase;
+    const GreenEyeGame::State& s = GreenEyeGame::GetState();
+    const uint32_t elapsed = GreenEyeGame::PhaseElapsedMs(lv_tick_get());
+    const float t = s.phase_len_ms == 0
+        ? 1.0f
+        : std::min(1.0f, static_cast<float>(elapsed) / static_cast<float>(s.phase_len_ms));
+    const bool missed = s.outcome == Outcome::kWrong || s.outcome == Outcome::kTimeout;
+    constexpr float kTwoPi = 2.0f * static_cast<float>(M_PI);
+
+    // ---- Rim: refills while the eyes open, drains while they are looked at,
+    // and holds where the round was decided.
+    int32_t rim = 1000;
+    switch (s.phase) {
+        case Phase::kOpening:
+            rim = static_cast<int32_t>(1000.0f * t);
+            break;
+        case Phase::kLooking:
+            rim = elapsed >= s.window_ms
+                ? 0
+                : 1000 - static_cast<int32_t>((static_cast<uint64_t>(elapsed) * 1000ULL) / s.window_ms);
+            break;
+        case Phase::kFeedback:
+        case Phase::kClosing:
+            rim = s.decided_permille;
+            break;
+        case Phase::kOver:
+            rim = 0;
+            break;
+        default:
+            break;
+    }
+    if (greenEyeRim != nullptr) {
+        lv_arc_set_value(greenEyeRim, rim);   // a no-op when unchanged
+    }
+
+    if (greenEyeScoreLabel != nullptr && greenEyeDrawnScore != s.score) {
+        lv_label_set_text_fmt(greenEyeScoreLabel, "%u",
+                              static_cast<unsigned>(std::min<uint16_t>(s.score, 999)));
+        greenEyeDrawnScore = s.score;
+    }
+
+    // ---- Hearts: the one just lost blinks through the miss, then goes dark.
+    for (int i = 0; i < GreenEyeGame::kLives; ++i) {
+        bool lit = i < s.lives;
+        if (s.phase == Phase::kFeedback && missed && i == s.lives) {
+            lit = (elapsed / 120) % 2 == 0;
+        }
+        const int8_t want = lit ? 1 : 0;
+        if (greenEyeHearts[i] != nullptr && greenEyeDrawnHearts[i] != want) {
+            lv_obj_set_style_text_color(greenEyeHearts[i],
+                                        lv_color_hex(lit ? kGreenEyeChrome : kGreenEyeHeartLost), 0);
+            greenEyeDrawnHearts[i] = want;
+        }
+    }
+
+    // ---- 3-2-1 (the banner reuses this label and owns it outside kPlaying).
+    if (greenEyeCenterLabel != nullptr && greenEyeScreen == GreenEyeScreen::kPlaying) {
+        const int countdown = s.phase == Phase::kCountdown ? s.countdown : 0;
+        if (countdown != greenEyeDrawnCountdown) {
+            if (countdown > 0) {
+                lv_label_set_text_fmt(greenEyeCenterLabel, "%d", countdown);
+            }
+            SetGreenEyeHidden(greenEyeCenterLabel, countdown <= 0);
+            greenEyeDrawnCountdown = countdown;
+        }
+    }
+
+    // ---- The eyes.
+    const bool eyes_up = s.phase == Phase::kOpening || s.phase == Phase::kLooking ||
+                         s.phase == Phase::kFeedback || s.phase == Phase::kClosing;
+    for (int i = 0; i < GreenEyeGame::kMaxEyes; ++i) {
+        if (!eyes_up || i >= s.eye_count) {
+            DrawGreenEye(i, true, 0, 0, 0, 0, 0, 0, 0, 0, false);
+            continue;
+        }
+        const GreenEyeGame::Eye& eye = s.eyes[i];
+        const bool is_green = (i == s.green_index);
+        const int size = eye.size;
+        int w = size;
+        int h = size;
+        int cx = eye.x;
+        uint8_t opa = LV_OPA_COVER;
+        uint8_t border = 0;
+        bool hidden = false;
+        switch (s.phase) {
+            case Phase::kOpening:
+                // Eyes open like Bubu's own: the lids part, the width never changes.
+                h = std::max(4, static_cast<int>(size * GreenEyeEaseOut(t) + 0.5f));
+                break;
+            case Phase::kFeedback:
+                if (s.outcome == Outcome::kHit) {
+                    if (is_green) {
+                        // Pops under the finger and fades out.
+                        w = h = static_cast<int>(size * (1.0f + 0.3f * t) + 0.5f);
+                        opa = static_cast<uint8_t>(255.0f * (1.0f - t));
+                    } else {
+                        h = std::max(4, static_cast<int>(size * (1.0f - t) + 0.5f));
+                    }
+                } else if (is_green) {
+                    // A miss shows the answer: ringed and breathing, so the
+                    // child sees which one the green eye was.
+                    const float pulse = 1.0f + 0.08f * sinf(t * 3.0f * kTwoPi);
+                    w = h = static_cast<int>(size * pulse + 0.5f);
+                    border = 3;
+                } else if (i == s.tapped_index) {
+                    // The wrong one shakes its head.
+                    cx += static_cast<int>(7.0f * sinf(t * 3.0f * kTwoPi) * (1.0f - t));
+                    opa = 90;
+                } else {
+                    opa = 60;
+                }
+                break;
+            case Phase::kClosing:
+                if (s.outcome == Outcome::kHit && is_green) {
+                    hidden = true;   // already popped
+                    break;
+                }
+                h = std::max(4, static_cast<int>(size * (1.0f - t) + 0.5f));
+                if (missed && !is_green) {
+                    opa = (i == s.tapped_index) ? 90 : 60;
+                }
+                break;
+            default:
+                break;
+        }
+        const bool glint = h * 100 >= size * 85 && w <= size + 2 && opa >= 200;
+        DrawGreenEye(i, hidden, w, h, cx, eye.y, eye.radius,
+                     GreenEyeGame::HueRgb(eye.hue), opa, border, glint);
+    }
+
+    // ---- "+1" rising out of the eye that was just found.
+    if (greenEyePlus != nullptr) {
+        if (s.phase == Phase::kFeedback && s.outcome == Outcome::kHit && s.green_index >= 0) {
+            const GreenEyeGame::Eye& green = s.eyes[s.green_index];
+            lv_obj_align(greenEyePlus, LV_ALIGN_CENTER, green.x - 120,
+                         green.y - 120 - static_cast<int>(22.0f * t));
+            lv_obj_set_style_text_opa(greenEyePlus, static_cast<lv_opa_t>(255.0f * (1.0f - t * t)), 0);
+            SetGreenEyeHidden(greenEyePlus, false);
+            lv_obj_move_foreground(greenEyePlus);
+        } else {
+            SetGreenEyeHidden(greenEyePlus, true);
+        }
+    }
+}
+
+// One sound per decided round, whichever path decided it (the tick or a tap).
+void AnnounceGreenEyeDecision() {
+    const GreenEyeGame::State& s = GreenEyeGame::GetState();
+    if (s.decisions == greenEyeSeenDecisions) {
+        return;
+    }
+    greenEyeSeenDecisions = s.decisions;
+    switch (s.outcome) {
+        case GreenEyeGame::Outcome::kHit:
+            // Every fifth green in a row Bubu cheers instead of the pop -- the
+            // game is making Bubu happier, and this is where the child hears it.
+            if (s.streak > 0 && s.streak % 5 == 0) {
+                PlayGreenEyeSound(Vox::Pick(Lang::Sounds::OGG_VOX_HAPPY_1_A,
+                                            Lang::Sounds::OGG_VOX_HAPPY_1_B));
+            } else {
+                PlayGreenEyeSound(Lang::Sounds::OGG_POPUP);
+            }
+            break;
+        case GreenEyeGame::Outcome::kWrong:
+            PlayGreenEyeSound(Vox::Pick(Lang::Sounds::OGG_VOX_SURPRISE_1_A,
+                                        Lang::Sounds::OGG_VOX_SURPRISE_1_B));
+            break;
+        case GreenEyeGame::Outcome::kTimeout:
+            PlayGreenEyeSound(Vox::Pick(Lang::Sounds::OGG_VOX_SAD_1_A,
+                                        Lang::Sounds::OGG_VOX_SAD_1_B));
+            break;
+        case GreenEyeGame::Outcome::kNone:
+            break;
+    }
+}
+
+// Pays CẢM XÚC for the greens found and settles the record -- exactly once per
+// game, whichever way it ends: the scoreboard, a long press out of a round, or
+// the menu closing underneath it. Safe to call again; later calls do nothing.
+void PayGreenEyeReward() {
+    if (greenEyeRewardPaid) {
+        return;
+    }
+    greenEyeRewardPaid = true;
+    const uint16_t score = GreenEyeGame::GetState().score;
+    greenEyeNewRecord = score > greenEyeBest;
+    if (greenEyeNewRecord) {
+        greenEyeBest = score;
+    }
+    const int reward = GreenEyeGame::MoodReward(score);
+    greenEyeMoodBefore = CareSystem::GetMood();
+    greenEyeMoodAfter = std::min(100, greenEyeMoodBefore + reward);
+    if (greenEyeNewRecord) {
+        // NVS on the main task, not in the frame drawing the scoreboard.
+        const uint16_t best = greenEyeBest;
+        Application::GetInstance().Schedule([best]() { SaveGreenEyeBest(best); });
+    }
+    if (reward > 0) {
+        RewardGameMood("green_eye", reward);
+    }
+}
+
+void UpdateGreenEyeSetupUI() {
+    if (greenEyeSetupRecord == nullptr) {
+        return;
+    }
+    if (greenEyeBest > 0) {
+        lv_label_set_text_fmt(greenEyeSetupRecord, "KỶ LỤC %u",
+                              static_cast<unsigned>(std::min<uint16_t>(greenEyeBest, 999)));
+    }
+    SetGreenEyeHidden(greenEyeSetupRecord, greenEyeBest == 0);
+}
+
+void UpdateGreenEyeScoreUI() {
+    const uint16_t score = GreenEyeGame::GetState().score;
+    if (greenEyeResultValue != nullptr) {
+        lv_label_set_text_fmt(greenEyeResultValue, "%u",
+                              static_cast<unsigned>(std::min<uint16_t>(score, 999)));
+    }
+    if (greenEyeResultCaption != nullptr) {
+        lv_label_set_text(greenEyeResultCaption, greenEyeNewRecord ? "KỶ LỤC MỚI!" : "mắt xanh");
+        lv_obj_set_style_text_color(
+            greenEyeResultCaption,
+            lv_color_hex(greenEyeNewRecord ? GreenEyeGame::HueRgb(GreenEyeGame::Hue::kGreen)
+                                           : kGreenEyeMuted),
+            0);
+    }
+    if (greenEyeRewardLabel != nullptr) {
+        // What CẢM XÚC actually gained, which is less than the reward when the
+        // stat is already near the top -- the bar below must agree with it.
+        const int gained = greenEyeMoodAfter - greenEyeMoodBefore;
+        if (gained > 0) {
+            lv_label_set_text_fmt(greenEyeRewardLabel, "+%d CẢM XÚC", gained);
+        } else if (GreenEyeGame::MoodReward(score) > 0) {
+            lv_label_set_text(greenEyeRewardLabel, "CẢM XÚC ĐẦY");
+        } else {
+            lv_label_set_text(greenEyeRewardLabel, "+0 CẢM XÚC");
+        }
+    }
+    // The dim part is where CẢM XÚC was; the bright part grows over it in
+    // GreenEyeTimerCb to where this game took it.
+    const int before = GreenEyeMoodBarWidth(greenEyeMoodBefore);
+    SetGreenEyeBarWidth(greenEyeMoodBase, before);
+    SetGreenEyeBarWidth(greenEyeMoodGain, before);
+    greenEyeDrawnBarW = before;
+}
+
+void ShowGreenEyeScreen(GreenEyeScreen screen) {
+    greenEyeScreen = screen;
+    greenEyeScreenStartMs = lv_tick_get();
+    const bool playing = (screen == GreenEyeScreen::kPlaying);
+    const bool banner = (screen == GreenEyeScreen::kBanner);
+
+    ResetGreenEyeDrawn();
+    SetGreenEyeHidden(greenEyeSetupScreen, screen != GreenEyeScreen::kSetup);
+    SetGreenEyeHidden(greenEyeScoreScreen, screen != GreenEyeScreen::kScore);
+    // Rim, score and hearts stay up under HẾT LƯỢT! -- drained, final, dark.
+    SetGreenEyeHidden(greenEyeRim, !(playing || banner));
+    SetGreenEyeHidden(greenEyeScoreLabel, !(playing || banner));
+    for (lv_obj_t* heart : greenEyeHearts) {
+        SetGreenEyeHidden(heart, !(playing || banner));
+    }
+    SetGreenEyeHidden(greenEyePlus, true);
+    SetGreenEyeHidden(greenEyeCenterLabel, !banner);
+
+    switch (screen) {
+        case GreenEyeScreen::kSetup:
+            UpdateGreenEyeSetupUI();
+            break;
+        case GreenEyeScreen::kPlaying:
+            UpdateGreenEyePlayfield();
+            break;
+        case GreenEyeScreen::kBanner:
+            if (greenEyeCenterLabel != nullptr) {
+                lv_label_set_text(greenEyeCenterLabel, "HẾT LƯỢT!");
+                lv_obj_move_foreground(greenEyeCenterLabel);
+            }
+            UpdateGreenEyePlayfield();
+            break;
+        case GreenEyeScreen::kScore:
+            UpdateGreenEyeScoreUI();
+            break;
+    }
+    // Same reason as Quick Tap: the panel is opaque and screen changes are
+    // rare, so one full repaint clears anything the last screen left behind.
+    if (gamesPanel != nullptr) {
+        lv_obj_invalidate(gamesPanel);
+    }
+    UpdateGamesUI();
+}
+
+// Caller holds the display lock.
+void BeginGreenEyeGame() {
+    greenEyeNewRecord = false;
+    greenEyeRewardPaid = false;
+    greenEyeSeenDecisions = 0;
+    GreenEyeGame::Start(lv_tick_get(), esp_random());
+    ShowGreenEyeScreen(GreenEyeScreen::kPlaying);
+}
+
+// Game over: pay CẢM XÚC, bank the record, show the scoreboard. Runs on the
+// LVGL task with the display lock held.
+void FinishGreenEyeGame() {
+    PayGreenEyeReward();
+    const uint16_t score = GreenEyeGame::GetState().score;
+    if (greenEyeNewRecord) {
+        PlayGreenEyeSound(Lang::Sounds::OGG_SUCCESS);
+    } else if (score > 0) {
+        PlayGreenEyeSound(Vox::Pick(Lang::Sounds::OGG_VOX_HAPPY_2_A,
+                                    Lang::Sounds::OGG_VOX_HAPPY_2_B));
+    }
+    // A real game leaves Bubu visibly happier when the menu closes. On the
+    // main task: SetEmotion takes the display lock this task already holds.
+    if (GreenEyeGame::MoodReward(score) >= 5) {
         Application::GetInstance().Schedule([]() {
-            eyeGameFinishPending = false;
-            // A long press or a close may have ended the game in between.
-            if (currentState == MENU_GAME_ACTIVE && activeGame == ACTIVE_GAME_EYE_TAP) {
-                MenuSystem::HandleGameFinished();
+            if (auto* eye_display = GetEyeDisplay(); eye_display != nullptr) {
+                eye_display->SetEmotion("happy");
             }
         });
     }
+    ShowGreenEyeScreen(GreenEyeScreen::kScore);
 }
 
-void StartEyeGameTimer() {
-    if (eyeGameTimer == nullptr) {
-        eyeGameTimer = lv_timer_create(EyeGameTimerCb, kEyeGameTickMs, nullptr);
+// Runs on the LVGL task inside lv_timer_handler, which already holds the
+// display lock -- so nothing here may take DisplayLockGuard or call
+// HandleGameFinished().
+void GreenEyeTimerCb(lv_timer_t* timer) {
+    (void)timer;
+    if (currentState != MENU_GAME_ACTIVE || activeGame != ACTIVE_GAME_GREEN_EYE) {
+        return;
+    }
+    const uint32_t since = lv_tick_elaps(greenEyeScreenStartMs);
+    switch (greenEyeScreen) {
+        case GreenEyeScreen::kSetup:
+            // The demo's green eye breathes its ring: "this one".
+            if (greenEyeDemoGreen != nullptr) {
+                const float phase = static_cast<float>(since % kGreenEyeDemoPulseMs) /
+                                    static_cast<float>(kGreenEyeDemoPulseMs);
+                const float k = 0.5f + 0.5f * sinf(phase * 2.0f * static_cast<float>(M_PI));
+                lv_obj_set_style_border_opa(greenEyeDemoGreen, static_cast<lv_opa_t>(70.0f + 185.0f * k), 0);
+            }
+            return;
+        case GreenEyeScreen::kPlaying:
+            // A game outlasts the menu's 30 s inactivity close-out, and a child
+            // watching for green is playing even between taps.
+            MarkMenuActivity();
+            GreenEyeGame::Update(lv_tick_get());
+            AnnounceGreenEyeDecision();
+            UpdateGreenEyePlayfield();
+            if (GreenEyeGame::GetState().phase == GreenEyeGame::Phase::kOver) {
+                ShowGreenEyeScreen(GreenEyeScreen::kBanner);
+            }
+            return;
+        case GreenEyeScreen::kBanner:
+            MarkMenuActivity();
+            if (since >= kGreenEyeBannerMs) {
+                FinishGreenEyeGame();
+            }
+            return;
+        case GreenEyeScreen::kScore: {
+            if (since < kGreenEyeBarDelayMs) {
+                return;
+            }
+            const float t = std::min(1.0f, static_cast<float>(since - kGreenEyeBarDelayMs) /
+                                               static_cast<float>(kGreenEyeBarFillMs));
+            const int from = GreenEyeMoodBarWidth(greenEyeMoodBefore);
+            const int to = GreenEyeMoodBarWidth(greenEyeMoodAfter);
+            const int width = from + static_cast<int>(static_cast<float>(to - from) * GreenEyeEaseOut(t) + 0.5f);
+            if (width != greenEyeDrawnBarW) {
+                SetGreenEyeBarWidth(greenEyeMoodGain, width);
+                greenEyeDrawnBarW = width;
+            }
+            return;
+        }
     }
 }
 
-void StopEyeGameTimer() {
-    if (eyeGameTimer != nullptr) {
-        lv_timer_delete(eyeGameTimer);
-        eyeGameTimer = nullptr;
+void StartGreenEyeTimer() {
+    if (greenEyeTimer == nullptr) {
+        greenEyeTimer = lv_timer_create(GreenEyeTimerCb, kGreenEyeTickMs, nullptr);
     }
+}
+
+void StopGreenEyeTimer() {
+    if (greenEyeTimer != nullptr) {
+        lv_timer_delete(greenEyeTimer);
+        greenEyeTimer = nullptr;
+    }
+}
+
+void HideGreenEyeAll() {
+    for (lv_obj_t* obj : {greenEyeRim, greenEyeScoreLabel, greenEyePlus, greenEyeCenterLabel,
+                          greenEyeSetupScreen, greenEyeScoreScreen}) {
+        SetGreenEyeHidden(obj, true);
+    }
+    for (lv_obj_t* heart : greenEyeHearts) {
+        SetGreenEyeHidden(heart, true);
+    }
+    ResetGreenEyeDrawn();
+}
+
+// Caller holds the display lock. Built by LoadGameUi(), deleted by UnloadGameUi().
+void CreateGreenEyeUI() {
+    if (gamesPanel == nullptr || greenEyeRim != nullptr) {
+        return;
+    }
+    using GreenEyeGame::Hue;
+    const uint32_t green = GreenEyeGame::HueRgb(Hue::kGreen);
+
+    // ---- Rim: the round's clock -------------------------------------------
+    greenEyeRim = lv_arc_create(gamesPanel);
+    lv_obj_set_size(greenEyeRim, kGreenEyeRimSize, kGreenEyeRimSize);
+    lv_obj_center(greenEyeRim);
+    lv_arc_set_rotation(greenEyeRim, 270);        // drains from 12 o'clock
+    lv_arc_set_bg_angles(greenEyeRim, 0, 360);
+    lv_arc_set_mode(greenEyeRim, LV_ARC_MODE_NORMAL);
+    lv_arc_set_range(greenEyeRim, 0, 1000);
+    lv_arc_set_value(greenEyeRim, 1000);
+    lv_obj_remove_flag(greenEyeRim, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_remove_style(greenEyeRim, nullptr, LV_PART_KNOB);
+    lv_obj_set_style_arc_width(greenEyeRim, kGreenEyeRimWidth, LV_PART_MAIN);
+    lv_obj_set_style_arc_width(greenEyeRim, kGreenEyeRimWidth, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_color(greenEyeRim, lv_color_hex(kGreenEyeRimTrack), LV_PART_MAIN);
+    lv_obj_set_style_arc_color(greenEyeRim, lv_color_hex(kGreenEyeChrome), LV_PART_INDICATOR);
+    lv_obj_add_flag(greenEyeRim, LV_OBJ_FLAG_HIDDEN);
+
+    // ---- HUD: score above, hearts below -------------------------------------
+    greenEyeScoreLabel = lv_label_create(gamesPanel);
+    lv_obj_set_style_text_font(greenEyeScoreLabel, &lv_font_montserrat_vn_28, 0);
+    lv_obj_set_style_text_color(greenEyeScoreLabel, lv_color_hex(kGreenEyeChrome), 0);
+    lv_label_set_text(greenEyeScoreLabel, "0");
+    lv_obj_align(greenEyeScoreLabel, LV_ALIGN_CENTER, 0, kGreenEyeScoreY);
+    lv_obj_add_flag(greenEyeScoreLabel, LV_OBJ_FLAG_HIDDEN);
+
+    for (int i = 0; i < GreenEyeGame::kLives; ++i) {
+        lv_obj_t* heart = lv_label_create(gamesPanel);
+        lv_obj_set_style_text_font(heart, &font_awesome_20_4, 0);
+        lv_obj_set_style_text_color(heart, lv_color_hex(kGreenEyeChrome), 0);
+        lv_label_set_text(heart, FONT_AWESOME_HEART);
+        lv_obj_align(heart, LV_ALIGN_CENTER, (i - 1) * kGreenEyeHeartPitch, kGreenEyeHeartsY);
+        lv_obj_add_flag(heart, LV_OBJ_FLAG_HIDDEN);
+        greenEyeHearts[i] = heart;
+    }
+
+    // ---- The eyes: rounded squares like Bubu's own, with a glint ------------
+    for (int i = 0; i < GreenEyeGame::kMaxEyes; ++i) {
+        lv_obj_t* eye = lv_obj_create(gamesPanel);
+        lv_obj_remove_style_all(eye);
+        lv_obj_set_size(eye, 56, 56);
+        lv_obj_set_style_bg_opa(eye, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_color(eye, lv_color_hex(COLOR_TEXT), 0);
+        lv_obj_set_style_border_opa(eye, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_width(eye, 0, 0);
+        lv_obj_remove_flag(eye, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_add_flag(eye, LV_OBJ_FLAG_HIDDEN);
+        greenEyeEyes[i] = eye;
+
+        lv_obj_t* glint = lv_obj_create(eye);
+        lv_obj_remove_style_all(glint);
+        lv_obj_set_size(glint, 8, 8);
+        lv_obj_set_style_radius(glint, LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_bg_color(glint, lv_color_hex(COLOR_TEXT), 0);
+        lv_obj_set_style_bg_opa(glint, LV_OPA_80, 0);
+        lv_obj_remove_flag(glint, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_add_flag(glint, LV_OBJ_FLAG_HIDDEN);
+        greenEyeGlints[i] = glint;
+    }
+
+    greenEyePlus = lv_label_create(gamesPanel);
+    lv_obj_set_style_text_font(greenEyePlus, &lv_font_montserrat_vn_22, 0);
+    lv_obj_set_style_text_color(greenEyePlus, lv_color_hex(COLOR_TEXT), 0);
+    lv_label_set_text(greenEyePlus, "+1");
+    lv_obj_add_flag(greenEyePlus, LV_OBJ_FLAG_HIDDEN);
+
+    greenEyeCenterLabel = lv_label_create(gamesPanel);
+    lv_obj_set_style_text_font(greenEyeCenterLabel, &lv_font_montserrat_vn_28, 0);
+    lv_obj_set_style_text_color(greenEyeCenterLabel, lv_color_hex(kGreenEyeChrome), 0);
+    lv_label_set_text(greenEyeCenterLabel, "3");
+    lv_obj_align(greenEyeCenterLabel, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_add_flag(greenEyeCenterLabel, LV_OBJ_FLAG_HIDDEN);
+
+    // ---- Setup: the whole rule in one picture, then CHƠI --------------------
+    // Label centres are offsets from the panel centre, fitted with
+    // tools/lvwidth.py: "Tìm mắt XANH LÁ" is 182px at vn_20 and clears the
+    // glass with room at +34; "Chạm mắt XANH LÁ" (204px) did not fit there.
+    greenEyeSetupScreen = lv_obj_create(gamesPanel);
+    lv_obj_remove_style_all(greenEyeSetupScreen);
+    lv_obj_set_size(greenEyeSetupScreen, 224, 224);
+    lv_obj_center(greenEyeSetupScreen);
+    lv_obj_remove_flag(greenEyeSetupScreen, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* title = lv_label_create(greenEyeSetupScreen);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_vn_22, 0);
+    lv_obj_set_style_text_color(title, lv_color_hex(green), 0);
+    lv_label_set_text(title, "MẮT XANH");
+    lv_obj_align(title, LV_ALIGN_CENTER, 0, -66);
+
+    greenEyeSetupRecord = lv_label_create(greenEyeSetupScreen);
+    lv_obj_set_style_text_font(greenEyeSetupRecord, &lv_font_montserrat_vn_20, 0);
+    lv_obj_set_style_text_color(greenEyeSetupRecord, lv_color_hex(kGreenEyeMuted), 0);
+    lv_label_set_text(greenEyeSetupRecord, "KỶ LỤC 0");
+    lv_obj_align(greenEyeSetupRecord, LV_ALIGN_CENTER, 0, -40);
+
+    // Red, GREEN, blue: blue beside green on purpose -- it is "xanh" too.
+    const Hue demo[3] = {Hue::kRed, Hue::kGreen, Hue::kBlue};
+    for (int i = 0; i < 3; ++i) {
+        lv_obj_t* mini = lv_obj_create(greenEyeSetupScreen);
+        lv_obj_remove_style_all(mini);
+        lv_obj_set_size(mini, 36, 36);
+        lv_obj_set_style_radius(mini, 11, 0);
+        lv_obj_set_style_bg_color(mini, lv_color_hex(GreenEyeGame::HueRgb(demo[i])), 0);
+        lv_obj_set_style_bg_opa(mini, LV_OPA_COVER, 0);
+        lv_obj_align(mini, LV_ALIGN_CENTER, (i - 1) * 50, 0);
+        lv_obj_remove_flag(mini, LV_OBJ_FLAG_SCROLLABLE);
+        if (demo[i] == Hue::kGreen) {
+            lv_obj_set_style_border_width(mini, 3, 0);
+            lv_obj_set_style_border_color(mini, lv_color_hex(COLOR_TEXT), 0);
+            lv_obj_set_style_border_opa(mini, LV_OPA_COVER, 0);
+            greenEyeDemoGreen = mini;
+        }
+    }
+
+    lv_obj_t* hint = lv_label_create(greenEyeSetupScreen);
+    lv_obj_set_style_text_font(hint, &lv_font_montserrat_vn_20, 0);
+    lv_obj_set_style_text_color(hint, lv_color_hex(COLOR_TEXT), 0);
+    lv_label_set_text(hint, "Tìm mắt XANH LÁ");
+    lv_obj_align(hint, LV_ALIGN_CENTER, 0, 34);
+
+    greenEyePlayBtn = CreateQuickTapPill(greenEyeSetupScreen, 120, 38, 0, 74, "CHƠI",
+                                         &lv_font_montserrat_vn_22);
+    StyleQuickTapPill(greenEyePlayBtn, green, green, 0x06210D);
+    lv_obj_add_flag(greenEyeSetupScreen, LV_OBJ_FLAG_HIDDEN);
+
+    // ---- Scoreboard ---------------------------------------------------------
+    greenEyeScoreScreen = lv_obj_create(gamesPanel);
+    lv_obj_remove_style_all(greenEyeScoreScreen);
+    lv_obj_set_size(greenEyeScoreScreen, 224, 224);
+    lv_obj_center(greenEyeScoreScreen);
+    lv_obj_remove_flag(greenEyeScoreScreen, LV_OBJ_FLAG_SCROLLABLE);
+
+    greenEyeResultValue = lv_label_create(greenEyeScoreScreen);
+    lv_obj_set_style_text_font(greenEyeResultValue, &lv_font_montserrat_vn_28, 0);
+    lv_obj_set_style_text_color(greenEyeResultValue, lv_color_hex(COLOR_TEXT), 0);
+    lv_label_set_text(greenEyeResultValue, "0");
+    lv_obj_align(greenEyeResultValue, LV_ALIGN_CENTER, 0, -68);
+
+    greenEyeResultCaption = lv_label_create(greenEyeScoreScreen);
+    lv_obj_set_style_text_font(greenEyeResultCaption, &lv_font_montserrat_vn_20, 0);
+    lv_obj_set_style_text_color(greenEyeResultCaption, lv_color_hex(kGreenEyeMuted), 0);
+    lv_label_set_text(greenEyeResultCaption, "mắt xanh");
+    lv_obj_align(greenEyeResultCaption, LV_ALIGN_CENTER, 0, -38);
+
+    // What the game paid Bubu, in CẢM XÚC's colour and with its heart: the
+    // widest string, "CẢM XÚC ĐẦY", makes the row 171px at -10 -- well clear.
+    lv_obj_t* reward_row = lv_obj_create(greenEyeScoreScreen);
+    lv_obj_remove_style_all(reward_row);
+    lv_obj_set_size(reward_row, LV_SIZE_CONTENT, 27);
+    lv_obj_align(reward_row, LV_ALIGN_CENTER, 0, -10);
+    lv_obj_set_flex_flow(reward_row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(reward_row, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(reward_row, 6, 0);
+    lv_obj_remove_flag(reward_row, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t* reward_heart = lv_label_create(reward_row);
+    lv_obj_set_style_text_font(reward_heart, &font_awesome_20_4, 0);
+    lv_obj_set_style_text_color(reward_heart, lv_color_hex(kGreenEyeMood), 0);
+    lv_label_set_text(reward_heart, FONT_AWESOME_HEART);
+    greenEyeRewardLabel = lv_label_create(reward_row);
+    lv_obj_set_style_text_font(greenEyeRewardLabel, &lv_font_montserrat_vn_20, 0);
+    lv_obj_set_style_text_color(greenEyeRewardLabel, lv_color_hex(kGreenEyeMood), 0);
+    lv_label_set_text(greenEyeRewardLabel, "+0 CẢM XÚC");
+
+    // CẢM XÚC as a bar: the bright part is drawn first and runs to the new
+    // value; the dim part covers it up to where the stat was before.
+    lv_obj_t* track = lv_obj_create(greenEyeScoreScreen);
+    lv_obj_remove_style_all(track);
+    lv_obj_set_size(track, kGreenEyeMoodBarW, kGreenEyeMoodBarH);
+    lv_obj_set_style_radius(track, kGreenEyeMoodBarH / 2, 0);
+    lv_obj_set_style_bg_color(track, lv_color_hex(kGreenEyeRimTrack), 0);
+    lv_obj_set_style_bg_opa(track, LV_OPA_COVER, 0);
+    lv_obj_align(track, LV_ALIGN_CENTER, 0, 16);
+    lv_obj_remove_flag(track, LV_OBJ_FLAG_SCROLLABLE);
+    for (lv_obj_t** bar : {&greenEyeMoodGain, &greenEyeMoodBase}) {
+        *bar = lv_obj_create(track);
+        lv_obj_remove_style_all(*bar);
+        lv_obj_set_size(*bar, kGreenEyeMoodBarH, kGreenEyeMoodBarH);
+        lv_obj_set_style_radius(*bar, kGreenEyeMoodBarH / 2, 0);
+        lv_obj_set_style_bg_opa(*bar, LV_OPA_COVER, 0);
+        lv_obj_align(*bar, LV_ALIGN_LEFT_MID, 0, 0);
+        lv_obj_remove_flag(*bar, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_add_flag(*bar, LV_OBJ_FLAG_HIDDEN);
+    }
+    lv_obj_set_style_bg_color(greenEyeMoodGain, lv_color_hex(kGreenEyeMood), 0);
+    lv_obj_set_style_bg_color(greenEyeMoodBase, lv_color_hex(kGreenEyeMoodDim), 0);
+
+    greenEyeAgainBtn = CreateQuickTapPill(greenEyeScoreScreen, 132, 34, 0, 50, "CHƠI LẠI",
+                                          &lv_font_montserrat_vn_20);
+    StyleQuickTapPill(greenEyeAgainBtn, green, green, 0x06210D);
+    greenEyeMenuBtn = CreateQuickTapPill(greenEyeScoreScreen, 92, 28, 0, 84, "MENU",
+                                         &lv_font_montserrat_vn_20);
+    StyleQuickTapPill(greenEyeMenuBtn, kGreenEyePillDim, 0x33363F, COLOR_TEXT);
+    lv_obj_add_flag(greenEyeScoreScreen, LV_OBJ_FLAG_HIDDEN);
+
+    UpdateGreenEyeSetupUI();
 }
 
 // ---------------------------------------------------------------------------
@@ -4301,7 +6150,7 @@ void VoidPomodoroBlock() {
         return;
     }
     PomodoroTimer::VoidBlock();
-    PlayPomodoroSound(Lang::Sounds::OGG_BUBU_SAD1);
+    PlayPomodoroSound(Vox::Pick(Lang::Sounds::OGG_VOX_SAD_1_A, Lang::Sounds::OGG_VOX_SAD_1_B));
     EnterPomodoroBanner("BỊ NGẮT", "ĐÃ HỦY", "KHÔNG TÍNH", kPomodoroMuted, true);
 }
 
@@ -4555,11 +6404,20 @@ lv_obj_t* AddEmblemRing(lv_obj_t* parent, int x, int y, int size, int width,
 // The three emblem marks. Each is drawn once and then only shown or hidden --
 // nothing here is rebuilt on navigation.
 void CreateGamesEmblemMarks() {
-    // MẮT XANH: Bubu's two eyes, the one you are meant to tap already lit.
-    lv_obj_t* eye = CreateEmblemBox(gamesEmblem);
-    gamesEmblemMarks[GAME_SELECTION_EYE_TAP] = eye;
-    AddEmblemSolid(eye, 26, 38, 20, 28, 10, 0x2E3A50);
-    AddEmblemSolid(eye, 54, 36, 24, 32, 12, COLOR_MINT);
+    // MẮT XANH: four of the game's eyes, and the green one ringed -- the
+    // answer. Blue sits beside it on purpose: xanh dương is the trap.
+    {
+        using GreenEyeGame::Hue;
+        lv_obj_t* eyes = CreateEmblemBox(gamesEmblem);
+        gamesEmblemMarks[GAME_SELECTION_GREEN_EYE] = eyes;
+        AddEmblemSolid(eyes, 22, 22, 26, 26, 8, GreenEyeGame::HueRgb(Hue::kRed));
+        AddEmblemSolid(eyes, 56, 22, 26, 26, 8, GreenEyeGame::HueRgb(Hue::kBlue));
+        AddEmblemSolid(eyes, 22, 56, 26, 26, 8, GreenEyeGame::HueRgb(Hue::kYellow));
+        lv_obj_t* answer = AddEmblemSolid(eyes, 56, 56, 26, 26, 8, GreenEyeGame::HueRgb(Hue::kGreen));
+        lv_obj_set_style_border_width(answer, 3, 0);
+        lv_obj_set_style_border_color(answer, lv_color_hex(COLOR_TEXT), 0);
+        lv_obj_set_style_border_opa(answer, LV_OPA_COVER, 0);
+    }
 
     // CỜ CA-RÔ: one X, one O. The 3x3 grid behind them is dropped -- at this
     // size its lines land under 2px and read as noise rather than a board.
@@ -4611,85 +6469,32 @@ void CreateGamesEmblemMarks() {
     AddEmblemSolid(snake, 38, 38, 16, 16, 3, kSnakeBody);
     AddEmblemSolid(snake, 38, 20, 16, 16, 3, kSnakeHead);
     AddEmblemSolid(snake, 62, 22, 12, 12, LV_RADIUS_CIRCLE, kSnakePellet);
+
+    // MÊ CUNG: a narrow cyan route, white marble and green destination.
+    lv_obj_t* maze = CreateEmblemBox(gamesEmblem);
+    gamesEmblemMarks[GAME_SELECTION_TILT_MAZE] = maze;
+    AddEmblemSolid(maze, 18, 22, 68, 10, 4, kMazeWall);
+    AddEmblemSolid(maze, 18, 32, 10, 48, 4, kMazeWall);
+    AddEmblemSolid(maze, 48, 32, 10, 34, 4, kMazeWall);
+    AddEmblemSolid(maze, 28, 56, 30, 10, 4, kMazeWall);
+    AddEmblemSolid(maze, 28, 38, 12, 12, LV_RADIUS_CIRCLE, 0xFFFFFF);
+    AddEmblemRing(maze, 66, 58, 18, 4, kMazeGoal, LV_OPA_COVER);
+
+    // ĐƯỜNG PHỐ: the same deliberately simple geometry used in the game.
+    lv_obj_t* runner = CreateEmblemBox(gamesEmblem);
+    gamesEmblemMarks[GAME_SELECTION_TRAFFIC_RUNNER] = runner;
+    AddEmblemSolid(runner, 24, 18, 4, 68, 2, kRunnerLane);
+    AddEmblemSolid(runner, 76, 18, 4, 68, 2, kRunnerLane);
+    AddEmblemSolid(runner, 37, 25, 22, 34, 4, 0xFF6B5C);
+    AddEmblemSolid(runner, 66, 36, 12, 12, LV_RADIUS_CIRCLE, kRunnerGold);
+    AddEmblemSolid(runner, 20, 66, 18, 18, LV_RADIUS_CIRCLE, 0xFFFFFF);
 }
 
-void CreateGamesPanel() {
-    if (gamesPanel != nullptr) {
+// Tic-tac-toe screens. Built on demand by LoadGameUi(), deleted by
+// UnloadGameUi() -- see "On-demand game screens".
+void CreateCheckerUI() {
+    if (gamesPanel == nullptr || checkerGrid != nullptr) {
         return;
-    }
-
-    gamesPanel = lv_obj_create(lv_screen_active());
-    lv_obj_set_size(gamesPanel, 240, 240);
-    lv_obj_center(gamesPanel);
-    lv_obj_set_style_radius(gamesPanel, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_bg_color(gamesPanel, lv_color_hex(COLOR_BACKGROUND), 0);
-    lv_obj_set_style_bg_opa(gamesPanel, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(gamesPanel, 8, 0);
-    lv_obj_set_style_border_color(gamesPanel, lv_color_hex(0x1C2E45), 0);
-    lv_obj_set_style_border_opa(gamesPanel, LV_OPA_COVER, 0);
-    lv_obj_set_style_pad_all(gamesPanel, 0, 0);
-    lv_obj_clear_flag(gamesPanel, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_flag(gamesPanel, LV_OBJ_FLAG_HIDDEN);
-
-    // Position ring. The track is the full circle; the indicator is the lit
-    // third and is re-angled in UpdateGamesUI().
-    gamesRing = lv_arc_create(gamesPanel);
-    lv_obj_remove_style_all(gamesRing);
-    lv_obj_set_size(gamesRing, kGamesRingBox, kGamesRingBox);
-    lv_obj_center(gamesRing);
-    lv_obj_remove_flag(gamesRing, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_remove_flag(gamesRing, LV_OBJ_FLAG_SCROLLABLE);
-    lv_arc_set_bg_angles(gamesRing, 0, 360);
-    lv_obj_set_style_arc_width(gamesRing, kGamesRingWidth, LV_PART_MAIN);
-    lv_obj_set_style_arc_color(gamesRing, lv_color_hex(kGamesRingTrack), LV_PART_MAIN);
-    lv_obj_set_style_arc_opa(gamesRing, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_set_style_arc_width(gamesRing, kGamesRingWidth, LV_PART_INDICATOR);
-    lv_obj_set_style_arc_rounded(gamesRing, true, LV_PART_INDICATOR);
-
-    // The emblem disc. It sits under the centre of the panel, which is already
-    // the tap-to-play zone: HandleTap() treats any games-list tap that misses
-    // the two nav buttons as activate.
-    gamesEmblem = lv_obj_create(gamesPanel);
-    lv_obj_remove_style_all(gamesEmblem);
-    lv_obj_set_size(gamesEmblem, kGamesEmblemSize, kGamesEmblemSize);
-    lv_obj_align(gamesEmblem, LV_ALIGN_TOP_MID, 0, kGamesEmblemTop);
-    lv_obj_set_style_radius(gamesEmblem, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_bg_opa(gamesEmblem, LV_OPA_10, 0);
-    lv_obj_set_style_border_width(gamesEmblem, 2, 0);
-    lv_obj_set_style_border_opa(gamesEmblem, LV_OPA_60, 0);
-    lv_obj_remove_flag(gamesEmblem, LV_OBJ_FLAG_SCROLLABLE);
-    CreateGamesEmblemMarks();
-
-    gamesAction = lv_label_create(gamesPanel);
-    lv_obj_set_style_text_font(gamesAction, &lv_font_montserrat_vn_22, 0);
-    lv_label_set_text(gamesAction, "MẮT XANH");
-    lv_obj_set_width(gamesAction, 240);
-    lv_obj_set_style_text_align(gamesAction, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_align(gamesAction, LV_ALIGN_TOP_MID, 0, kGamesNameTop);
-
-    // Single line by design: the fit budget below the name is one 20px row, so
-    // wrapping here would push the second line off the glass.
-    gamesStatus = lv_label_create(gamesPanel);
-    lv_obj_set_style_text_font(gamesStatus, &lv_font_montserrat_vn_20, 0);
-    lv_obj_set_style_text_color(gamesStatus, lv_color_hex(kGamesChipColor), 0);
-    lv_label_set_long_mode(gamesStatus, LV_LABEL_LONG_CLIP);
-    lv_obj_set_width(gamesStatus, 240);
-    lv_obj_set_style_text_align(gamesStatus, LV_TEXT_ALIGN_CENTER, 0);
-    lv_label_set_text(gamesStatus, gameStatusMsg);
-    lv_obj_align(gamesStatus, LV_ALIGN_TOP_MID, 0, kGamesChipTop);
-
-    // The 100x100 hit targets are unchanged; only the artwork is. The glyph is
-    // pulled in to sit inside the ring instead of on a disc hanging off-screen.
-    gamesPrevBtn = CreateNavButton(gamesPanel, LV_ALIGN_LEFT_MID, -52, 0, LV_SYMBOL_LEFT,
-                                   LV_ALIGN_CENTER, 28, 0,
-                                   [](lv_event_t*) { MenuSystem::NavigatePrev(); });
-    gamesNextBtn = CreateNavButton(gamesPanel, LV_ALIGN_RIGHT_MID, 52, 0, LV_SYMBOL_RIGHT,
-                                   LV_ALIGN_CENTER, -28, 0,
-                                   [](lv_event_t*) { MenuSystem::NavigateNext(); });
-    for (lv_obj_t* button : {gamesPrevBtn, gamesNextBtn}) {
-        lv_obj_set_style_bg_opa(button, LV_OPA_TRANSP, 0);
-        lv_obj_set_style_border_opa(button, LV_OPA_TRANSP, 0);
-        lv_obj_move_background(button);
     }
 
     checkerGrid = lv_obj_create(gamesPanel);
@@ -4921,9 +6726,105 @@ void CreateGamesPanel() {
         checkerParticles[i] = particle;
     }
     lv_obj_add_flag(checkerFx, LV_OBJ_FLAG_HIDDEN);
+}
 
-    CreateQuickTapUI();
-    CreateSnakeUI();
+void CreateGamesPanel() {
+    if (gamesPanel != nullptr) {
+        return;
+    }
+
+    gamesPanel = lv_obj_create(lv_screen_active());
+    lv_obj_set_size(gamesPanel, 240, 240);
+    lv_obj_center(gamesPanel);
+    lv_obj_set_style_radius(gamesPanel, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(gamesPanel, lv_color_hex(COLOR_BACKGROUND), 0);
+    lv_obj_set_style_bg_opa(gamesPanel, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(gamesPanel, 8, 0);
+    lv_obj_set_style_border_color(gamesPanel, lv_color_hex(0x1C2E45), 0);
+    lv_obj_set_style_border_opa(gamesPanel, LV_OPA_COVER, 0);
+    lv_obj_set_style_pad_all(gamesPanel, 0, 0);
+    lv_obj_clear_flag(gamesPanel, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(gamesPanel, LV_OBJ_FLAG_HIDDEN);
+
+    // Position ring. The track is the full circle; the indicator is the lit
+    // third and is re-angled in UpdateGamesUI().
+    gamesRing = lv_arc_create(gamesPanel);
+    lv_obj_remove_style_all(gamesRing);
+    lv_obj_set_size(gamesRing, kGamesRingBox, kGamesRingBox);
+    lv_obj_center(gamesRing);
+    lv_obj_remove_flag(gamesRing, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_remove_flag(gamesRing, LV_OBJ_FLAG_SCROLLABLE);
+    lv_arc_set_bg_angles(gamesRing, 0, 360);
+    lv_obj_set_style_arc_width(gamesRing, kGamesRingWidth, LV_PART_MAIN);
+    lv_obj_set_style_arc_color(gamesRing, lv_color_hex(kGamesRingTrack), LV_PART_MAIN);
+    lv_obj_set_style_arc_opa(gamesRing, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_arc_width(gamesRing, kGamesRingWidth, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_rounded(gamesRing, true, LV_PART_INDICATOR);
+
+    // The emblem disc. It sits under the centre of the panel, which is already
+    // the tap-to-play zone: HandleTap() treats any games-list tap that misses
+    // the two nav buttons as activate.
+    gamesEmblem = lv_obj_create(gamesPanel);
+    lv_obj_remove_style_all(gamesEmblem);
+    lv_obj_set_size(gamesEmblem, kGamesEmblemSize, kGamesEmblemSize);
+    lv_obj_align(gamesEmblem, LV_ALIGN_TOP_MID, 0, kGamesEmblemTop);
+    lv_obj_set_style_radius(gamesEmblem, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_opa(gamesEmblem, LV_OPA_10, 0);
+    lv_obj_set_style_border_width(gamesEmblem, 2, 0);
+    lv_obj_set_style_border_opa(gamesEmblem, LV_OPA_60, 0);
+    lv_obj_remove_flag(gamesEmblem, LV_OBJ_FLAG_SCROLLABLE);
+    CreateGamesEmblemMarks();
+
+    gamesAction = lv_label_create(gamesPanel);
+    lv_obj_set_style_text_font(gamesAction, &lv_font_montserrat_vn_22, 0);
+    lv_label_set_text(gamesAction, "MẮT XANH");
+    lv_obj_set_width(gamesAction, 240);
+    lv_obj_set_style_text_align(gamesAction, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_align(gamesAction, LV_ALIGN_TOP_MID, 0, kGamesNameTop);
+
+    // Single line by design: the fit budget below the name is one 20px row, so
+    // wrapping here would push the second line off the glass.
+    gamesStatus = lv_label_create(gamesPanel);
+    lv_obj_set_style_text_font(gamesStatus, &lv_font_montserrat_vn_20, 0);
+    lv_obj_set_style_text_color(gamesStatus, lv_color_hex(kGamesChipColor), 0);
+    lv_label_set_long_mode(gamesStatus, LV_LABEL_LONG_CLIP);
+    lv_obj_set_width(gamesStatus, 240);
+    lv_obj_set_style_text_align(gamesStatus, LV_TEXT_ALIGN_CENTER, 0);
+    lv_label_set_text(gamesStatus, gameStatusMsg);
+    lv_obj_align(gamesStatus, LV_ALIGN_TOP_MID, 0, kGamesChipTop);
+
+    // The 100x100 hit targets are unchanged; only the artwork is. The glyph is
+    // pulled in to sit inside the ring instead of on a disc hanging off-screen.
+    gamesPrevBtn = CreateNavButton(gamesPanel, LV_ALIGN_LEFT_MID, -52, 0, LV_SYMBOL_LEFT,
+                                   LV_ALIGN_CENTER, 28, 0,
+                                   [](lv_event_t*) { MenuSystem::NavigatePrev(); });
+    gamesNextBtn = CreateNavButton(gamesPanel, LV_ALIGN_RIGHT_MID, 52, 0, LV_SYMBOL_RIGHT,
+                                   LV_ALIGN_CENTER, -28, 0,
+                                   [](lv_event_t*) { MenuSystem::NavigateNext(); });
+    for (lv_obj_t* button : {gamesPrevBtn, gamesNextBtn}) {
+        lv_obj_set_style_bg_opa(button, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_opa(button, LV_OPA_TRANSP, 0);
+        lv_obj_move_background(button);
+    }
+
+    // Game screens are no longer built here -- see "On-demand game screens"
+    // below. What the carousel itself reads (records, maze progress) is data,
+    // not widgets, so it still loads at boot.
+    gamesLoadingLabel = lv_label_create(gamesPanel);
+    lv_obj_set_style_text_font(gamesLoadingLabel, &lv_font_montserrat_vn_20, 0);
+    lv_obj_set_style_text_color(gamesLoadingLabel, lv_color_hex(COLOR_TEXT), 0);
+    lv_obj_set_style_text_align(gamesLoadingLabel, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_width(gamesLoadingLabel, 200);
+    lv_label_set_text(gamesLoadingLabel, "ĐANG TẢI...");
+    lv_obj_center(gamesLoadingLabel);
+    lv_obj_add_flag(gamesLoadingLabel, LV_OBJ_FLAG_HIDDEN);
+
+    LoadCheckerRecord();
+    LoadGreenEyeBest();
+    LoadQuickTapRecords();
+    LoadSnakeRecords();
+    TiltMazeGame::Initialize();
+    TrafficRunnerGame::Initialize();
 
     SetGamesMenuStatusForSelection();
     UpdateGamesUI();
@@ -4973,18 +6874,387 @@ namespace MenuSystem {
 void StartChecker3x3();
 void StartQuickTap();
 void StartSnake();
+void StartTiltMaze();
+void StartTrafficRunner();
 void OpenFortuneTeller();
 void CloseFortuneToMenu();
+
+// ---------------------------------------------------------------------------
+// On-demand game screens
+//
+// Every game used to build its whole LVGL tree in CreateGamesPanel() at boot
+// and keep it, hidden, for as long as the device was on. Hidden objects are
+// not drawn, but they still occupy memory -- and here that memory is internal
+// SRAM: LVGL allocates through the C library (CONFIG_LV_USE_CLIB_MALLOC) and
+// nearly every widget is below the 2 KB CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL
+// line, so each game paid in the pool WiFi and TLS depend on, even when it was
+// never opened.
+//
+// Now only the carousel is permanent. Opening a game shows "ĐANG TẢI...",
+// builds that one game's screens, and starts it; leaving the game (back to the
+// carousel, or the menu closing for any reason) deletes them again. At most one
+// game's screens exist at a time. Mắt Xanh draws on the eyes and owns no
+// widgets, so it starts immediately and never goes through here.
+//
+// Roots are found by diffing gamesPanel's children before and after the build,
+// not by index: builders may lv_obj_move_background() their own objects.
+// ---------------------------------------------------------------------------
+ActiveGameType loadedGameUi = ACTIVE_GAME_NONE;
+std::vector<lv_obj_t*> loadedGameRoots;
+ActiveGameType gameLoadPending = ACTIVE_GAME_NONE;
+lv_timer_t* gameLoadTimer = nullptr;
+// Long enough for at least two LVGL refresh periods, so "ĐANG TẢI..." is on
+// the glass before the build holds the display lock.
+constexpr uint32_t kGameLoadPaintMs = 80;
+constexpr uint32_t kGameLoadSpinMs = 900;
+
+void LogInternalHeap(const char* what) {
+    ESP_LOGI(TAG, "%s: internal free %u B, largest block %u B", what,
+             static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
+             static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL)));
+}
+
+// Every pointer below points into a tree UnloadGameUi() just deleted. Anything
+// left non-null would be a use-after-free the next time a Hide*/Update* helper
+// null-checks it and finds it "valid".
+void ForgetGameWidgets() {
+    checkerGrid = nullptr;
+    checkerCellButtons.fill(nullptr);
+    checkerXMarks.fill(nullptr);
+    checkerOMarks.fill(nullptr);
+    checkerBotIcon = nullptr;
+    checkerTitleScreen = nullptr;
+    checkerMatchupScreen = nullptr;
+    checkerPlayAgainScreen = nullptr;
+    checkerYesBtn = nullptr;
+    checkerNoBtn = nullptr;
+    checkerPlayBtn = nullptr;
+    checkerDotsRow = nullptr;
+    checkerDots.fill(nullptr);
+    checkerFx = nullptr;
+    checkerParticles.fill(nullptr);
+
+    greenEyeRim = nullptr;
+    greenEyeScoreLabel = nullptr;
+    greenEyeHearts.fill(nullptr);
+    greenEyeEyes.fill(nullptr);
+    greenEyeGlints.fill(nullptr);
+    greenEyePlus = nullptr;
+    greenEyeCenterLabel = nullptr;
+    greenEyeSetupScreen = nullptr;
+    greenEyeSetupRecord = nullptr;
+    greenEyeDemoGreen = nullptr;
+    greenEyePlayBtn = nullptr;
+    greenEyeScoreScreen = nullptr;
+    greenEyeResultValue = nullptr;
+    greenEyeResultCaption = nullptr;
+    greenEyeRewardLabel = nullptr;
+    greenEyeMoodGain = nullptr;
+    greenEyeMoodBase = nullptr;
+    greenEyeAgainBtn = nullptr;
+    greenEyeMenuBtn = nullptr;
+    greenEyeDrawn.fill(GreenEyeDrawn{});
+
+    quickTapArc = nullptr;
+    quickTapDot = nullptr;
+    quickTapBanner = nullptr;
+    quickTapSetupScreen = nullptr;
+    quickTapModeBtns.fill(nullptr);
+    quickTapDiffBtns.fill(nullptr);
+    quickTapRecordLabel = nullptr;
+    quickTapModeRecords.fill(nullptr);
+    quickTapScoreScreen = nullptr;
+    quickTapScoreValue = nullptr;
+    quickTapScoreCaption = nullptr;
+    quickTapStatRow = nullptr;
+    quickTapHitsLabel = nullptr;
+    quickTapRedMark = nullptr;
+    quickTapRedLabel = nullptr;
+    quickTapMissLabel = nullptr;
+    quickTapStreakLabel = nullptr;
+    quickTapReplayBtn = nullptr;
+    quickTapMenuBtn = nullptr;
+
+    snakeCanvas = nullptr;
+    snakeScoreLabel = nullptr;
+    snakeChevrons.fill(nullptr);
+    snakeSetupScreen = nullptr;
+    snakeSetupRecord = nullptr;
+    snakeSpeedBtn = nullptr;
+    snakePlayBtn = nullptr;
+    snakeOverScreen = nullptr;
+    snakeOverHead = nullptr;
+    snakeOverScore = nullptr;
+    snakeOverBest = nullptr;
+    snakeAgainBtn = nullptr;
+    snakeMenuBtn = nullptr;
+    // Force the chevron state to repaint on the next build.
+    snakeFlashChevron = -1;
+    snakeFlashApplied = -2;
+
+    mazeCanvas = nullptr;
+    mazeHud = nullptr;
+    mazeCalibrationScreen = nullptr;
+    mazeCalibrationStatus = nullptr;
+    mazeCalibrateBtn = nullptr;
+    mazeCountdownLabel = nullptr;
+    mazePlanningTitle = nullptr;
+    mazePlanUpBtn = nullptr;
+    mazePlanDownBtn = nullptr;
+    mazePlanLeftBtn = nullptr;
+    mazePlanRightBtn = nullptr;
+    mazePlanResumeBtn = nullptr;
+    mazeResultScreen = nullptr;
+    mazeResultStars.fill(nullptr);
+    mazeResultSummary = nullptr;
+    mazeResultPrimaryBtn = nullptr;
+    mazeResultRetryBtn = nullptr;
+    mazeVisiblePhase = TiltMazeGame::Phase::kStopped;
+
+    runnerCanvas = nullptr;
+    runnerHudScore = nullptr;
+    runnerHudGold = nullptr;
+    runnerHudBoost = nullptr;
+    runnerSetupScreen = nullptr;
+    runnerSetupBest = nullptr;
+    runnerPlayBtn = nullptr;
+    runnerPhaseLabel = nullptr;
+    runnerOverScreen = nullptr;
+    runnerOverTitle = nullptr;
+    runnerOverScore = nullptr;
+    runnerOverBest = nullptr;
+    runnerAgainBtn = nullptr;
+    runnerMenuBtn = nullptr;
+    runnerVisiblePhase = TrafficRunnerGame::Phase::kStopped;
+}
+
+// Caller holds the display lock.
+void UnloadGameUi() {
+    if (loadedGameUi == ACTIVE_GAME_NONE && loadedGameRoots.empty()) {
+        return;
+    }
+    // Timers first: each one draws into the widgets about to be deleted.
+    StopGreenEyeTimer();
+    StopQuickTapTimer();
+    StopSnakeTimer();
+    StopTiltMazeTimer();
+    StopTrafficRunnerTimer();
+    HideCheckerConfetti();   // cancels the particle animations
+
+    for (lv_obj_t* root : loadedGameRoots) {
+        if (root != nullptr && lv_obj_is_valid(root)) {
+            lv_obj_delete(root);
+        }
+    }
+    loadedGameRoots.clear();
+
+    // The canvases are gone, so nothing references their pixel buffers now.
+    if (snakeCanvasBuf != nullptr) {
+        heap_caps_free(snakeCanvasBuf);
+        snakeCanvasBuf = nullptr;
+    }
+    if (mazeCanvasBuf != nullptr) {
+        heap_caps_free(mazeCanvasBuf);
+        mazeCanvasBuf = nullptr;
+    }
+    if (runnerCanvasBuf != nullptr) {
+        heap_caps_free(runnerCanvasBuf);
+        runnerCanvasBuf = nullptr;
+    }
+    ForgetGameWidgets();
+    loadedGameUi = ACTIVE_GAME_NONE;
+    LogInternalHeap("Game UI unloaded");
+}
+
+// Caller holds the display lock. Returns false for an unknown game.
+bool LoadGameUi(ActiveGameType game) {
+    UnloadGameUi();
+    if (gamesPanel == nullptr) {
+        return false;
+    }
+    LogInternalHeap("Game UI before load");
+
+    std::vector<lv_obj_t*> before;
+    const uint32_t before_count = lv_obj_get_child_count(gamesPanel);
+    before.reserve(before_count);
+    for (uint32_t i = 0; i < before_count; ++i) {
+        before.push_back(lv_obj_get_child(gamesPanel, static_cast<int32_t>(i)));
+    }
+
+    switch (game) {
+        case ACTIVE_GAME_GREEN_EYE:
+            CreateGreenEyeUI();
+            break;
+        case ACTIVE_GAME_CHECKER:
+            CreateCheckerUI();
+            break;
+        case ACTIVE_GAME_QUICK_TAP:
+            CreateQuickTapUI();
+            break;
+        case ACTIVE_GAME_SNAKE:
+            CreateSnakeUI();
+            break;
+        case ACTIVE_GAME_TILT_MAZE:
+            CreateTiltMazeUI();
+            break;
+        case ACTIVE_GAME_TRAFFIC_RUNNER:
+            CreateTrafficRunnerUI();
+            break;
+        default:
+            return false;
+    }
+
+    const uint32_t after_count = lv_obj_get_child_count(gamesPanel);
+    for (uint32_t i = 0; i < after_count; ++i) {
+        lv_obj_t* child = lv_obj_get_child(gamesPanel, static_cast<int32_t>(i));
+        if (std::find(before.begin(), before.end(), child) == before.end()) {
+            loadedGameRoots.push_back(child);
+        }
+    }
+    loadedGameUi = game;
+    ESP_LOGI(TAG, "Game UI loaded: game %d, %u root objects", static_cast<int>(game),
+             static_cast<unsigned>(loadedGameRoots.size()));
+    LogInternalHeap("Game UI loaded");
+    return true;
+}
+
+void SpinGamesRing(void* obj, int32_t value) {
+    lv_arc_set_rotation(static_cast<lv_obj_t*>(obj), static_cast<uint32_t>(value));
+}
+
+// Caller holds the display lock.
+void ShowGameLoadingLocked() {
+    for (lv_obj_t* obj : {gamesEmblem, gamesAction, gamesStatus, gamesPrevBtn, gamesNextBtn}) {
+        if (obj != nullptr) {
+            lv_obj_add_flag(obj, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+    if (gamesLoadingLabel != nullptr) {
+        lv_obj_remove_flag(gamesLoadingLabel, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_move_foreground(gamesLoadingLabel);
+    }
+    if (gamesRing != nullptr) {
+        // The carousel ring, in the selected game's colour, turning.
+        lv_arc_set_angles(gamesRing, 0, 70);
+        lv_obj_set_style_arc_color(gamesRing, lv_color_hex(gamesActionColor), LV_PART_INDICATOR);
+        lv_obj_remove_flag(gamesRing, LV_OBJ_FLAG_HIDDEN);
+        lv_anim_t anim;
+        lv_anim_init(&anim);
+        lv_anim_set_var(&anim, gamesRing);
+        lv_anim_set_exec_cb(&anim, SpinGamesRing);
+        lv_anim_set_values(&anim, 0, 359);
+        lv_anim_set_duration(&anim, kGameLoadSpinMs);
+        lv_anim_set_repeat_count(&anim, LV_ANIM_REPEAT_INFINITE);
+        lv_anim_start(&anim);
+    }
+}
+
+// Caller holds the display lock. Leaves the carousel chrome hidden: either the
+// game's own screens take over next, or the caller runs UpdateGamesUI().
+void HideGameLoadingLocked() {
+    if (gamesRing != nullptr) {
+        lv_anim_delete(gamesRing, SpinGamesRing);
+        lv_arc_set_rotation(gamesRing, 0);
+    }
+    if (gamesLoadingLabel != nullptr) {
+        lv_obj_add_flag(gamesLoadingLabel, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+// Caller holds the display lock.
+void CancelGameLoadLocked() {
+    if (gameLoadTimer != nullptr) {
+        lv_timer_delete(gameLoadTimer);
+        gameLoadTimer = nullptr;
+    }
+    if (gameLoadPending == ACTIVE_GAME_NONE) {
+        return;
+    }
+    gameLoadPending = ACTIVE_GAME_NONE;
+    HideGameLoadingLocked();
+}
+
+bool IsGameLoadPending() {
+    return gameLoadPending != ACTIVE_GAME_NONE;
+}
+
+// Runs on the application task, never inside lv_timer_handler: the builders
+// and Start*() take the display lock themselves.
+void FinishGameLoad() {
+    const ActiveGameType game = gameLoadPending;
+    if (game == ACTIVE_GAME_NONE) {
+        return;   // cancelled while queued
+    }
+    gameLoadPending = ACTIVE_GAME_NONE;
+
+    if (currentState != MENU_GAMES_OPEN) {
+        DisplayLockGuard lock(displayHandle);
+        HideGameLoadingLocked();
+        return;
+    }
+
+    {
+        DisplayLockGuard lock(displayHandle);
+        HideGameLoadingLocked();
+        LoadGameUi(game);
+    }
+    MarkMenuActivity();
+
+    switch (game) {
+        case ACTIVE_GAME_GREEN_EYE:
+            StartGreenEye();
+            break;
+        case ACTIVE_GAME_CHECKER:
+            StartChecker3x3();
+            break;
+        case ACTIVE_GAME_QUICK_TAP:
+            StartQuickTap();
+            break;
+        case ACTIVE_GAME_SNAKE:
+            StartSnake();
+            break;
+        case ACTIVE_GAME_TILT_MAZE:
+            StartTiltMaze();
+            break;
+        case ACTIVE_GAME_TRAFFIC_RUNNER:
+            StartTrafficRunner();
+            break;
+        default:
+            break;
+    }
+
+    // A start that refused (a canvas allocation failed) leaves us on the
+    // carousel with screens nobody will use -- give the memory straight back.
+    if (currentState != MENU_GAME_ACTIVE) {
+        DisplayLockGuard lock(displayHandle);
+        UnloadGameUi();
+        UpdateGamesUI();
+    }
+}
+
+void GameLoadTimerCb(lv_timer_t* timer) {
+    // lv_timer_handler holds the display lock here, so hand the build to the
+    // application task rather than building (and re-locking) in place.
+    lv_timer_delete(timer);
+    gameLoadTimer = nullptr;
+    Application::GetInstance().Schedule([]() { FinishGameLoad(); });
+}
+
+// Called from the carousel, without the display lock.
+void BeginGameLoad(ActiveGameType game) {
+    if (currentState != MENU_GAMES_OPEN || gameLoadPending != ACTIVE_GAME_NONE) {
+        return;
+    }
+    MarkMenuActivity();
+    gameLoadPending = game;
+    DisplayLockGuard lock(displayHandle);
+    ShowGameLoadingLocked();
+    gameLoadTimer = lv_timer_create(GameLoadTimerCb, kGameLoadPaintMs, nullptr);
+}
 
 void Begin(Display* display) {
     displayHandle = display;
     MarkMenuActivity();
-    EyeGame::Config game_cfg;
-    game_cfg.max_rounds = 40;
-    game_cfg.reward_per_hit = static_cast<uint8_t>(CareSystem::kGameRewardPerHit);
-    game_cfg.wrong_tap_mood_delta = static_cast<int8_t>(CareSystem::kGameWrongTapMood);
-    game_cfg.wrong_tap_energy_delta = static_cast<int8_t>(CareSystem::kGameWrongTapEnergy);
-    EyeGame::Configure(game_cfg);
     CheckerGame::Config checker_cfg;
     checker_cfg.take_best_move_chance_pct = 45;
     checker_cfg.block_player_chance_pct = 72;
@@ -5097,7 +7367,10 @@ void Close() {
     // Snake owns a 33ms lv_timer for exactly the same reason, and Close() is
     // the funnel for every close path here too.
     bool closing_snake = false;
-    bool closing_eye_game = false;
+    bool closing_tilt_maze = false;
+    bool closing_traffic_runner = false;
+    // MẮT XANH owns a 33ms lv_timer too.
+    bool closing_green_eye = false;
     // Same trap as Quick Tap: this screen owns a 200ms lv_timer, and Close() is
     // the funnel for every close path. With no pause, leaving also discards a
     // running focus block -- there is no background tick to keep it alive.
@@ -5108,13 +7381,8 @@ void Close() {
     }
 
     if (currentState == MENU_GAME_ACTIVE) {
-        if (activeGame == ACTIVE_GAME_EYE_TAP) {
-            EyeGame::Stop();
-            closing_eye_game = true;
-            if (auto* eye_display = GetEyeDisplay(); eye_display != nullptr) {
-                eye_display->SetEyeGameMode(false);
-                eye_display->SetEyeMoodColorAuto(true);
-            }
+        if (activeGame == ACTIVE_GAME_GREEN_EYE) {
+            closing_green_eye = true;   // paid and stopped under the lock below
         } else if (activeGame == ACTIVE_GAME_CHECKER) {
             CheckerGame::Stop();
         } else if (activeGame == ACTIVE_GAME_QUICK_TAP) {
@@ -5123,6 +7391,12 @@ void Close() {
         } else if (activeGame == ACTIVE_GAME_SNAKE) {
             SnakeGame::Stop();
             closing_snake = true;
+        } else if (activeGame == ACTIVE_GAME_TILT_MAZE) {
+            TiltMazeGame::Stop();
+            closing_tilt_maze = true;
+        } else if (activeGame == ACTIVE_GAME_TRAFFIC_RUNNER) {
+            TrafficRunnerGame::Stop();
+            closing_traffic_runner = true;
         }
         activeGame = ACTIVE_GAME_NONE;
     }
@@ -5141,14 +7415,31 @@ void Close() {
         HideQuickTapAll();
         quickTapScreen = QuickTapScreen::kSetup;
     }
-    if (closing_eye_game) {
-        StopEyeGameTimer();
+    if (closing_green_eye) {
+        // The menu closing under a round still pays for the greens found.
+        PayGreenEyeReward();
+        GreenEyeGame::Stop();
+        StopGreenEyeTimer();
+        HideGreenEyeAll();
+        greenEyeScreen = GreenEyeScreen::kSetup;
     }
     if (closing_snake) {
         StopSnakeTimer();
         HideSnakeAll();
         snakeScreen = SnakeScreen::kSetup;
     }
+    if (closing_tilt_maze) {
+        StopTiltMazeTimer();
+        HideTiltMazeAll();
+    }
+    if (closing_traffic_runner) {
+        StopTrafficRunnerTimer();
+        HideTrafficRunnerAll();
+    }
+    // A game half-way through loading, or one that was on screen: either way
+    // its screens must not outlive the menu.
+    CancelGameLoadLocked();
+    UnloadGameUi();
     if (closing_pomodoro) {
         StopPomodoroTimer();
         if (PomodoroTimer::GetPhase() == PomodoroTimer::Phase::kFocus) {
@@ -5200,16 +7491,20 @@ ScreenManager::ScreenId ActiveScreen() {
         case MENU_VOLUME_OPEN:           return ScreenId::Volume;
         case MENU_POMODORO_OPEN:         return ScreenId::Pomodoro;
         case MENU_GAME_ACTIVE:
-            // Tap the Greens hides its panel and plays on the eye canvas, so it
-            // keeps the renderer live; the other two are ordinary panels.
-            if (activeGame == ACTIVE_GAME_EYE_TAP) {
-                return ScreenId::EyeTapGame;
+            if (activeGame == ACTIVE_GAME_GREEN_EYE) {
+                return ScreenId::GreenEyeGame;
             }
             if (activeGame == ACTIVE_GAME_QUICK_TAP) {
                 return ScreenId::QuickTapGame;
             }
             if (activeGame == ACTIVE_GAME_SNAKE) {
                 return ScreenId::SnakeGame;
+            }
+            if (activeGame == ACTIVE_GAME_TILT_MAZE) {
+                return ScreenId::TiltMazeGame;
+            }
+            if (activeGame == ACTIVE_GAME_TRAFFIC_RUNNER) {
+                return ScreenId::TrafficRunnerGame;
             }
             return ScreenId::CheckerGame;
         case MENU_CLOSED:
@@ -5319,6 +7614,9 @@ void NavigateNext() {
     if (currentState != MENU_CLOSED) {
         MarkMenuActivity();
     }
+    if (IsGameLoadPending()) {
+        return;
+    }
     switch (currentState) {
         case MENU_OPEN:
             SelectNext();
@@ -5393,6 +7691,9 @@ void NavigateNext() {
 void NavigatePrev() {
     if (currentState != MENU_CLOSED) {
         MarkMenuActivity();
+    }
+    if (IsGameLoadPending()) {
+        return;
     }
     switch (currentState) {
         case MENU_OPEN:
@@ -5483,18 +7784,27 @@ void ActivateCurrent() {
             ActivateCurrentOption();
             break;
         case MENU_GAMES_OPEN:
+            if (IsGameLoadPending()) {
+                break;   // one load at a time; the spinner is already up
+            }
             switch (selectedGame) {
-                case GAME_SELECTION_EYE_TAP:
-                    StartTapTheGreens();
+                case GAME_SELECTION_GREEN_EYE:
+                    BeginGameLoad(ACTIVE_GAME_GREEN_EYE);
                     break;
                 case GAME_SELECTION_CHECKER:
-                    StartChecker3x3();
+                    BeginGameLoad(ACTIVE_GAME_CHECKER);
                     break;
                 case GAME_SELECTION_QUICK_TAP:
-                    StartQuickTap();
+                    BeginGameLoad(ACTIVE_GAME_QUICK_TAP);
                     break;
                 case GAME_SELECTION_SNAKE:
-                    StartSnake();
+                    BeginGameLoad(ACTIVE_GAME_SNAKE);
+                    break;
+                case GAME_SELECTION_TILT_MAZE:
+                    BeginGameLoad(ACTIVE_GAME_TILT_MAZE);
+                    break;
+                case GAME_SELECTION_TRAFFIC_RUNNER:
+                    BeginGameLoad(ACTIVE_GAME_TRAFFIC_RUNNER);
                     break;
                 case GAME_SELECTION_COUNT:
                     break;
@@ -5954,7 +8264,7 @@ void OpenGamesMenu() {
         return;
     }
 
-    if (!IsEyeGameUnlocked()) {
+    if (!IsGamesUnlocked()) {
         if (displayHandle != nullptr) {
             displayHandle->ShowNotification("Mở khóa GIẢI TRÍ ở Level 1");
         }
@@ -6002,29 +8312,26 @@ void CloseGamesToStats() {
     gamesOpenedFromCare = false;
 }
 
-void StartTapTheGreens() {
+void StartGreenEye() {
     if (currentState != MENU_GAMES_OPEN) {
         return;
     }
 
-    activeGame = ACTIVE_GAME_EYE_TAP;
-    std::snprintf(gameStatusMsg, sizeof(gameStatusMsg), "%s", "Đang chơi...");
+    activeGame = ACTIVE_GAME_GREEN_EYE;
+    gamesActionColor = GreenEyeGame::HueRgb(GreenEyeGame::Hue::kGreen);
+    gamesStatusColor = COLOR_TEXT;
+    greenEyeRewardPaid = true;   // nothing played yet
+    // MẮT XANH draws its own panel; the eyes stay in their normal mode
+    // underneath, paused by the panel screen policy.
     if (auto* eye_display = GetEyeDisplay(); eye_display != nullptr) {
-        eye_display->SetEyeGameMode(true);
-        eye_display->SetEyeMoodColorAuto(false);
         eye_display->CancelBathing();
     }
-    EyeGame::Start(CareSystem::STAT_MOOD);
-    eyeGameFinishPending = false;
-    // Now, not on the first tick: until this the eyes still wear Bubu's mood
-    // colour, and nothing tells a child the game has not started yet.
-    PushEyeGameColors();
 
-    // Keep MENU_GAME_ACTIVE to suppress idle motion/sfx, but hide menu panel for full eye space.
     DisplayLockGuard lock(displayHandle);
-    HidePanel(gamesPanel);
+    ShowPanel(gamesPanel);
     SetMenuState(MENU_GAME_ACTIVE);
-    StartEyeGameTimer();
+    ShowGreenEyeScreen(GreenEyeScreen::kSetup);
+    StartGreenEyeTimer();
 }
 
 void StartQuickTap() {
@@ -6039,8 +8346,6 @@ void StartQuickTap() {
     // Quick Tap draws its own panel; the eyes stay in their normal mode
     // underneath it rather than being driven by the game.
     if (auto* eye_display = GetEyeDisplay(); eye_display != nullptr) {
-        eye_display->SetEyeGameMode(false);
-        eye_display->SetEyeMoodColorAuto(true);
         eye_display->CancelBathing();
     }
 
@@ -6072,8 +8377,6 @@ void StartSnake() {
     // Snake draws its own panel; the eyes stay in their normal mode underneath
     // rather than being driven by the game, same as Quick Tap.
     if (auto* eye_display = GetEyeDisplay(); eye_display != nullptr) {
-        eye_display->SetEyeGameMode(false);
-        eye_display->SetEyeMoodColorAuto(true);
         eye_display->CancelBathing();
     }
 
@@ -6082,6 +8385,60 @@ void StartSnake() {
     SetMenuState(MENU_GAME_ACTIVE);
     ShowSnakeScreen(SnakeScreen::kSetup);
     StartSnakeTimer();
+}
+
+void StartTiltMaze() {
+    if (currentState != MENU_GAMES_OPEN) {
+        return;
+    }
+    if (mazeCanvas == nullptr || mazeCanvasBuf == nullptr) {
+        if (displayHandle != nullptr) {
+            displayHandle->ShowNotification("Lỗi trò chơi");
+        }
+        return;
+    }
+
+    activeGame = ACTIVE_GAME_TILT_MAZE;
+    gamesActionColor = kMazeAccent;
+    gamesStatusColor = COLOR_TEXT;
+    if (auto* eye_display = GetEyeDisplay(); eye_display != nullptr) {
+        eye_display->CancelBathing();
+    }
+
+    DisplayLockGuard lock(displayHandle);
+    ShowPanel(gamesPanel);
+    SetMenuState(MENU_GAME_ACTIVE);
+    TiltMazeGame::StartLevel(TiltMazeGame::GetCurrentLevel(), lv_tick_get());
+    mazeVisiblePhase = TiltMazeGame::Phase::kStopped;
+    UpdateGamesUI();
+    StartTiltMazeTimer();
+}
+
+void StartTrafficRunner() {
+    if (currentState != MENU_GAMES_OPEN) {
+        return;
+    }
+    if (runnerCanvas == nullptr || runnerCanvasBuf == nullptr) {
+        if (displayHandle != nullptr) {
+            displayHandle->ShowNotification("Lỗi trò chơi");
+        }
+        return;
+    }
+
+    activeGame = ACTIVE_GAME_TRAFFIC_RUNNER;
+    gamesActionColor = kRunnerAccent;
+    gamesStatusColor = COLOR_TEXT;
+    if (auto* eye_display = GetEyeDisplay(); eye_display != nullptr) {
+        eye_display->CancelBathing();
+    }
+
+    TrafficRunnerGame::Stop();
+    DisplayLockGuard lock(displayHandle);
+    ShowPanel(gamesPanel);
+    SetMenuState(MENU_GAME_ACTIVE);
+    runnerVisiblePhase = TrafficRunnerGame::Phase::kGameOver;
+    UpdateGamesUI();
+    StartTrafficRunnerTimer();
 }
 
 void OpenFortuneTeller() {
@@ -6133,8 +8490,6 @@ void StartChecker3x3() {
     gamesStatusColor = kCheckerPlayerMark;
     std::snprintf(gameStatusMsg, sizeof(gameStatusMsg), "%s", "LƯỢT BẠN");
     if (auto* eye_display = GetEyeDisplay(); eye_display != nullptr) {
-        eye_display->SetEyeGameMode(false);
-        eye_display->SetEyeMoodColorAuto(true);
         eye_display->CancelBathing();
     }
 
@@ -6150,38 +8505,27 @@ void HandleGameFinished() {
         return;
     }
 
-    if (activeGame == ACTIVE_GAME_EYE_TAP) {
-        const EyeGame::GameResult result = EyeGame::GetLastResult();
-        const uint8_t score = EyeGame::GetScore();
-        const int reward = static_cast<int>(score) * static_cast<int>(EyeGame::GetRewardPerHit());
-        switch (result) {
-            case EyeGame::GameResult::kFinishNormal:
-                std::snprintf(gameStatusMsg, sizeof(gameStatusMsg), "Giỏi quá! %u (+%d Tâm trạng)",
-                              static_cast<unsigned>(score), reward);
-                break;
-            case EyeGame::GameResult::kFinishWrongTap:
-                std::snprintf(gameStatusMsg, sizeof(gameStatusMsg),
-                              "Sai rồi! %+d Tâm trạng, -5 Năng lượng", reward - 10);
-                break;
-            case EyeGame::GameResult::kNone:
-            default:
-                std::snprintf(gameStatusMsg, sizeof(gameStatusMsg), "%s", "Đã dừng");
-                break;
-        }
-
-        if (auto* eye_display = GetEyeDisplay(); eye_display != nullptr) {
-            eye_display->SetEyeGameMode(false);
-            eye_display->SetEyeMoodColorAuto(true);
-        }
+    if (activeGame == ACTIVE_GAME_GREEN_EYE) {
+        gamesActionColor = GreenEyeGame::HueRgb(GreenEyeGame::Hue::kGreen);
+        gamesStatusColor = COLOR_TEXT;
         if (displayHandle != nullptr) {
+            // Under the lock GreenEyeTimerCb runs under, so the tick cannot
+            // finish the game -- and pay for it -- in between. Every way out
+            // of a game comes through here, and a round left mid-way is still
+            // paid for (a no-op if the scoreboard already paid).
             DisplayLockGuard teardown_lock(displayHandle);
-            StopEyeGameTimer();   // lv_timer_delete needs the LVGL lock
+            PayGreenEyeReward();
+            GreenEyeGame::Stop();
+            StopGreenEyeTimer();   // lv_timer_delete needs the LVGL lock
+            HideGreenEyeAll();
         }
+        greenEyeScreen = GreenEyeScreen::kSetup;
     } else if (activeGame == ACTIVE_GAME_CHECKER) {
         const CheckerGame::Result result = CheckerGame::GetResult();
         auto* eye_display = GetEyeDisplay();
         switch (result) {
             case CheckerGame::Result::kPlayerWin:
+                ESP_LOGI(TAG, "Game reward: checker +%d mood", CareSystem::kGamesBoost);
                 CareSystem::AddMood(CareSystem::kGamesBoost);
                 gamesStatusColor = COLOR_MINT;
                 gamesActionColor = 0xA7D8FF;
@@ -6192,6 +8536,8 @@ void HandleGameFinished() {
                 }
                 break;
             case CheckerGame::Result::kBubuWin:
+                // Playing with Bubu is fun whoever wins; a finished game still pays.
+                RewardGameMood("checker", CareSystem::kGamesBoost / 2);
                 gamesStatusColor = 0xFFB366;
                 gamesActionColor = 0xFFD23F;
                 std::snprintf(gameStatusMsg, sizeof(gameStatusMsg), "%s", "Bubu thắng rồi");
@@ -6201,6 +8547,7 @@ void HandleGameFinished() {
                 }
                 break;
             case CheckerGame::Result::kDraw:
+                RewardGameMood("checker", CareSystem::kGamesBoost / 2);
                 gamesStatusColor = 0xA7D8FF;
                 gamesActionColor = 0xA7D8FF;
                 std::snprintf(gameStatusMsg, sizeof(gameStatusMsg), "%s", "Hòa rồi");
@@ -6253,6 +8600,24 @@ void HandleGameFinished() {
             StopSnakeTimer();   // lv_timer_delete needs the LVGL lock
             HideSnakeAll();
         }
+    } else if (activeGame == ACTIVE_GAME_TILT_MAZE) {
+        TiltMazeGame::Stop();
+        gamesActionColor = kMazeAccent;
+        gamesStatusColor = COLOR_TEXT;
+        if (displayHandle != nullptr) {
+            DisplayLockGuard teardown_lock(displayHandle);
+            StopTiltMazeTimer();
+            HideTiltMazeAll();
+        }
+    } else if (activeGame == ACTIVE_GAME_TRAFFIC_RUNNER) {
+        TrafficRunnerGame::Stop();
+        gamesActionColor = kRunnerAccent;
+        gamesStatusColor = COLOR_TEXT;
+        if (displayHandle != nullptr) {
+            DisplayLockGuard teardown_lock(displayHandle);
+            StopTrafficRunnerTimer();
+            HideTrafficRunnerAll();
+        }
     }
 
     activeGame = ACTIVE_GAME_NONE;
@@ -6266,6 +8631,7 @@ void HandleGameFinished() {
     SetGamesMenuStatusForSelection();
 
     DisplayLockGuard lock(displayHandle);
+    UnloadGameUi();
     ShowPanel(gamesPanel);
     SetMenuState(MENU_GAMES_OPEN);
     UpdateGamesUI();
@@ -6277,21 +8643,116 @@ bool HandleGameTap(uint16_t x, uint16_t y) {
     }
 
     MarkMenuActivity();
-    auto* eye_display = GetEyeDisplay();
-    if (activeGame == ACTIVE_GAME_EYE_TAP) {
-        if (eye_display == nullptr || !eye_display->IsTouchOnEyes(static_cast<int>(x), static_cast<int>(y))) {
+    if (activeGame == ACTIVE_GAME_GREEN_EYE) {
+        bool leave = false;
+        {
+            DisplayLockGuard lock(displayHandle);
+            switch (greenEyeScreen) {
+                case GreenEyeScreen::kSetup:
+                    if (IsPointNear(greenEyePlayBtn, x, y, kGreenEyeButtonSlackPx)) {
+                        BeginGreenEyeGame();
+                    }
+                    break;
+                case GreenEyeScreen::kPlaying:
+                    // Judged under the lock the tick also holds, and drawn now
+                    // rather than on the next tick: a hit pops under the finger.
+                    GreenEyeGame::HandleTap(static_cast<int>(x), static_cast<int>(y), lv_tick_get());
+                    AnnounceGreenEyeDecision();
+                    UpdateGreenEyePlayfield();
+                    break;
+                case GreenEyeScreen::kBanner:
+                    break;   // let HẾT LƯỢT! run its hold
+                case GreenEyeScreen::kScore:
+                    if (IsPointNear(greenEyeAgainBtn, x, y, kGreenEyeButtonSlackPx)) {
+                        BeginGreenEyeGame();
+                    } else if (IsPointNear(greenEyeMenuBtn, x, y, kGreenEyeButtonSlackPx)) {
+                        leave = true;
+                    }
+                    break;
+            }
+        }
+        if (leave) {
+            HandleGameFinished();   // takes the display lock itself
+        }
+        return true;
+    }
+
+    if (activeGame == ACTIVE_GAME_TRAFFIC_RUNNER) {
+        const auto phase = TrafficRunnerGame::GetState().phase;
+        if (phase == TrafficRunnerGame::Phase::kStopped) {
+            if (IsPointInside(runnerPlayBtn, x, y)) {
+                TrafficRunnerGame::Start(lv_tick_get());
+                DisplayLockGuard lock(displayHandle);
+                UpdateTrafficRunnerUI();
+            }
             return true;
         }
-
-        const EyeGame::TapOutcome tap_outcome = EyeGame::HandleTap(static_cast<int>(x), static_cast<int>(y));
-        if (tap_outcome == EyeGame::TapOutcome::kCorrect) {
-            eye_display->TriggerEyeGamePlus(static_cast<int>(x) < 120);
-            // A hit re-rolls both eyes; show that now rather than on the next
-            // tick, or a fast second tap is aimed at colours already gone.
-            PushEyeGameColors();
+        if (phase == TrafficRunnerGame::Phase::kGameOver) {
+            if (IsPointInside(runnerAgainBtn, x, y)) {
+                TrafficRunnerGame::Start(lv_tick_get());
+                DisplayLockGuard lock(displayHandle);
+                UpdateTrafficRunnerUI();
+            } else if (IsPointInside(runnerMenuBtn, x, y)) {
+                HandleGameFinished();
+            }
+            return true;
         }
-        if (!EyeGame::IsRunning()) {
-            HandleGameFinished();
+        return true;
+    }
+
+    if (activeGame == ACTIVE_GAME_TILT_MAZE) {
+        const TiltMazeGame::State& maze_state = TiltMazeGame::GetState();
+        switch (maze_state.phase) {
+            case TiltMazeGame::Phase::kCalibrating:
+                if (IsPointInside(mazeCalibrateBtn, x, y)) {
+                    if (!TiltMazeGame::ConfirmNeutral(lv_tick_get()) && displayHandle != nullptr) {
+                        displayHandle->ShowNotification("Hãy giữ Bubu yên một chút");
+                    }
+                    DisplayLockGuard lock(displayHandle);
+                    UpdateTiltMazeUI();
+                }
+                return true;
+            case TiltMazeGame::Phase::kCountdown:
+                return true;
+            case TiltMazeGame::Phase::kPlaying: {
+                TiltMazeGame::EnterPlanning();
+                DisplayLockGuard lock(displayHandle);
+                UpdateTiltMazeUI();
+                return true;
+            }
+            case TiltMazeGame::Phase::kPlanning: {
+                if (IsPointInside(mazePlanUpBtn, x, y)) {
+                    TiltMazeGame::PanPlanning(TiltMazeGame::PanDirection::kUp);
+                } else if (IsPointInside(mazePlanDownBtn, x, y)) {
+                    TiltMazeGame::PanPlanning(TiltMazeGame::PanDirection::kDown);
+                } else if (IsPointInside(mazePlanLeftBtn, x, y)) {
+                    TiltMazeGame::PanPlanning(TiltMazeGame::PanDirection::kLeft);
+                } else if (IsPointInside(mazePlanRightBtn, x, y)) {
+                    TiltMazeGame::PanPlanning(TiltMazeGame::PanDirection::kRight);
+                } else if (IsPointInside(mazePlanResumeBtn, x, y)) {
+                    TiltMazeGame::ResumeFromPlanning(lv_tick_get());
+                }
+                DisplayLockGuard lock(displayHandle);
+                UpdateTiltMazeUI();
+                return true;
+            }
+            case TiltMazeGame::Phase::kComplete:
+                if (IsPointInside(mazeResultRetryBtn, x, y)) {
+                    TiltMazeGame::StartLevel(maze_state.level_index, lv_tick_get());
+                    DisplayLockGuard lock(displayHandle);
+                    UpdateTiltMazeUI();
+                } else if (IsPointInside(mazeResultPrimaryBtn, x, y)) {
+                    if (maze_state.level_index + 1 < TiltMazeGame::kImplementedLevels) {
+                        TiltMazeGame::StartLevel(maze_state.level_index + 1, lv_tick_get());
+                        DisplayLockGuard lock(displayHandle);
+                        UpdateTiltMazeUI();
+                    } else {
+                        HandleGameFinished();
+                    }
+                }
+                return true;
+            case TiltMazeGame::Phase::kStopped:
+                return true;
         }
         return true;
     }
@@ -6456,14 +8917,18 @@ void HandleGameLongPress() {
     if (currentState != MENU_GAME_ACTIVE) {
         return;
     }
-    if (activeGame == ACTIVE_GAME_EYE_TAP) {
-        EyeGame::Stop();
+    if (activeGame == ACTIVE_GAME_GREEN_EYE) {
+        // Stopped (and paid) under the display lock in HandleGameFinished().
     } else if (activeGame == ACTIVE_GAME_CHECKER) {
         CheckerGame::Stop();
     } else if (activeGame == ACTIVE_GAME_QUICK_TAP) {
         QuickTapGame::Stop();
     } else if (activeGame == ACTIVE_GAME_SNAKE) {
         SnakeGame::Stop();
+    } else if (activeGame == ACTIVE_GAME_TILT_MAZE) {
+        TiltMazeGame::Stop();
+    } else if (activeGame == ACTIVE_GAME_TRAFFIC_RUNNER) {
+        TrafficRunnerGame::Stop();
     }
     HandleGameFinished();
 }
@@ -6811,16 +9276,20 @@ void Render() {
     }
 
     if (currentState == MENU_GAMES_OPEN) {
+        // Not while a game is loading: the 1 Hz repaint would put the carousel
+        // back on screen underneath "ĐANG TẢI...".
+        if (IsGameLoadPending()) {
+            return;
+        }
         DisplayLockGuard lock(displayHandle);
         UpdateGamesUI();
         return;
     }
 
     if (currentState == MENU_GAME_ACTIVE) {
-        if (activeGame == ACTIVE_GAME_EYE_TAP) {
-            // Nothing here: EyeGameTimerCb ticks the game, pushes its colours
-            // and hands the finish off. This path ran at 1Hz, far too slowly
-            // for rounds that last 1-2s.
+        if (activeGame == ACTIVE_GAME_GREEN_EYE) {
+            // Nothing here: GreenEyeTimerCb ticks the game at 30Hz. This path
+            // runs at 1Hz, far too slowly for rounds that last a second.
         } else if (activeGame == ACTIVE_GAME_CHECKER) {
             if (checkerScreen == CheckerScreen::kTitle) {
                 return;   // waits for the play button
@@ -7007,6 +9476,13 @@ bool HandleTap(uint16_t x, uint16_t y) {
     if (!IsAnyOpen()) {
         return false;
     }
+    // Swallow taps while a game's screens are being built: nothing on the
+    // loading screen is interactive, and a stray tap must not reach the
+    // carousel underneath.
+    if (IsGameLoadPending()) {
+        MarkMenuActivity();
+        return true;
+    }
 
     // Shared chrome first: the up/down arrows exist on most panels.
     if (IsTapOnPrevButton(x, y)) {
@@ -7098,6 +9574,22 @@ bool HandleSwipe(SwipeDirection direction) {
     return true;
 }
 
+void HandleImuAccel(float ax, float ay, float az) {
+    if (currentState != MENU_GAME_ACTIVE ||
+        (activeGame != ACTIVE_GAME_TILT_MAZE &&
+         activeGame != ACTIVE_GAME_TRAFFIC_RUNNER)) {
+        return;
+    }
+    // Tilting is active play even when the child does not touch the screen.
+    // Keep the menu inactivity watchdog from closing an IMU game underneath it.
+    MarkMenuActivity();
+    if (activeGame == ACTIVE_GAME_TILT_MAZE) {
+        TiltMazeGame::FeedAccel(ax, ay, az, lv_tick_get());
+    } else {
+        TrafficRunnerGame::FeedAccel(ax, ay, az, lv_tick_get());
+    }
+}
+
 bool HandleLongPress(uint16_t x, uint16_t y, bool close_by_default) {
     if (!IsAnyOpen()) {
         return false;
@@ -7116,11 +9608,26 @@ bool HandleLongPress(uint16_t x, uint16_t y, bool close_by_default) {
             if (!close_by_default) {
                 return false;
             }
+            if (IsGameLoadPending()) {
+                // Back while loading cancels the load, not the carousel.
+                DisplayLockGuard lock(displayHandle);
+                CancelGameLoadLocked();
+                UpdateGamesUI();
+                return true;
+            }
             CloseGamesToStats();
             return true;
         case MENU_GAME_ACTIVE:
             if (!close_by_default) {
                 return false;
+            }
+            // In MẮT XANH a child pressing an eye hard and long is still
+            // aiming at it: that is a (late) tap, not a request to leave.
+            // Leaving mid-game is a long press on the black around the eyes.
+            if (activeGame == ACTIVE_GAME_GREEN_EYE &&
+                greenEyeScreen == GreenEyeScreen::kPlaying &&
+                GreenEyeGame::EyeAt(static_cast<int>(x), static_cast<int>(y)) >= 0) {
+                return HandleGameTap(x, y);
             }
             HandleGameLongPress();
             return true;

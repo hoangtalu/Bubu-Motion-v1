@@ -301,3 +301,183 @@ Live test on your own Bubu:
 
 Rollback: restore `dist.bak-study-recall-*` and `bubu-portal.bak-study-recall-*` as in step 9.
 Nothing to undo in the database.
+
+---
+
+# Release 3 — step cards (phase 2a firmware + 2b gateway)
+
+Status: **deployed 12:12 2026-09-18 (backup `dist.bak-cards-1789708312`), switched off 14:37
+(backup `dist.bak-cardsoff-1789715828`).** The live test found every card push froze the
+conversation — Gemini 3.1 Flash Live runs tool calls synchronously, `NON_BLOCKING` is not
+supported — and 8 of 11 pushes were refused as too wide. Cards now need `TUTOR_CARDS=on` in
+`.env`, which is unset. Do not set it on a synchronous-only model. The section below is the
+record of what was deployed.
+
+**2b must not reach the server before 2a is on a device**, but it is safe to deploy it to all
+devices at once: the card rules are added to the prompt only when the device itself reports
+`self.tutor.show_step` in its MCP tool list, and every other device gets exactly today's
+`tutor-v2` prompt with no mention of a screen. Card tool calls are refused outside study time.
+
+What changes on the server:
+
+- **`tutor-v2` prompt.** Card rules (D17) appended for card-capable devices only. Sessions are
+  recorded as `tutor-v2-cards` or `tutor-v2`, so the report can compare them — that comparison
+  is the only evidence that a card helps rather than giving the answer away faster.
+- **Cards do not interrupt speech.** The two card tools are declared `NON_BLOCKING`; a drawn
+  card answers `SILENT` (context only, nothing spoken) and a refusal answers `WHEN_IDLE` so the
+  model rewrites it shorter at the next pause. Using `SILENT` for both would hide every refusal
+  from the model forever — the easy mistake here.
+- **Normalisation before the device:** LaTeX unwrapped, `\times`→`×`, `−`/`–`→`-`, `→`→`->`,
+  `≈`→`~`, `⅓`→`1/3`, `*`→`×`, whitespace collapsed to one line. Only the three card slots are
+  forwarded. This saves round trips; the firmware's own measurement is the safety net.
+- **Stale cards are cleared** when a session starts outside study time, so a card left on the
+  glass when the time ran out disappears on the next conversation.
+
+Firmware (2a) ships on the next OTA, not here: `BoardMode::kSteps`, tools
+`self.tutor.show_step` / `self.tutor.end`, three slots measured against the real fonts with
+refusal (never clipping), dots, chevron arrows, swipe. **The `BUBU_TUTOR_CARD_BENCH` self-test
+has been removed — check `main/CMakeLists.txt` has no such define before building an OTA.**
+
+Steps: backups (step 2) → rsync gateway dist (step 4) → restart + log check (step 5) — no
+portal deploy, nothing in the portal changed.
+
+Expected files in the step-4 dry run: `device-session.js` `schema-convert.js` `tutor.js`
+`tutor.test.js` `tutor-cards.js` `tutor-cards.test.js` `schema-convert.test.js` — stop if
+anything else appears.
+
+First-session caveat: the gateway starts a conversation on the device's **cached** tool list,
+so the first conversation after a device takes the new firmware still has no card rules. The
+handshake behind it updates the cache and the next conversation has them.
+
+Live test (needs a device on 2a firmware):
+
+1. Start study time (Toán, 30 phút). Log must read `tutor mode: math … (tutor-v2-cards, …)`.
+   If it says `tutor-v2`, the device is not reporting the card tools — check the firmware.
+2. Say a two-step word problem. Answer the first step out loud. A card should appear **after**
+   your answer, holding the number you said — never before, and never the final answer.
+3. Say "tớ không biết" repeatedly until Bubu gives the answer. It must be **spoken only**; no
+   card carrying the answer (D17).
+4. Swipe and tap the arrows through the stack; tap the middle to close. Cards survive the
+   conversation ending.
+5. Watch for `tool self_tutor_show_step -> step card shown` and, when a line is too long,
+   `expr quá rộng: … tối đa 186px` followed by a shorter retry.
+6. End study time. Next conversation: cards cleared, no card tool calls, persona back.
+
+Rollback: restore `dist.bak-cards-*` as in step 9. Nothing to undo in the database; a rolled
+back gateway simply stops adding card rules, and firmware with the tools sits unused.
+
+---
+
+# Release 4 — dictation (chính tả), Tiếng Việt study time
+
+Status: **deployed 2026-09-18 15:17 (gateway) / 15:18 (portal)**, backup suffix
+`dictation-1789719357`. Dry run matched the 10 expected files. **Live test (R4 step 6) not
+yet done.** Plan: `dictation-plan.md`.
+
+**Follow-up 15:56, `dictation-v1.1`:** reading was too fast on the first live test. Gemini is
+now given the chunk with "…" between syllables (`pacedScript`, the stored passage is
+unchanged) plus a slower prompt line; measured ~1.3 tiếng/s, ~0.4 s after every syllable,
+either change alone was not reliable. Chat history stores the read-aloud script for reading
+turns. Backup `dist.bak-dictation-pace-1789721783`; dry run was 3 files.
+
+What it does:
+
+- **Tiếng Việt becomes a study subject whose only activity is dictation.** The parent picks
+  Tiếng Việt on `/tutor` and pastes the passage (box shown only for that subject; max 1,000
+  characters). Bubu reads it in groups of at most 5 chữ, every punctuation mark spoken as a
+  word ("phẩy", "chấm hỏi", "mở ngoặc kép", "xuống dòng"…), the whole sentence once before its
+  first group, and waits. The child says "đọc tiếp", "đọc lại", "cụm trước", "cả câu",
+  "cả bài", "từ đầu". Prompt `dictation-v1`, recorded in `bubu_tutor_session` like math.
+- **The position lives in the gateway** (new table `bubu_dictation`, created on start), so a
+  closed session — 8 s after a reply in wake-word mode on firmware ≤ 1.7.6 — resumes at the
+  right group. A group only advances if the child actually spoke since the last one.
+- **No text to the device** during dictation (the future subtitles would show the spelling).
+- **While the child writes:** 100 ms of silence to Gemini every 30 s (it drops an idle
+  session at ~150 s), a `{"type":"ping"}` to the device every 60 s (firmware ≤ 1.7.6 logs
+  "Unknown message type" once a minute; the message still resets its 120 s timeout), one
+  spoken nudge at 2× the expected writing time for the grade (lớp 2 / unknown: 120 s), and
+  `session_end` after 5 minutes with nobody calling. Position is kept.
+- Math is unchanged. The tutor report skips dictation sessions.
+
+| | value |
+|---|---|
+| Gateway | 121/121 tests (19 new), `tsc` clean |
+| Portal | 29/29 tests, eslint clean, **BUILD_ID `2blkpFElhLEPyAhy1m5t2`**, no `.env*` in the bundle |
+| Local proof | isolated gateway (memory stores) + dev portal + a fake device speaking recorded Vietnamese over the real device protocol to the real Live model: greeting, `doc_tiep` 1/11 with the sentence first, `doc_lai`, a ping at 62 s of silence, the nudge at 124 s, and after **170 s** of silence "đọc tiếp" still answered on the same Gemini session with 2/11. Transcript word for word; **0** `sentence_start` messages reached the device. `/tutor` at 375 px: empty passage refused with a message, progress "2/11 cụm", passage shown for checking |
+
+## R4 step 1 — Pre-flight dry run
+
+```bash
+rsync -rcn -i /Users/judes/Downloads/Bubu-Motion-v1-main/bubu-gateway/dist/ root@110.172.29.207:/opt/bubu-gateway/dist/ | grep -v '\.map$'
+```
+
+**Expected, and nothing else:** `dictation.js` `dictation.test.js` `device-session.js`
+`gemini-bridge.js` `index.js` `services.js` `store-mysql.js` `tutor.js` `tutor-report.js`
+`ws-server.js` (`protocol-types.js` may appear; it holds types only). **Stop** if `tutor-cards*`,
+`config.js`, `schema-convert.js` or anything else appears: the live gateway and this tree
+differ by more than this release (the 14:37 cards-off deploy should already be live).
+
+## R4 step 2 — Backups
+
+```bash
+ssh root@110.172.29.207 'TS=$(date +%s); cp -a /opt/bubu-gateway/dist /opt/bubu-gateway/dist.bak-dictation-$TS && cp -a /opt/bubu-gateway/.env /opt/bubu-gateway/.env.bak-dictation-$TS && cp -a /opt/bubu-portal /opt/bubu-portal.bak-dictation-$TS && cat /opt/bubu-portal/.next/BUILD_ID && echo "backup suffix: dictation-$TS"'
+```
+
+BUILD_ID being replaced: expected `JsINBMwoXOXm5WE9lEL1o`.
+
+## R4 step 3 — Enable Tiếng Việt in the catalog
+
+Changes only `"vietnamese" … "enabled":false` → `true` on the one catalog line:
+
+```bash
+ssh root@110.172.29.207 'cd /opt/bubu-gateway && sed -i "/^TUTOR_SUBJECT_CATALOG=/s/\"id\":\"vietnamese\",\"name\":\"Tiếng Việt\",\"enabled\":false/\"id\":\"vietnamese\",\"name\":\"Tiếng Việt\",\"enabled\":true/" .env && grep "^TUTOR_SUBJECT_CATALOG=" .env && diff .env .env.bak-dictation-* | head'
+```
+
+Expected: the catalog line with Tiếng Việt `true`, and a diff of exactly that one line.
+
+## R4 step 4 — Gateway code, restart, verify
+
+```bash
+rsync -rc /Users/judes/Downloads/Bubu-Motion-v1-main/bubu-gateway/dist/ root@110.172.29.207:/opt/bubu-gateway/dist/
+```
+
+```bash
+ssh root@110.172.29.207 'systemctl restart bubu-gateway && sleep 4 && systemctl is-active bubu-gateway && curl -s localhost:8080/healthz && echo && journalctl -u bubu-gateway --since "-1min" --no-pager | grep -E "\[services\]|\[tutor\]|listening"'
+```
+
+Expected: `active`, healthz ok, **`[services] dictation passages: mysql`**, no `[tutor]` line.
+The `/internal/tutor` check from step 5 must now show Tiếng Việt `"enabled":true`. Public OTA
+200 as in step 5.
+
+## R4 step 5 — Portal
+
+Same as step 7, with **BUILD_ID `2blkpFElhLEPyAhy1m5t2`** expected. `/admin/login` answers
+401 (Caddy basic auth), `/tutor` 307.
+
+## R4 step 6 — Live test on your own Bubu
+
+Use a short passage with commas, a question, quotes and a line break. Watch
+`journalctl -u bubu-gateway -f | grep -E "tutor mode|dictation|tool doc_"`.
+
+1. `/tutor` → Tiếng Việt, paste, 30 phút. Log on the next conversation:
+   `tutor mode: vietnamese … (dictation-v1, … dictation at 0/N)`.
+2. **Tap mode:** tap, "Bubu ơi, mình viết chính tả nhé" → greeting, no reading yet. "Đọc tiếp"
+   → the whole first sentence, then the first group slowly with its punctuation. Nothing
+   appears on the screen as text.
+3. "Đọc lại" → the same group. Then stay silent: a `ping` every minute, the nudge at
+   ~2 minutes (lớp 2 / no grade), and after 2.5+ minutes "đọc tiếp" still works without a
+   new connection (no `gemini session closed` in between).
+4. **Wake-word mode (1.7.6):** after a group, stay silent past 8 s — the device closes. "Hi Joy,
+   đọc tiếp" → new session logs `dictation at K/N` and reads group K+1, not the first again.
+5. Portal `/tutor`: "Bubu đã đọc K/N cụm" and the passage under "Xem bài".
+6. Say something unrelated ("kể chuyện đi") → Bubu steers back without reading ahead.
+   Say "con đau bụng" → Bubu answers that first (release blocker, same as math).
+
+## R4 rollback
+
+- **Switch dictation off without touching code:** put `"enabled":false` back for Tiếng Việt
+  in `.env` (or restore `.env.bak-dictation-*`) and restart the gateway. A device already
+  in Tiếng Việt study time falls back to normal mode on its next conversation.
+- **Full:** restore `dist.bak-dictation-*`, `.env.bak-dictation-*` and
+  `bubu-portal.bak-dictation-*` as in step 9. The `bubu_dictation` table can stay; nothing
+  else reads it.

@@ -99,7 +99,7 @@ void CloseOptionsToStats();
 void ActivateCurrentOption();
 void OpenGamesMenu();
 void CloseGamesToStats();
-void StartTapTheGreens();
+void StartGreenEye();
 void HandleGameFinished();
 bool HandleGameTap(uint16_t x, uint16_t y);
 void HandleGameLongPress();
@@ -161,6 +161,10 @@ bool HandleTap(uint16_t x, uint16_t y);
 // "this release was not a gesture" without knowing which screen is up.
 enum class SwipeDirection : uint8_t { kUp, kDown, kLeft, kRight };
 bool HandleSwipe(SwipeDirection direction);
+
+// Latest accelerometer sample, delivered on the application task. Ignored
+// unless the tilt-maze screen owns the IMU.
+void HandleImuAccel(float ax, float ay, float az);
 
 // A long press. x/y are the touch point, or 0,0 for a physical button.
 // close_by_default controls the fallback for screens with no long-press

@@ -1,6 +1,12 @@
 # Tutor Mode — Design Plan
 
-Status: **phase 1 deployed 2026-09-17** (`tutor-v1`). Study-time memory + chat fixes (`tutor-v1.1`) built, not deployed — see `tutor-mode-deploy.md` "Release 2". Phase 2 (card) not started.
+Status: **phase 1 deployed 2026-09-17** (`tutor-v1`); study-time memory (`tutor-v1.1`)
+deployed 2026-09-17. **Phase 2 (step cards) was tried live on 2026-09-18 and switched off the
+same day.** The design below assumes `NON_BLOCKING` function calls; Gemini 3.1 Flash Live does
+not support them, so every card push froze the conversation in "listening", and 8 of 11
+pushes were refused as too wide. Cards are off on the server (`TUTOR_CARDS` unset); the
+firmware card mode exists only on the bench device. Read §0, §5b and §5c as a record of
+what was tried, not as the plan. See DEVLOG 2026-09-18 (afternoon) and STATE.md.
 Target board: `esp32s3-1.28-round-i80` (240×240 round LCD, CST816 touch). Gateway:
 `bubu-gateway` on Gemini Live. Every number below was measured against the current
 tree on 2026-09-16, not copied out of `DEVLOG.md`.
@@ -51,6 +57,23 @@ device changes behaviour until a parent switches mode) delivers the tutor; phase
 | D14 | The parent **picks a duration** when switching; tutor mode ends on its own | user |
 | D15 | Tutor mode speaks **miền Bắc** regardless of the parent's persona | user |
 | D16 | Locking games/menu during study is **deferred** — conversation only for now | user |
+| D17 | A card **records what the child has already done**; it never runs ahead of them | user, 2026-09-18 |
+
+D17 was forced by the first card stack on real hardware. The four-card reference problem
+below used to end on `còn 28 quả`, and its third card carried `đã có 36 quả` — the result of
+step 2. A child who swipes through the stack has the whole solution without answering
+anything, which is the exact abuse this mode exists to stop. Its three rules:
+
+1. **Only numbers the child has already said.** The first card is the exception: it copies
+   figures out of the problem, which the child is holding anyway.
+2. **An operation may appear unsolved** (`3 × 12 = ?`), and only after two voice hints have
+   failed — tier 3 of the ladder. The `=` is filled in **after the child answers correctly**.
+3. **The answer never reaches a card before the child finds it.** When the escape hatch
+   fires (2–3 wrong attempts, frustration, an explicit ask) Bubu **says** the answer; nothing
+   is drawn.
+
+Consequence beyond the screen: card count becomes a measure of steps the child solved, not
+of steps Bubu printed.
 
 D4 matters more than it looks. LearnLM's tier 3 *inserts* steps when a child is stuck and
 its escape hatches jump straight to the answer, so any "N of M" promised on the first card
@@ -132,31 +155,47 @@ no line at all.
 
 ### The layout: one label per slot, each as wide as the circle allows there
 
-Stack of 91 px (27 + 37 + 27) centred **8 px above** screen centre, leaving a control band:
+The expression and the note sit on the widest part of the circle. The label does not: it is
+short, so it is pushed up against the top arc where the glass is too narrow for the others
+anyway (revised 2026-09-18 after seeing the first cards on hardware — the original stack was
+centred as one block and left a visibly empty arc above it).
 
 | slot | font | y from centre | max width | lowercase capacity |
 |---|---|---|---|---|
-| `label` | vn_20 | −53.5 … −26.5 | **161 px** | ~18 chars |
+| `label` | vn_20 | −75.5 … −48.5 | **118 px** | ~13 chars |
 | `expr` | vn_28 (one weight — compiled fonts have no bold) | −26.5 … +10.5 | **186 px** | ~14 chars |
 | `note` | vn_20 | +10.5 … +37.5 | **178 px** | ~20 chars |
-| controls | — | +45 … +75 | **123 px** | arrows + dots |
+| controls | — | +52 … +80 | **142 px** | arrows + dots |
 
 Enforce **pixel** limits, not character limits — `m` and `i` differ by 3× and Vietnamese
-diacritics stack. Use 161 / 186 / 178 px (floor of the measured band widths).
+diacritics stack. Use 118 / 186 / 178 px (floor of the measured band widths).
 
-Baselines, LVGL-exact: label top 66.5 → baseline 87.5; expr top 93.5 → baseline 122.5;
-note top 130.5 → baseline 151.5 (screen coordinates, 0..240).
+**The expr and note bands cannot be moved to make room.** Four pixels lower, the note band
+drops from 179 px to 175 px and `con làm đúng rồi` (175 px) stops fitting; the expr band
+narrows the same way in either direction. Only the label had slack, which is why raising it
+is the whole of the change. Arrows moved from y=180 to y=186 to keep the top and bottom
+margins even (~19 px each); at that height the circle is still 142 px wide and the arrow
+pair needs 118 px.
 
 ### Reference problem, all measured to fit
 
 *Mẹ mua 3 rổ cam, mỗi rổ 12 quả. Mẹ cho bà 8 quả. Hỏi mẹ còn lại bao nhiêu quả?*
 
-| card | label | expr | note |
-|---|---|---|---|
-| 1 | `bước 1` | `3 rổ, 12 quả` 155/186 | `mẹ cho bà 8 quả` 170/178 |
-| 2 | `bước 2` | `3 × 12 = ?` 122/186 | `mỗi rổ 12 quả` 135/178 |
-| 3 | `bước 3` | `36 - 8 = ?` 126/186 | `đã có 36 quả` 128/178 |
-| 4 | `bước 4` | `còn 28 quả` 158/186 | `con làm đúng rồi` 175/178 |
+Under D17 the stack is three cards, each pushed **after** the child produced that number.
+Measured on the bench build, 2026-09-18:
+
+| card | label | expr | note | pushed when |
+|---|---|---|---|---|
+| 1 | `bước 1` | `3 rổ, 12 quả` 155/186 | `mẹ cho bà 8 quả` 170/178 | the problem is read: figures the child already has |
+| 2 | `bước 2` | `3 × 12 = 36` 139/186 | `bé tính được 36` 157/178 | the child said 36 |
+| 3 | `bước 3` | `36 - 8 = 28` 144/186 | `còn lại 28 quả` 142/178 | the child said 28 |
+
+The pre-D17 version of this table ended on a fourth card, `còn 28 quả` / `con làm đúng rồi`,
+and card 3 read `36 - 8 = ?` / `đã có 36 quả`. It is kept here only as the example of what
+D17 forbids: cards 2–4 handed over the method, the intermediate result and the answer.
+
+`3 × 12 = ?` is still legal as a **tier-3 hint card** with the right-hand side left open
+(122/186), which is why the expr band is sized for the longer solved form as well.
 
 ### Glyphs
 
@@ -170,11 +209,13 @@ gateway normalises before sending (§5).
 
 - **Dots** in the control band, one per card already pushed (max 4), current one larger.
   Centre spacing 15 px.
-- **Arrows**: back at x=75, forward at x=165, y=180 (screen coordinates), drawn radius 14,
-  hit radius 18. Back is live when `current > 1`; forward is live only when
-  `current < pushed`.
-- The band is 123 px wide. Two arrows fill it. **Nothing else goes there** — no close
-  button, no caption.
+- **Arrows**: back at x=75, forward at x=165, **y=186** (screen coordinates), drawn as
+  3-point chevrons 14×22, hit radius 18. Drawn as lines, not glyphs: the compiled Vietnamese
+  fonts carry no arrow symbols. An arrow with nothing to go to is **not drawn at all**, so a
+  child never taps a dead control — back appears from card 2, forward only once a later card
+  exists.
+- The band is 142 px wide at that height. Two arrows and the dot row fill it. **Nothing else
+  goes there** — no close button, no caption.
 - No hint/caption line anywhere on the card: a line costs a full 27 px and there is no
   smaller font.
 
@@ -282,9 +323,16 @@ one fact, `SAFETY_RULES` and the name sentence measures **2,628 chars** (today's
 persona: 1,084). No cap applies — `persona.ts`'s 4,000 guards only what the portal posts.
 
 **Card rules** join in phase 2b as `tutor-v2`: cards only for convergent problems; one card
-per step, not per turn; ladder tiers 1–2 voice only, tier 3 pushes a card, tier 4 the final
-card; never print the guiding question; plain text, `×` `÷`, `-` for minus, no LaTeX; at
-most 4 cards.
+per step, not per turn; ladder tiers 1–2 voice only, tier 3 may push a card; never print the
+guiding question; plain text, `×` `÷`, `-` for minus, no LaTeX; at most 4 cards.
+
+**D17 is the part of these rules that carries the whole point of the mode**, so it is
+written into `tutor-v2` as three explicit prohibitions rather than as advice: a card may
+only hold numbers the child has already said (the first card, copying the problem's own
+figures, excepted); an operation may be shown unsolved and completed only once the child
+answers; the escape-hatch answer is spoken and never drawn. Tier 4 therefore pushes **no**
+card at all — the earlier draft of this section had it push "the final card", which is
+exactly the leak D17 exists to close.
 
 ### 5b. `NON_BLOCKING` declaration (phase 2)
 
@@ -450,6 +498,9 @@ offline job run over existing transcripts gives the "before" number with no wait
      without answering them (D13 working) or answered anyway (leak).
    - **wrongful refusals** — math questions, or distress/needs turns, that Bubu refused.
      Any distress refusal is a bug to fix before anything else.
+   - **cards ahead of the child** (from `tutor-v2` on) — cards carrying a number the child
+     had not said yet, the answer among them. D17 cannot be enforced in firmware, which
+     knows nothing about what was said, so this metric is its only check.
 4. Read 20 sessions by hand before trusting the numbers. The classifier is also a model.
 
 Privacy: the job reads children's conversations. It runs server-side only, outputs

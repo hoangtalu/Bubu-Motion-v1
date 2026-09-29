@@ -71,76 +71,6 @@ namespace Lang {
     // 音效资源 (en-US as fallback for missing audio files)
     namespace Sounds {
 
-        extern const char ogg_0_start[] asm("_binary_0_ogg_start");
-        extern const char ogg_0_end[] asm("_binary_0_ogg_end");
-        static const std::string_view OGG_0 {
-        static_cast<const char*>(ogg_0_start),
-        static_cast<size_t>(ogg_0_end - ogg_0_start)
-        };
-
-        extern const char ogg_1_start[] asm("_binary_1_ogg_start");
-        extern const char ogg_1_end[] asm("_binary_1_ogg_end");
-        static const std::string_view OGG_1 {
-        static_cast<const char*>(ogg_1_start),
-        static_cast<size_t>(ogg_1_end - ogg_1_start)
-        };
-
-        extern const char ogg_2_start[] asm("_binary_2_ogg_start");
-        extern const char ogg_2_end[] asm("_binary_2_ogg_end");
-        static const std::string_view OGG_2 {
-        static_cast<const char*>(ogg_2_start),
-        static_cast<size_t>(ogg_2_end - ogg_2_start)
-        };
-
-        extern const char ogg_3_start[] asm("_binary_3_ogg_start");
-        extern const char ogg_3_end[] asm("_binary_3_ogg_end");
-        static const std::string_view OGG_3 {
-        static_cast<const char*>(ogg_3_start),
-        static_cast<size_t>(ogg_3_end - ogg_3_start)
-        };
-
-        extern const char ogg_4_start[] asm("_binary_4_ogg_start");
-        extern const char ogg_4_end[] asm("_binary_4_ogg_end");
-        static const std::string_view OGG_4 {
-        static_cast<const char*>(ogg_4_start),
-        static_cast<size_t>(ogg_4_end - ogg_4_start)
-        };
-
-        extern const char ogg_5_start[] asm("_binary_5_ogg_start");
-        extern const char ogg_5_end[] asm("_binary_5_ogg_end");
-        static const std::string_view OGG_5 {
-        static_cast<const char*>(ogg_5_start),
-        static_cast<size_t>(ogg_5_end - ogg_5_start)
-        };
-
-        extern const char ogg_6_start[] asm("_binary_6_ogg_start");
-        extern const char ogg_6_end[] asm("_binary_6_ogg_end");
-        static const std::string_view OGG_6 {
-        static_cast<const char*>(ogg_6_start),
-        static_cast<size_t>(ogg_6_end - ogg_6_start)
-        };
-
-        extern const char ogg_7_start[] asm("_binary_7_ogg_start");
-        extern const char ogg_7_end[] asm("_binary_7_ogg_end");
-        static const std::string_view OGG_7 {
-        static_cast<const char*>(ogg_7_start),
-        static_cast<size_t>(ogg_7_end - ogg_7_start)
-        };
-
-        extern const char ogg_8_start[] asm("_binary_8_ogg_start");
-        extern const char ogg_8_end[] asm("_binary_8_ogg_end");
-        static const std::string_view OGG_8 {
-        static_cast<const char*>(ogg_8_start),
-        static_cast<size_t>(ogg_8_end - ogg_8_start)
-        };
-
-        extern const char ogg_9_start[] asm("_binary_9_ogg_start");
-        extern const char ogg_9_end[] asm("_binary_9_ogg_end");
-        static const std::string_view OGG_9 {
-        static_cast<const char*>(ogg_9_start),
-        static_cast<size_t>(ogg_9_end - ogg_9_start)
-        };
-
         extern const char ogg_activation_start[] asm("_binary_activation_ogg_start");
         extern const char ogg_activation_end[] asm("_binary_activation_ogg_end");
         static const std::string_view OGG_ACTIVATION {
@@ -148,137 +78,32 @@ namespace Lang {
         static_cast<size_t>(ogg_activation_end - ogg_activation_start)
         };
 
-        extern const char ogg_bubu_angry1_start[] asm("_binary_bubu_angry1_ogg_start");
-        extern const char ogg_bubu_angry1_end[] asm("_binary_bubu_angry1_ogg_end");
-        static const std::string_view OGG_BUBU_ANGRY1 {
-        static_cast<const char*>(ogg_bubu_angry1_start),
-        static_cast<size_t>(ogg_bubu_angry1_end - ogg_bubu_angry1_start)
+        extern const char ogg_bed_reminder_a_start[] asm("_binary_bed_reminder_a_ogg_start");
+        extern const char ogg_bed_reminder_a_end[] asm("_binary_bed_reminder_a_ogg_end");
+        static const std::string_view OGG_BED_REMINDER_A {
+        static_cast<const char*>(ogg_bed_reminder_a_start),
+        static_cast<size_t>(ogg_bed_reminder_a_end - ogg_bed_reminder_a_start)
         };
 
-        extern const char ogg_bubu_angry2_start[] asm("_binary_bubu_angry2_ogg_start");
-        extern const char ogg_bubu_angry2_end[] asm("_binary_bubu_angry2_ogg_end");
-        static const std::string_view OGG_BUBU_ANGRY2 {
-        static_cast<const char*>(ogg_bubu_angry2_start),
-        static_cast<size_t>(ogg_bubu_angry2_end - ogg_bubu_angry2_start)
+        extern const char ogg_bed_reminder_b_start[] asm("_binary_bed_reminder_b_ogg_start");
+        extern const char ogg_bed_reminder_b_end[] asm("_binary_bed_reminder_b_ogg_end");
+        static const std::string_view OGG_BED_REMINDER_B {
+        static_cast<const char*>(ogg_bed_reminder_b_start),
+        static_cast<size_t>(ogg_bed_reminder_b_end - ogg_bed_reminder_b_start)
         };
 
-        extern const char ogg_bubu_bored1_start[] asm("_binary_bubu_bored1_ogg_start");
-        extern const char ogg_bubu_bored1_end[] asm("_binary_bubu_bored1_ogg_end");
-        static const std::string_view OGG_BUBU_BORED1 {
-        static_cast<const char*>(ogg_bubu_bored1_start),
-        static_cast<size_t>(ogg_bubu_bored1_end - ogg_bubu_bored1_start)
+        extern const char ogg_bed_talk_blocked_a_start[] asm("_binary_bed_talk_blocked_a_ogg_start");
+        extern const char ogg_bed_talk_blocked_a_end[] asm("_binary_bed_talk_blocked_a_ogg_end");
+        static const std::string_view OGG_BED_TALK_BLOCKED_A {
+        static_cast<const char*>(ogg_bed_talk_blocked_a_start),
+        static_cast<size_t>(ogg_bed_talk_blocked_a_end - ogg_bed_talk_blocked_a_start)
         };
 
-        extern const char ogg_bubu_curious1_start[] asm("_binary_bubu_curious1_ogg_start");
-        extern const char ogg_bubu_curious1_end[] asm("_binary_bubu_curious1_ogg_end");
-        static const std::string_view OGG_BUBU_CURIOUS1 {
-        static_cast<const char*>(ogg_bubu_curious1_start),
-        static_cast<size_t>(ogg_bubu_curious1_end - ogg_bubu_curious1_start)
-        };
-
-        extern const char ogg_bubu_happy1_start[] asm("_binary_bubu_happy1_ogg_start");
-        extern const char ogg_bubu_happy1_end[] asm("_binary_bubu_happy1_ogg_end");
-        static const std::string_view OGG_BUBU_HAPPY1 {
-        static_cast<const char*>(ogg_bubu_happy1_start),
-        static_cast<size_t>(ogg_bubu_happy1_end - ogg_bubu_happy1_start)
-        };
-
-        extern const char ogg_bubu_happy2_start[] asm("_binary_bubu_happy2_ogg_start");
-        extern const char ogg_bubu_happy2_end[] asm("_binary_bubu_happy2_ogg_end");
-        static const std::string_view OGG_BUBU_HAPPY2 {
-        static_cast<const char*>(ogg_bubu_happy2_start),
-        static_cast<size_t>(ogg_bubu_happy2_end - ogg_bubu_happy2_start)
-        };
-
-        extern const char ogg_bubu_happy3_start[] asm("_binary_bubu_happy3_ogg_start");
-        extern const char ogg_bubu_happy3_end[] asm("_binary_bubu_happy3_ogg_end");
-        static const std::string_view OGG_BUBU_HAPPY3 {
-        static_cast<const char*>(ogg_bubu_happy3_start),
-        static_cast<size_t>(ogg_bubu_happy3_end - ogg_bubu_happy3_start)
-        };
-
-        extern const char ogg_bubu_laugh_start[] asm("_binary_bubu_laugh_ogg_start");
-        extern const char ogg_bubu_laugh_end[] asm("_binary_bubu_laugh_ogg_end");
-        static const std::string_view OGG_BUBU_LAUGH {
-        static_cast<const char*>(ogg_bubu_laugh_start),
-        static_cast<size_t>(ogg_bubu_laugh_end - ogg_bubu_laugh_start)
-        };
-
-        extern const char ogg_bubu_mumbling_1_start[] asm("_binary_bubu_mumbling_1_ogg_start");
-        extern const char ogg_bubu_mumbling_1_end[] asm("_binary_bubu_mumbling_1_ogg_end");
-        static const std::string_view OGG_BUBU_MUMBLING_1 {
-        static_cast<const char*>(ogg_bubu_mumbling_1_start),
-        static_cast<size_t>(ogg_bubu_mumbling_1_end - ogg_bubu_mumbling_1_start)
-        };
-
-        extern const char ogg_bubu_mumbling_2_start[] asm("_binary_bubu_mumbling_2_ogg_start");
-        extern const char ogg_bubu_mumbling_2_end[] asm("_binary_bubu_mumbling_2_ogg_end");
-        static const std::string_view OGG_BUBU_MUMBLING_2 {
-        static_cast<const char*>(ogg_bubu_mumbling_2_start),
-        static_cast<size_t>(ogg_bubu_mumbling_2_end - ogg_bubu_mumbling_2_start)
-        };
-
-        extern const char ogg_bubu_mumbling_3_start[] asm("_binary_bubu_mumbling_3_ogg_start");
-        extern const char ogg_bubu_mumbling_3_end[] asm("_binary_bubu_mumbling_3_ogg_end");
-        static const std::string_view OGG_BUBU_MUMBLING_3 {
-        static_cast<const char*>(ogg_bubu_mumbling_3_start),
-        static_cast<size_t>(ogg_bubu_mumbling_3_end - ogg_bubu_mumbling_3_start)
-        };
-
-        extern const char ogg_bubu_mumbling_4_start[] asm("_binary_bubu_mumbling_4_ogg_start");
-        extern const char ogg_bubu_mumbling_4_end[] asm("_binary_bubu_mumbling_4_ogg_end");
-        static const std::string_view OGG_BUBU_MUMBLING_4 {
-        static_cast<const char*>(ogg_bubu_mumbling_4_start),
-        static_cast<size_t>(ogg_bubu_mumbling_4_end - ogg_bubu_mumbling_4_start)
-        };
-
-        extern const char ogg_bubu_sad1_start[] asm("_binary_bubu_sad1_ogg_start");
-        extern const char ogg_bubu_sad1_end[] asm("_binary_bubu_sad1_ogg_end");
-        static const std::string_view OGG_BUBU_SAD1 {
-        static_cast<const char*>(ogg_bubu_sad1_start),
-        static_cast<size_t>(ogg_bubu_sad1_end - ogg_bubu_sad1_start)
-        };
-
-        extern const char ogg_bubu_sad2_start[] asm("_binary_bubu_sad2_ogg_start");
-        extern const char ogg_bubu_sad2_end[] asm("_binary_bubu_sad2_ogg_end");
-        static const std::string_view OGG_BUBU_SAD2 {
-        static_cast<const char*>(ogg_bubu_sad2_start),
-        static_cast<size_t>(ogg_bubu_sad2_end - ogg_bubu_sad2_start)
-        };
-
-        extern const char ogg_bubu_sing1_start[] asm("_binary_bubu_sing1_ogg_start");
-        extern const char ogg_bubu_sing1_end[] asm("_binary_bubu_sing1_ogg_end");
-        static const std::string_view OGG_BUBU_SING1 {
-        static_cast<const char*>(ogg_bubu_sing1_start),
-        static_cast<size_t>(ogg_bubu_sing1_end - ogg_bubu_sing1_start)
-        };
-
-        extern const char ogg_bubu_sing2_start[] asm("_binary_bubu_sing2_ogg_start");
-        extern const char ogg_bubu_sing2_end[] asm("_binary_bubu_sing2_ogg_end");
-        static const std::string_view OGG_BUBU_SING2 {
-        static_cast<const char*>(ogg_bubu_sing2_start),
-        static_cast<size_t>(ogg_bubu_sing2_end - ogg_bubu_sing2_start)
-        };
-
-        extern const char ogg_bubu_sing3_start[] asm("_binary_bubu_sing3_ogg_start");
-        extern const char ogg_bubu_sing3_end[] asm("_binary_bubu_sing3_ogg_end");
-        static const std::string_view OGG_BUBU_SING3 {
-        static_cast<const char*>(ogg_bubu_sing3_start),
-        static_cast<size_t>(ogg_bubu_sing3_end - ogg_bubu_sing3_start)
-        };
-
-        extern const char ogg_bubu_sing4_start[] asm("_binary_bubu_sing4_ogg_start");
-        extern const char ogg_bubu_sing4_end[] asm("_binary_bubu_sing4_ogg_end");
-        static const std::string_view OGG_BUBU_SING4 {
-        static_cast<const char*>(ogg_bubu_sing4_start),
-        static_cast<size_t>(ogg_bubu_sing4_end - ogg_bubu_sing4_start)
-        };
-
-        extern const char ogg_bubu_tired1_start[] asm("_binary_bubu_tired1_ogg_start");
-        extern const char ogg_bubu_tired1_end[] asm("_binary_bubu_tired1_ogg_end");
-        static const std::string_view OGG_BUBU_TIRED1 {
-        static_cast<const char*>(ogg_bubu_tired1_start),
-        static_cast<size_t>(ogg_bubu_tired1_end - ogg_bubu_tired1_start)
+        extern const char ogg_bed_talk_blocked_b_start[] asm("_binary_bed_talk_blocked_b_ogg_start");
+        extern const char ogg_bed_talk_blocked_b_end[] asm("_binary_bed_talk_blocked_b_ogg_end");
+        static const std::string_view OGG_BED_TALK_BLOCKED_B {
+        static_cast<const char*>(ogg_bed_talk_blocked_b_start),
+        static_cast<size_t>(ogg_bed_talk_blocked_b_end - ogg_bed_talk_blocked_b_start)
         };
 
         extern const char ogg_err_pin_start[] asm("_binary_err_pin_ogg_start");
@@ -342,6 +167,286 @@ namespace Lang {
         static const std::string_view OGG_VIBRATION {
         static_cast<const char*>(ogg_vibration_start),
         static_cast<size_t>(ogg_vibration_end - ogg_vibration_start)
+        };
+
+        extern const char ogg_vox_annoyed_1_a_start[] asm("_binary_vox_annoyed_1_a_ogg_start");
+        extern const char ogg_vox_annoyed_1_a_end[] asm("_binary_vox_annoyed_1_a_ogg_end");
+        static const std::string_view OGG_VOX_ANNOYED_1_A {
+        static_cast<const char*>(ogg_vox_annoyed_1_a_start),
+        static_cast<size_t>(ogg_vox_annoyed_1_a_end - ogg_vox_annoyed_1_a_start)
+        };
+
+        extern const char ogg_vox_annoyed_1_b_start[] asm("_binary_vox_annoyed_1_b_ogg_start");
+        extern const char ogg_vox_annoyed_1_b_end[] asm("_binary_vox_annoyed_1_b_ogg_end");
+        static const std::string_view OGG_VOX_ANNOYED_1_B {
+        static_cast<const char*>(ogg_vox_annoyed_1_b_start),
+        static_cast<size_t>(ogg_vox_annoyed_1_b_end - ogg_vox_annoyed_1_b_start)
+        };
+
+        extern const char ogg_vox_annoyed_2_a_start[] asm("_binary_vox_annoyed_2_a_ogg_start");
+        extern const char ogg_vox_annoyed_2_a_end[] asm("_binary_vox_annoyed_2_a_ogg_end");
+        static const std::string_view OGG_VOX_ANNOYED_2_A {
+        static_cast<const char*>(ogg_vox_annoyed_2_a_start),
+        static_cast<size_t>(ogg_vox_annoyed_2_a_end - ogg_vox_annoyed_2_a_start)
+        };
+
+        extern const char ogg_vox_annoyed_2_b_start[] asm("_binary_vox_annoyed_2_b_ogg_start");
+        extern const char ogg_vox_annoyed_2_b_end[] asm("_binary_vox_annoyed_2_b_ogg_end");
+        static const std::string_view OGG_VOX_ANNOYED_2_B {
+        static_cast<const char*>(ogg_vox_annoyed_2_b_start),
+        static_cast<size_t>(ogg_vox_annoyed_2_b_end - ogg_vox_annoyed_2_b_start)
+        };
+
+        extern const char ogg_vox_happy_1_a_start[] asm("_binary_vox_happy_1_a_ogg_start");
+        extern const char ogg_vox_happy_1_a_end[] asm("_binary_vox_happy_1_a_ogg_end");
+        static const std::string_view OGG_VOX_HAPPY_1_A {
+        static_cast<const char*>(ogg_vox_happy_1_a_start),
+        static_cast<size_t>(ogg_vox_happy_1_a_end - ogg_vox_happy_1_a_start)
+        };
+
+        extern const char ogg_vox_happy_1_b_start[] asm("_binary_vox_happy_1_b_ogg_start");
+        extern const char ogg_vox_happy_1_b_end[] asm("_binary_vox_happy_1_b_ogg_end");
+        static const std::string_view OGG_VOX_HAPPY_1_B {
+        static_cast<const char*>(ogg_vox_happy_1_b_start),
+        static_cast<size_t>(ogg_vox_happy_1_b_end - ogg_vox_happy_1_b_start)
+        };
+
+        extern const char ogg_vox_happy_2_a_start[] asm("_binary_vox_happy_2_a_ogg_start");
+        extern const char ogg_vox_happy_2_a_end[] asm("_binary_vox_happy_2_a_ogg_end");
+        static const std::string_view OGG_VOX_HAPPY_2_A {
+        static_cast<const char*>(ogg_vox_happy_2_a_start),
+        static_cast<size_t>(ogg_vox_happy_2_a_end - ogg_vox_happy_2_a_start)
+        };
+
+        extern const char ogg_vox_happy_2_b_start[] asm("_binary_vox_happy_2_b_ogg_start");
+        extern const char ogg_vox_happy_2_b_end[] asm("_binary_vox_happy_2_b_ogg_end");
+        static const std::string_view OGG_VOX_HAPPY_2_B {
+        static_cast<const char*>(ogg_vox_happy_2_b_start),
+        static_cast<size_t>(ogg_vox_happy_2_b_end - ogg_vox_happy_2_b_start)
+        };
+
+        extern const char ogg_vox_hum_1_a_start[] asm("_binary_vox_hum_1_a_ogg_start");
+        extern const char ogg_vox_hum_1_a_end[] asm("_binary_vox_hum_1_a_ogg_end");
+        static const std::string_view OGG_VOX_HUM_1_A {
+        static_cast<const char*>(ogg_vox_hum_1_a_start),
+        static_cast<size_t>(ogg_vox_hum_1_a_end - ogg_vox_hum_1_a_start)
+        };
+
+        extern const char ogg_vox_hum_1_b_start[] asm("_binary_vox_hum_1_b_ogg_start");
+        extern const char ogg_vox_hum_1_b_end[] asm("_binary_vox_hum_1_b_ogg_end");
+        static const std::string_view OGG_VOX_HUM_1_B {
+        static_cast<const char*>(ogg_vox_hum_1_b_start),
+        static_cast<size_t>(ogg_vox_hum_1_b_end - ogg_vox_hum_1_b_start)
+        };
+
+        extern const char ogg_vox_hum_2_a_start[] asm("_binary_vox_hum_2_a_ogg_start");
+        extern const char ogg_vox_hum_2_a_end[] asm("_binary_vox_hum_2_a_ogg_end");
+        static const std::string_view OGG_VOX_HUM_2_A {
+        static_cast<const char*>(ogg_vox_hum_2_a_start),
+        static_cast<size_t>(ogg_vox_hum_2_a_end - ogg_vox_hum_2_a_start)
+        };
+
+        extern const char ogg_vox_hum_2_b_start[] asm("_binary_vox_hum_2_b_ogg_start");
+        extern const char ogg_vox_hum_2_b_end[] asm("_binary_vox_hum_2_b_ogg_end");
+        static const std::string_view OGG_VOX_HUM_2_B {
+        static_cast<const char*>(ogg_vox_hum_2_b_start),
+        static_cast<size_t>(ogg_vox_hum_2_b_end - ogg_vox_hum_2_b_start)
+        };
+
+        extern const char ogg_vox_hum_3_a_start[] asm("_binary_vox_hum_3_a_ogg_start");
+        extern const char ogg_vox_hum_3_a_end[] asm("_binary_vox_hum_3_a_ogg_end");
+        static const std::string_view OGG_VOX_HUM_3_A {
+        static_cast<const char*>(ogg_vox_hum_3_a_start),
+        static_cast<size_t>(ogg_vox_hum_3_a_end - ogg_vox_hum_3_a_start)
+        };
+
+        extern const char ogg_vox_hum_3_b_start[] asm("_binary_vox_hum_3_b_ogg_start");
+        extern const char ogg_vox_hum_3_b_end[] asm("_binary_vox_hum_3_b_ogg_end");
+        static const std::string_view OGG_VOX_HUM_3_B {
+        static_cast<const char*>(ogg_vox_hum_3_b_start),
+        static_cast<size_t>(ogg_vox_hum_3_b_end - ogg_vox_hum_3_b_start)
+        };
+
+        extern const char ogg_vox_hum_4_a_start[] asm("_binary_vox_hum_4_a_ogg_start");
+        extern const char ogg_vox_hum_4_a_end[] asm("_binary_vox_hum_4_a_ogg_end");
+        static const std::string_view OGG_VOX_HUM_4_A {
+        static_cast<const char*>(ogg_vox_hum_4_a_start),
+        static_cast<size_t>(ogg_vox_hum_4_a_end - ogg_vox_hum_4_a_start)
+        };
+
+        extern const char ogg_vox_hum_4_b_start[] asm("_binary_vox_hum_4_b_ogg_start");
+        extern const char ogg_vox_hum_4_b_end[] asm("_binary_vox_hum_4_b_ogg_end");
+        static const std::string_view OGG_VOX_HUM_4_B {
+        static_cast<const char*>(ogg_vox_hum_4_b_start),
+        static_cast<size_t>(ogg_vox_hum_4_b_end - ogg_vox_hum_4_b_start)
+        };
+
+        extern const char ogg_vox_laugh_1_a_start[] asm("_binary_vox_laugh_1_a_ogg_start");
+        extern const char ogg_vox_laugh_1_a_end[] asm("_binary_vox_laugh_1_a_ogg_end");
+        static const std::string_view OGG_VOX_LAUGH_1_A {
+        static_cast<const char*>(ogg_vox_laugh_1_a_start),
+        static_cast<size_t>(ogg_vox_laugh_1_a_end - ogg_vox_laugh_1_a_start)
+        };
+
+        extern const char ogg_vox_laugh_1_b_start[] asm("_binary_vox_laugh_1_b_ogg_start");
+        extern const char ogg_vox_laugh_1_b_end[] asm("_binary_vox_laugh_1_b_ogg_end");
+        static const std::string_view OGG_VOX_LAUGH_1_B {
+        static_cast<const char*>(ogg_vox_laugh_1_b_start),
+        static_cast<size_t>(ogg_vox_laugh_1_b_end - ogg_vox_laugh_1_b_start)
+        };
+
+        extern const char ogg_vox_mumble_1_a_start[] asm("_binary_vox_mumble_1_a_ogg_start");
+        extern const char ogg_vox_mumble_1_a_end[] asm("_binary_vox_mumble_1_a_ogg_end");
+        static const std::string_view OGG_VOX_MUMBLE_1_A {
+        static_cast<const char*>(ogg_vox_mumble_1_a_start),
+        static_cast<size_t>(ogg_vox_mumble_1_a_end - ogg_vox_mumble_1_a_start)
+        };
+
+        extern const char ogg_vox_mumble_1_b_start[] asm("_binary_vox_mumble_1_b_ogg_start");
+        extern const char ogg_vox_mumble_1_b_end[] asm("_binary_vox_mumble_1_b_ogg_end");
+        static const std::string_view OGG_VOX_MUMBLE_1_B {
+        static_cast<const char*>(ogg_vox_mumble_1_b_start),
+        static_cast<size_t>(ogg_vox_mumble_1_b_end - ogg_vox_mumble_1_b_start)
+        };
+
+        extern const char ogg_vox_mumble_2_a_start[] asm("_binary_vox_mumble_2_a_ogg_start");
+        extern const char ogg_vox_mumble_2_a_end[] asm("_binary_vox_mumble_2_a_ogg_end");
+        static const std::string_view OGG_VOX_MUMBLE_2_A {
+        static_cast<const char*>(ogg_vox_mumble_2_a_start),
+        static_cast<size_t>(ogg_vox_mumble_2_a_end - ogg_vox_mumble_2_a_start)
+        };
+
+        extern const char ogg_vox_mumble_2_b_start[] asm("_binary_vox_mumble_2_b_ogg_start");
+        extern const char ogg_vox_mumble_2_b_end[] asm("_binary_vox_mumble_2_b_ogg_end");
+        static const std::string_view OGG_VOX_MUMBLE_2_B {
+        static_cast<const char*>(ogg_vox_mumble_2_b_start),
+        static_cast<size_t>(ogg_vox_mumble_2_b_end - ogg_vox_mumble_2_b_start)
+        };
+
+        extern const char ogg_vox_mumble_3_a_start[] asm("_binary_vox_mumble_3_a_ogg_start");
+        extern const char ogg_vox_mumble_3_a_end[] asm("_binary_vox_mumble_3_a_ogg_end");
+        static const std::string_view OGG_VOX_MUMBLE_3_A {
+        static_cast<const char*>(ogg_vox_mumble_3_a_start),
+        static_cast<size_t>(ogg_vox_mumble_3_a_end - ogg_vox_mumble_3_a_start)
+        };
+
+        extern const char ogg_vox_mumble_3_b_start[] asm("_binary_vox_mumble_3_b_ogg_start");
+        extern const char ogg_vox_mumble_3_b_end[] asm("_binary_vox_mumble_3_b_ogg_end");
+        static const std::string_view OGG_VOX_MUMBLE_3_B {
+        static_cast<const char*>(ogg_vox_mumble_3_b_start),
+        static_cast<size_t>(ogg_vox_mumble_3_b_end - ogg_vox_mumble_3_b_start)
+        };
+
+        extern const char ogg_vox_mumble_4_a_start[] asm("_binary_vox_mumble_4_a_ogg_start");
+        extern const char ogg_vox_mumble_4_a_end[] asm("_binary_vox_mumble_4_a_ogg_end");
+        static const std::string_view OGG_VOX_MUMBLE_4_A {
+        static_cast<const char*>(ogg_vox_mumble_4_a_start),
+        static_cast<size_t>(ogg_vox_mumble_4_a_end - ogg_vox_mumble_4_a_start)
+        };
+
+        extern const char ogg_vox_mumble_4_b_start[] asm("_binary_vox_mumble_4_b_ogg_start");
+        extern const char ogg_vox_mumble_4_b_end[] asm("_binary_vox_mumble_4_b_ogg_end");
+        static const std::string_view OGG_VOX_MUMBLE_4_B {
+        static_cast<const char*>(ogg_vox_mumble_4_b_start),
+        static_cast<size_t>(ogg_vox_mumble_4_b_end - ogg_vox_mumble_4_b_start)
+        };
+
+        extern const char ogg_vox_sad_1_a_start[] asm("_binary_vox_sad_1_a_ogg_start");
+        extern const char ogg_vox_sad_1_a_end[] asm("_binary_vox_sad_1_a_ogg_end");
+        static const std::string_view OGG_VOX_SAD_1_A {
+        static_cast<const char*>(ogg_vox_sad_1_a_start),
+        static_cast<size_t>(ogg_vox_sad_1_a_end - ogg_vox_sad_1_a_start)
+        };
+
+        extern const char ogg_vox_sad_1_b_start[] asm("_binary_vox_sad_1_b_ogg_start");
+        extern const char ogg_vox_sad_1_b_end[] asm("_binary_vox_sad_1_b_ogg_end");
+        static const std::string_view OGG_VOX_SAD_1_B {
+        static_cast<const char*>(ogg_vox_sad_1_b_start),
+        static_cast<size_t>(ogg_vox_sad_1_b_end - ogg_vox_sad_1_b_start)
+        };
+
+        extern const char ogg_vox_sad_2_a_start[] asm("_binary_vox_sad_2_a_ogg_start");
+        extern const char ogg_vox_sad_2_a_end[] asm("_binary_vox_sad_2_a_ogg_end");
+        static const std::string_view OGG_VOX_SAD_2_A {
+        static_cast<const char*>(ogg_vox_sad_2_a_start),
+        static_cast<size_t>(ogg_vox_sad_2_a_end - ogg_vox_sad_2_a_start)
+        };
+
+        extern const char ogg_vox_sad_2_b_start[] asm("_binary_vox_sad_2_b_ogg_start");
+        extern const char ogg_vox_sad_2_b_end[] asm("_binary_vox_sad_2_b_ogg_end");
+        static const std::string_view OGG_VOX_SAD_2_B {
+        static_cast<const char*>(ogg_vox_sad_2_b_start),
+        static_cast<size_t>(ogg_vox_sad_2_b_end - ogg_vox_sad_2_b_start)
+        };
+
+        extern const char ogg_vox_surprise_1_a_start[] asm("_binary_vox_surprise_1_a_ogg_start");
+        extern const char ogg_vox_surprise_1_a_end[] asm("_binary_vox_surprise_1_a_ogg_end");
+        static const std::string_view OGG_VOX_SURPRISE_1_A {
+        static_cast<const char*>(ogg_vox_surprise_1_a_start),
+        static_cast<size_t>(ogg_vox_surprise_1_a_end - ogg_vox_surprise_1_a_start)
+        };
+
+        extern const char ogg_vox_surprise_1_b_start[] asm("_binary_vox_surprise_1_b_ogg_start");
+        extern const char ogg_vox_surprise_1_b_end[] asm("_binary_vox_surprise_1_b_ogg_end");
+        static const std::string_view OGG_VOX_SURPRISE_1_B {
+        static_cast<const char*>(ogg_vox_surprise_1_b_start),
+        static_cast<size_t>(ogg_vox_surprise_1_b_end - ogg_vox_surprise_1_b_start)
+        };
+
+        extern const char ogg_vox_surprise_2_a_start[] asm("_binary_vox_surprise_2_a_ogg_start");
+        extern const char ogg_vox_surprise_2_a_end[] asm("_binary_vox_surprise_2_a_ogg_end");
+        static const std::string_view OGG_VOX_SURPRISE_2_A {
+        static_cast<const char*>(ogg_vox_surprise_2_a_start),
+        static_cast<size_t>(ogg_vox_surprise_2_a_end - ogg_vox_surprise_2_a_start)
+        };
+
+        extern const char ogg_vox_surprise_2_b_start[] asm("_binary_vox_surprise_2_b_ogg_start");
+        extern const char ogg_vox_surprise_2_b_end[] asm("_binary_vox_surprise_2_b_ogg_end");
+        static const std::string_view OGG_VOX_SURPRISE_2_B {
+        static_cast<const char*>(ogg_vox_surprise_2_b_start),
+        static_cast<size_t>(ogg_vox_surprise_2_b_end - ogg_vox_surprise_2_b_start)
+        };
+
+        extern const char ogg_vox_think_1_a_start[] asm("_binary_vox_think_1_a_ogg_start");
+        extern const char ogg_vox_think_1_a_end[] asm("_binary_vox_think_1_a_ogg_end");
+        static const std::string_view OGG_VOX_THINK_1_A {
+        static_cast<const char*>(ogg_vox_think_1_a_start),
+        static_cast<size_t>(ogg_vox_think_1_a_end - ogg_vox_think_1_a_start)
+        };
+
+        extern const char ogg_vox_think_1_b_start[] asm("_binary_vox_think_1_b_ogg_start");
+        extern const char ogg_vox_think_1_b_end[] asm("_binary_vox_think_1_b_ogg_end");
+        static const std::string_view OGG_VOX_THINK_1_B {
+        static_cast<const char*>(ogg_vox_think_1_b_start),
+        static_cast<size_t>(ogg_vox_think_1_b_end - ogg_vox_think_1_b_start)
+        };
+
+        extern const char ogg_vox_think_2_a_start[] asm("_binary_vox_think_2_a_ogg_start");
+        extern const char ogg_vox_think_2_a_end[] asm("_binary_vox_think_2_a_ogg_end");
+        static const std::string_view OGG_VOX_THINK_2_A {
+        static_cast<const char*>(ogg_vox_think_2_a_start),
+        static_cast<size_t>(ogg_vox_think_2_a_end - ogg_vox_think_2_a_start)
+        };
+
+        extern const char ogg_vox_think_2_b_start[] asm("_binary_vox_think_2_b_ogg_start");
+        extern const char ogg_vox_think_2_b_end[] asm("_binary_vox_think_2_b_ogg_end");
+        static const std::string_view OGG_VOX_THINK_2_B {
+        static_cast<const char*>(ogg_vox_think_2_b_start),
+        static_cast<size_t>(ogg_vox_think_2_b_end - ogg_vox_think_2_b_start)
+        };
+
+        extern const char ogg_vox_yawn_1_a_start[] asm("_binary_vox_yawn_1_a_ogg_start");
+        extern const char ogg_vox_yawn_1_a_end[] asm("_binary_vox_yawn_1_a_ogg_end");
+        static const std::string_view OGG_VOX_YAWN_1_A {
+        static_cast<const char*>(ogg_vox_yawn_1_a_start),
+        static_cast<size_t>(ogg_vox_yawn_1_a_end - ogg_vox_yawn_1_a_start)
+        };
+
+        extern const char ogg_vox_yawn_1_b_start[] asm("_binary_vox_yawn_1_b_ogg_start");
+        extern const char ogg_vox_yawn_1_b_end[] asm("_binary_vox_yawn_1_b_ogg_end");
+        static const std::string_view OGG_VOX_YAWN_1_B {
+        static_cast<const char*>(ogg_vox_yawn_1_b_start),
+        static_cast<size_t>(ogg_vox_yawn_1_b_end - ogg_vox_yawn_1_b_start)
         };
 
         extern const char ogg_welcome_start[] asm("_binary_welcome_ogg_start");

@@ -16,32 +16,32 @@ namespace {
 // SFX disabled for all emotions - see EmotionVoiceMap::Initialize() below.
 // std::vector<std::string_view> BuildOccasionalMumblingVoices() {
 //     return {
-//         Lang::Sounds::OGG_BUBU_MUMBLING_1,
-//         Lang::Sounds::OGG_BUBU_MUMBLING_2,
-//         Lang::Sounds::OGG_BUBU_MUMBLING_3,
-//         Lang::Sounds::OGG_BUBU_MUMBLING_4,
-//         Lang::Sounds::OGG_BUBU_SING1,
-//         Lang::Sounds::OGG_BUBU_MUMBLING_1,
-//         Lang::Sounds::OGG_BUBU_MUMBLING_2,
-//         Lang::Sounds::OGG_BUBU_MUMBLING_3,
-//         Lang::Sounds::OGG_BUBU_MUMBLING_4,
-//         Lang::Sounds::OGG_BUBU_SING2,
-//         Lang::Sounds::OGG_BUBU_MUMBLING_1,
-//         Lang::Sounds::OGG_BUBU_MUMBLING_2,
-//         Lang::Sounds::OGG_BUBU_MUMBLING_3,
-//         Lang::Sounds::OGG_BUBU_MUMBLING_4,
-//         Lang::Sounds::OGG_BUBU_SING3,
-//         Lang::Sounds::OGG_BUBU_MUMBLING_1,
-//         Lang::Sounds::OGG_BUBU_MUMBLING_2,
-//         Lang::Sounds::OGG_BUBU_MUMBLING_3,
-//         Lang::Sounds::OGG_BUBU_MUMBLING_4,
-//         Lang::Sounds::OGG_BUBU_SING4,
+//         Lang::Sounds::OGG_VOX_MUMBLE_1_A,
+//         Lang::Sounds::OGG_VOX_MUMBLE_2_A,
+//         Lang::Sounds::OGG_VOX_MUMBLE_3_A,
+//         Lang::Sounds::OGG_VOX_MUMBLE_4_A,
+//         Lang::Sounds::OGG_VOX_HUM_1_A,
+//         Lang::Sounds::OGG_VOX_MUMBLE_1_A,
+//         Lang::Sounds::OGG_VOX_MUMBLE_2_A,
+//         Lang::Sounds::OGG_VOX_MUMBLE_3_A,
+//         Lang::Sounds::OGG_VOX_MUMBLE_4_A,
+//         Lang::Sounds::OGG_VOX_HUM_2_A,
+//         Lang::Sounds::OGG_VOX_MUMBLE_1_A,
+//         Lang::Sounds::OGG_VOX_MUMBLE_2_A,
+//         Lang::Sounds::OGG_VOX_MUMBLE_3_A,
+//         Lang::Sounds::OGG_VOX_MUMBLE_4_A,
+//         Lang::Sounds::OGG_VOX_HUM_3_A,
+//         Lang::Sounds::OGG_VOX_MUMBLE_1_A,
+//         Lang::Sounds::OGG_VOX_MUMBLE_2_A,
+//         Lang::Sounds::OGG_VOX_MUMBLE_3_A,
+//         Lang::Sounds::OGG_VOX_MUMBLE_4_A,
+//         Lang::Sounds::OGG_VOX_HUM_4_A,
 //     };
 // }
 //
 // std::vector<std::string_view> BuildEmbarrassedVoices() {
 //     auto voices = BuildOccasionalMumblingVoices();
-//     voices.push_back(Lang::Sounds::OGG_BUBU_BORED1);
+//     voices.push_back(Lang::Sounds::OGG_VOX_SAD_2_B);
 //     return voices;
 // }
 
@@ -55,56 +55,56 @@ void EmotionVoiceMap::Initialize() {
     // Happy emotion - multiple voice options
     // SFX disabled:
     // RegisterEmotion("happy", {
-    //     Lang::Sounds::OGG_BUBU_HAPPY2,
-    //     Lang::Sounds::OGG_BUBU_HAPPY1,
-    //     Lang::Sounds::OGG_BUBU_HAPPY3
+    //     Lang::Sounds::OGG_VOX_HAPPY_2_A,
+    //     Lang::Sounds::OGG_VOX_HAPPY_1_A,
+    //     Lang::Sounds::OGG_VOX_HAPPY_1_B
     // });
     RegisterEmotion("happy", {});
     // "funny" is the same animation as "happy" (see EyeEmotion_Apply) - share its voice.
     // SFX disabled:
     // RegisterEmotion("funny", {
-    //     Lang::Sounds::OGG_BUBU_HAPPY2,
-    //     Lang::Sounds::OGG_BUBU_HAPPY1,
-    //     Lang::Sounds::OGG_BUBU_HAPPY3
+    //     Lang::Sounds::OGG_VOX_HAPPY_2_A,
+    //     Lang::Sounds::OGG_VOX_HAPPY_1_A,
+    //     Lang::Sounds::OGG_VOX_HAPPY_1_B
     // });
     RegisterEmotion("funny", {});
 
     // Laugh emotion
     // SFX disabled:
-    // RegisterEmotion("laugh", {Lang::Sounds::OGG_BUBU_LAUGH});
-    // RegisterEmotion("laughing", {Lang::Sounds::OGG_BUBU_LAUGH});
+    // RegisterEmotion("laugh", {Lang::Sounds::OGG_VOX_LAUGH_1_A});
+    // RegisterEmotion("laughing", {Lang::Sounds::OGG_VOX_LAUGH_1_A});
     RegisterEmotion("laugh", {});
     RegisterEmotion("laughing", {});
 
     // Sad emotion - multiple options
     // SFX disabled:
-    // RegisterEmotion("sad", {Lang::Sounds::OGG_BUBU_SAD1, Lang::Sounds::OGG_BUBU_SAD2});
+    // RegisterEmotion("sad", {Lang::Sounds::OGG_VOX_SAD_1_A, Lang::Sounds::OGG_VOX_SAD_2_A});
     RegisterEmotion("sad", {});
     // "crying" is the same pose as "sad" (see EyeEmotion_Apply) - share its voice.
     // SFX disabled:
-    // RegisterEmotion("crying", {Lang::Sounds::OGG_BUBU_SAD1, Lang::Sounds::OGG_BUBU_SAD2});
+    // RegisterEmotion("crying", {Lang::Sounds::OGG_VOX_SAD_1_A, Lang::Sounds::OGG_VOX_SAD_2_A});
     RegisterEmotion("crying", {});
 
     // Angry emotion - multiple options
     // SFX disabled:
-    // RegisterEmotion("angry", {Lang::Sounds::OGG_BUBU_ANGRY1, Lang::Sounds::OGG_BUBU_ANGRY2});
+    // RegisterEmotion("angry", {Lang::Sounds::OGG_VOX_ANNOYED_1_A, Lang::Sounds::OGG_VOX_ANNOYED_2_A});
     RegisterEmotion("angry", {});
     // "annoyed" is the same pose as "angry", just shallower (see EyeEmotion_Apply) - share its voice.
     // SFX disabled:
-    // RegisterEmotion("annoyed", {Lang::Sounds::OGG_BUBU_ANGRY1, Lang::Sounds::OGG_BUBU_ANGRY2});
+    // RegisterEmotion("annoyed", {Lang::Sounds::OGG_VOX_ANNOYED_1_A, Lang::Sounds::OGG_VOX_ANNOYED_2_A});
     RegisterEmotion("annoyed", {});
 
     // Bored emotion
     // SFX disabled:
-    // RegisterEmotion("bored", {Lang::Sounds::OGG_BUBU_BORED1});
+    // RegisterEmotion("bored", {Lang::Sounds::OGG_VOX_SAD_2_B});
     RegisterEmotion("bored", {});
 
     // Curious emotion - used for thinking, winking, silly states
     // SFX disabled:
-    // RegisterEmotion("curious", {Lang::Sounds::OGG_BUBU_CURIOUS1});
-    // RegisterEmotion("thinking", {Lang::Sounds::OGG_BUBU_CURIOUS1});
-    // RegisterEmotion("winking", {Lang::Sounds::OGG_BUBU_CURIOUS1});
-    // RegisterEmotion("silly", {Lang::Sounds::OGG_BUBU_CURIOUS1});
+    // RegisterEmotion("curious", {Lang::Sounds::OGG_VOX_THINK_1_A});
+    // RegisterEmotion("thinking", {Lang::Sounds::OGG_VOX_THINK_1_A});
+    // RegisterEmotion("winking", {Lang::Sounds::OGG_VOX_THINK_1_A});
+    // RegisterEmotion("silly", {Lang::Sounds::OGG_VOX_THINK_1_A});
     RegisterEmotion("curious", {});
     RegisterEmotion("thinking", {});
     RegisterEmotion("winking", {});
@@ -112,14 +112,14 @@ void EmotionVoiceMap::Initialize() {
 
     // Tired emotion
     // SFX disabled:
-    // RegisterEmotion("tired", {Lang::Sounds::OGG_BUBU_TIRED1});
-    // RegisterEmotion("sleepy", {Lang::Sounds::OGG_BUBU_TIRED1});
+    // RegisterEmotion("tired", {Lang::Sounds::OGG_VOX_YAWN_1_A});
+    // RegisterEmotion("sleepy", {Lang::Sounds::OGG_VOX_YAWN_1_A});
     RegisterEmotion("tired", {});
     RegisterEmotion("sleepy", {});
 
     // Confused keeps the bored fallback
     // SFX disabled:
-    // RegisterEmotion("confused", {Lang::Sounds::OGG_BUBU_BORED1});
+    // RegisterEmotion("confused", {Lang::Sounds::OGG_VOX_SAD_2_B});
     RegisterEmotion("confused", {});
     // SFX disabled:
     // RegisterEmotion("embarrassed", BuildEmbarrassedVoices());

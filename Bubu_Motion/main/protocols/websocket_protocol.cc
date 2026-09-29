@@ -252,6 +252,13 @@ bool WebsocketProtocol::OpenAudioChannel() {
         return false;
     }
 
+    // MqttProtocol reports this from its broker connection; the websocket lane
+    // only has a live server once the hello handshake completes. Application
+    // relies on it to clear the activation-code board.
+    if (on_connected_ != nullptr) {
+        on_connected_();
+    }
+
     if (on_audio_channel_opened_ != nullptr) {
         on_audio_channel_opened_();
     }

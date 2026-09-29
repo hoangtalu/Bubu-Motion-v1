@@ -5,12 +5,21 @@
 #include <functional>
 #include <lvgl.h>
 
+#include "audio/vox.h"
+
 // Forward declaration
 class EyeAnimation;
 
 // Apply an emotion string to an EyeAnimation instance.
 // Mood is now persistent (no 2-second reset). Stays until overridden.
 void EyeEmotion_Apply(const char* emotion, EyeAnimation* anim);
+
+// Eye Lab emotion slots, see eye_animation.cc.
+extern const char* const kEyeActiveEmotions[];
+extern const int kEyeActiveEmotionCount;
+extern const char* const kEyeEmptySlots[][2];
+extern const int kEyeEmptySlotCount;
+bool EyeEmotion_IsEmptySlot(const char* emotion);
 
 class EyeAnimation {
 public:
@@ -106,9 +115,6 @@ public:
     void SetEyeColor(uint8_t r, uint8_t g, uint8_t b);
     void SetLeftEyeColor(uint8_t r, uint8_t g, uint8_t b);
     void SetRightEyeColor(uint8_t r, uint8_t g, uint8_t b);
-    void TriggerGamePlus(bool left_eye);
-    void SetGameMode(bool active);
-    bool IsGameMode() const { return game_mode_active_; }
     void SetMoodColorAutoEnabled(bool enabled);
     bool IsMoodColorAutoEnabled() const { return mood_color_auto_enabled_; }
     void SetBaseLeftShape(const EyeShape& shape);
@@ -124,6 +130,157 @@ public:
     // (the transition into the pose) finishes and Holding's duration is
     // picked; a no-op if that has already happened for this cycle.
     void ExtendMischiefHold(uint32_t min_hold_ms);
+    // Feeling of the current (most recently started) mischief cycle; the
+    // voice layer reads it so the clip matches the pose on screen.
+    Vox::Mood GetMischiefMood() const { return mischief_mood_; }
+    // ---- Tilt: a head turn shown with the eyes (locked 2026-09-29) ----
+    // Left: left eye 65x70 r20, right eye 80x80 r24, both warm white
+    // (255,250,240), both eyes slid kTiltShiftPx toward the bigger eye.
+    // Right mirrors it. Off eases back to the resting eyes. Eases over
+    // mischief change_ms and holds until changed. How Bubu uses it
+    // (listening, looking at a sound, ...) is not decided yet.
+    enum class Tilt : uint8_t { Off, Left, Right };
+    // change_ms/retreat_ms 0 = use the mischief config values.
+    void SetTilt(Tilt tilt, uint32_t change_ms = 0, uint32_t retreat_ms = 0);
+
+    // ---- Gaze up/down (locked 2026-09-29) ----
+    // Both eyes 70x70 r30, warm white (255,250,240), slid 60 px up or down.
+    // Down = +y. Eases like Tilt; Off eases back.
+    enum class Gaze : uint8_t { Off, Up, Down };
+    void SetGaze(Gaze gaze, uint32_t change_ms = 0, uint32_t retreat_ms = 0);
+    Gaze GetGaze() const { return gaze_; }
+    // Idle: chance (0-100) that a new look above/below centre also gazes that
+    // way. Never gazes against the look. 0 = off.
+    void SetIdleGazeChance(uint8_t pct) { idle_gaze_chance_ = pct > 100 ? 100 : pct; }
+    uint8_t GetIdleGazeChance() const { return idle_gaze_chance_; }
+
+    // ---- Nod (trial) ----
+    // Continuous sine: centre (80x80 r24) -> down (70x70 r30, +nod_px) ->
+    // centre -> up -> centre, swing_ms per quarter. swings = quarters, 0 =
+    // until StopNod. ease_ms is unused by the sine.
+    void StartNod(int swings = 0);
+    void StopNod();
+    bool IsNodding() const { return nod_active_; }
+    void SetNodParams(int px, uint32_t swing_ms, uint32_t ease_ms, uint32_t return_ms) {
+        nod_px_ = px; nod_swing_ms_ = swing_ms; nod_ease_ms_ = ease_ms; nod_return_ms_ = return_ms;
+    }
+
+    // Idle: chance (0-100) per look to play one whole nod or head shake,
+    // from neutral only, then a 20-40 s cooldown. 0 = off.
+    void SetIdleGestureChance(uint8_t pct) { idle_gesture_chance_ = pct > 100 ? 100 : pct; }
+    uint8_t GetIdleGestureChance() const { return idle_gesture_chance_; }
+
+    // ---- Bounce in place (trial) ----
+    // count = bounces, 0 = until StopBounce. Default 2 bounces per second,
+    // 20 px high, squash & stretch on the eye shape.
+    void StartBounce(int count = 0);
+    void StopBounce();
+    bool IsBouncing() const { return bounce_active_; }
+    void SetBounceParams(int height_px, uint32_t period_ms) {
+        bounce_height_px_ = height_px; bounce_period_ms_ = period_ms;
+    }
+    void SetBounceSquash(int dw, int dh, int dr) { bounce_squash_[0] = dw; bounce_squash_[1] = dh; bounce_squash_[2] = dr; }
+    void SetBounceStretch(int dw, int dh, int dr) { bounce_stretch_[0] = dw; bounce_stretch_[1] = dh; bounce_stretch_[2] = dr; }
+
+    // Locked bounce styles (2026-09-29): height px / ms per bounce. Which
+    // emotion uses which is not decided yet. Squash & stretch stay default.
+    enum class BounceStyle : uint8_t { LowFast, LowSlow, MidFast, MidSlow, HighSlow };
+    void StartBounceStyle(BounceStyle style, int count = 0);
+
+    // The full "surprised": resting 80x80 r24 -> one MidFast bounce -> lands
+    // and settles as SURPRISED_SIZE 90x90, radius SURPRISED_RADIUS (50, which
+    // the renderer caps at 45 = a full circle for a 90 px eye).
+    void PlaySurprised();
+    void CancelSurprised();
+
+    // ---- Dozing / gù gật (trial) — the "sleepy" emotion ----
+    // Top edge sinks slowly by min_px..max_px (random per cycle), holds,
+    // rises, stays open, repeats. Times vary +-25% per cycle.
+    void StartDoze();
+    void StopDoze();
+    bool IsDozing() const { return doze_active_; }
+    void SetDozeMaxOpen(int px) { doze_max_open_px_ = px; }
+    void SetDozeParams(int min_px, int max_px, uint32_t droop_ms, uint32_t hold_ms, uint32_t snap_ms, uint32_t open_ms) {
+        doze_min_px_ = min_px; doze_max_px_ = max_px; doze_droop_ms_ = droop_ms; doze_hold_ms_ = hold_ms;
+        doze_snap_ms_ = snap_ms; doze_open_ms_ = open_ms;
+    }
+
+    // ---- Device-state animations ----
+    // Connecting to the server (product: kDeviceStateConnecting, a few
+    // seconds at the start of a session). Variant Random picks one of the
+    // three each time. Idle extras and mischief hold off while it runs.
+    enum class ConnectingStyle : uint8_t { Random, Bounce, TiltHold, Shake };
+    // User, 2026-09-29: connecting = head shake (one fixed motion).
+    void StartConnecting(ConnectingStyle style = ConnectingStyle::Shake);
+    void StopConnecting();
+    bool IsConnecting() const { return connecting_active_; }
+
+    // Device state -> eyes (user, 2026-09-29):
+    //   Connecting -> head shake
+    //   Listening  -> still at the centre, blinking only, eyes 60x60 r20
+    //   Speaking   -> still (blinking) eyes 60x60 r20, one LowSlow bounce
+    //                 every 1.5-4 s at random
+    //   Idle       -> normal idle eyes
+    enum class DeviceLook : uint8_t { Idle, Connecting, Listening, Speaking };
+    void SetDeviceLook(DeviceLook look);
+    DeviceLook GetDeviceLook() const { return device_look_; }
+    void SetSpeakingBounceStyle(BounceStyle style) { speaking_bounce_ = style; }
+
+    // ---- Head shake (locked 2026-09-29) ----
+    // Tilt left and right alternately every 500 ms, each swing easing over
+    // 500 ms (so the eyes never rest mid-shake); stopping eases back to the
+    // resting eyes over 1000 ms. swings = number of direction changes,
+    // 0 = until StopHeadShake().
+    void StartHeadShake(int swings = 0);
+    void StopHeadShake();
+    bool IsHeadShaking() const { return head_shake_active_; }
+
+    // Idle tilt: chance (0-100) that a new idle look toward one side also
+    // tilts toward that side. 0 = off. Never tilts against the look.
+    void SetIdleTiltChance(uint8_t pct) { idle_tilt_chance_ = pct > 100 ? 100 : pct; }
+    uint8_t GetIdleTiltChance() const { return idle_tilt_chance_; }
+    Tilt GetTilt() const { return tilt_; }
+
+    // Render in step with the display refresh (LV_EVENT_REFR_START) instead of
+    // on a separate timer, so each refresh carries exactly one new frame.
+    void SyncToDisplayRefresh(lv_display_t* disp, bool on);
+    bool IsSyncedToDisplay() const { return synced_disp_ != nullptr; }
+
+    // Resting height of the eyes: px from the screen centre, negative = up.
+    // Applies to the normal eyes only; legacy scenes stay centred.
+    void SetBaseOffsetY(int px) { base_off_y_ = px; }
+    int GetBaseOffsetY() const { return base_off_y_; }
+
+    // ---- Eye Lab live tuning (not in the product firmware) ----
+    // mood < 0 = random by weight; otherwise a Vox::Mood value.
+    void LabForceMood(int mood) { lab_forced_mood_ = mood; }
+    int LabForcedMood() const { return lab_forced_mood_; }
+    void LabSetMoodWeight(int mood, int weight);
+    int LabMoodWeight(int mood) const;
+    // 0 = each mood's own hold time.
+    void LabSetHoldMs(uint32_t ms) { lab_hold_ms_ = ms; }
+    uint32_t LabHoldMs() const { return lab_hold_ms_; }
+    // Custom mischief pose. side: 0 both, 1 left, 2 right. Applied at once if
+    // a pose is on screen, and used by every later cycle until cleared.
+    void LabSetPose(int side, int w, int h, int r, uint8_t red, uint8_t green, uint8_t blue);
+    void LabClearPose();
+    // Swap the custom left/right poses, easing over change_ms (head-turn test).
+    void LabSwapPoses();
+    // During swaps, slide both eyes this many px toward the bigger eye
+    // (0 = off). Eases over the same change_ms as the size change.
+    void LabSetShiftPx(int px) { lab_shift_px_ = px; }
+    int LabShiftPx() const { return lab_shift_px_; }
+    bool LabPoseActive() const { return lab_pose_active_; }
+    void LabDescribe() const;
+    // Stop the idle look-around and put the eyes back at the centre.
+    void LabCenter() {
+        idle_active_ = false;
+        look_active_ = false;
+        off_x_ = off_y_ = target_off_x_ = target_off_y_ = 0.0f;
+        tilt_off_x_ = 0.0f;
+        head_off_y_ = 0.0f;
+    }  // prints the current mischief state
+
     bool ConsumePendingInteractionEvent(InteractionEvent event);
     void SetInteractionEventCallback(InteractionEventCallback callback);
 
@@ -226,14 +383,6 @@ private:
         uint32_t blink_start_ms = 0;
     };
 
-    struct GamePlusFx {
-        bool active = false;
-        bool left_eye = true;
-        float start_x = 0.0f;
-        float start_y = 0.0f;
-        uint32_t start_ms = 0;
-    };
-
     enum class BathPhase : uint8_t {
         Enter,
         Scrub,
@@ -331,6 +480,90 @@ private:
 
     // Render policy (see SetRenderPolicy). Defaults match the timer created in Init().
     uint8_t render_fps_   = 30;
+    int lab_forced_mood_ = -1;
+    int lab_mood_weights_[8] = {28, 10, 16, 12, 12, 6, 8, 8};  // Vox::Mood order
+    uint32_t lab_hold_ms_ = 0;
+    bool lab_pose_active_ = false;
+    bool head_pose_hold_ = false;  // a tilt/gaze/nod/bounce pose is being held
+    int lab_shift_px_ = 0;
+    Tilt tilt_ = Tilt::Off;
+    bool head_shake_active_ = false;
+    uint8_t idle_tilt_chance_ = 30;
+    float tilt_off_x_ = 0.0f;
+    int base_off_y_ = 0;
+    lv_display_t* synced_disp_ = nullptr;
+    static void RefrStartCb(lv_event_t* e);
+    float head_off_y_ = 0.0f;           // gaze / nod slide
+    float lab_shift_y_from_ = 0.0f;
+    float lab_shift_y_to_ = 0.0f;
+    Gaze gaze_ = Gaze::Off;
+    uint8_t idle_gaze_chance_ = 15;
+    bool nod_active_ = false;
+    uint32_t nod_start_ms_ = 0;
+    int nod_left_ = 0;
+    uint32_t nod_next_ms_ = 0;
+    int nod_px_ = 30;
+    uint32_t nod_swing_ms_ = 500;
+    uint32_t nod_ease_ms_ = 500;
+    uint32_t nod_return_ms_ = 1000;
+    void UpdateNod(uint32_t now_ms);
+    void MaybeIdleGaze();
+    void MaybeIdleGesture(uint32_t now_ms);
+    enum class DozePhase : uint8_t { Droop, Hold, Snap, Open };
+    bool doze_active_ = false;
+    bool doze_capped_ = false;
+    DozePhase doze_phase_ = DozePhase::Open;
+    uint32_t doze_phase_start_ms_ = 0;
+    uint32_t doze_phase_ms_ = 0;
+    float doze_close_ = 0.0f;   // px the top edge has sunk
+    float doze_from_ = 0.0f;
+    float doze_target_px_ = 0.0f;
+    int doze_min_px_ = 20;      // user, 2026-09-29: depth 20-70 px,
+    int doze_max_px_ = 70;      // droop 2500, hold 0, rise 2200, open 0
+    uint32_t doze_droop_ms_ = 2500;
+    uint32_t doze_hold_ms_ = 0;
+    uint32_t doze_snap_ms_ = 2200;
+    uint32_t doze_open_ms_ = 0;
+    int doze_max_open_px_ = 60;  // tallest the eye may open while dozing
+    // Droop the eye keeps at the top of each rise: base height - max open.
+    float DozeRestPx() const {
+        return static_cast<float>(std::max(0, eye_l_h_default_ - doze_max_open_px_));
+    }
+    void UpdateDoze(uint32_t now_ms);
+    bool connecting_active_ = false;
+    bool speaking_active_ = false;
+    DeviceLook device_look_ = DeviceLook::Idle;
+    BounceStyle speaking_bounce_ = BounceStyle::LowSlow;
+    uint32_t speaking_next_bounce_ms_ = 0;
+    static constexpr int kSpeakingGapMinMs = 1500;  // quiet time between bounces
+    static constexpr int kSpeakingGapMaxMs = 4000;
+    void UpdateSpeaking(uint32_t now_ms);
+    bool listening_active_ = false;
+    ConnectingStyle connecting_style_ = ConnectingStyle::Bounce;
+    uint32_t connecting_next_ms_ = 0;
+    void UpdateConnecting(uint32_t now_ms);
+    bool bounce_active_ = false;
+    bool bounce_settling_ = false;       // easing back to rest after a counted bounce
+    bool surprised_after_bounce_ = false;
+    int bounce_left_ = 0;
+    uint32_t bounce_start_ms_ = 0;
+    int bounce_height_px_ = 20;
+    uint32_t bounce_period_ms_ = 500;         // 2 bounces per second
+    int bounce_squash_[3] = {16, -20, 6};     // w, h, radius at landing
+    int bounce_stretch_[3] = {-8, 12, 6};     // w, h, radius while moving fast
+    void UpdateBounce(uint32_t now_ms);
+    uint8_t idle_gesture_chance_ = 5;
+    uint32_t idle_gesture_ready_ms_ = 10000;  // not in the first 10 s after boot
+    void ApplyHeadPose(const EyePose& left, const EyePose& right, float x, float y, uint32_t change_ms);
+    void ReleaseHeadPose(uint32_t retreat_ms);           // tilt slide, on top of the idle look
+    void MaybeIdleTilt();
+    void UpdateIdleTilt(uint32_t now_ms);
+    int head_shake_left_ = 0;          // swings remaining, <0 = endless
+    uint32_t head_shake_next_ms_ = 0;
+    void UpdateHeadShake(uint32_t now_ms);
+    float lab_shift_from_ = 0.0f;
+    float lab_shift_to_ = 0.0f;
+    bool lab_shift_moving_ = false;
     bool    static_pose_  = false;
 
     int screen_w_ = 240;
@@ -471,7 +704,6 @@ private:
     uint8_t l_base_red_ = 255, l_base_green_ = 255, l_base_blue_ = 255;
     uint8_t r_base_red_ = 255, r_base_green_ = 255, r_base_blue_ = 255;
     bool mood_color_auto_enabled_ = true;
-    bool game_mode_active_ = false;
     uint32_t color_last_ms_ = 0;
 
     // ---- Mischief Engine ----
@@ -483,10 +715,13 @@ private:
     uint32_t mischief_phase_duration_ms_ = 0;
     uint32_t mischief_next_cycle_ms_ = 0;
     uint32_t mischief_min_hold_extension_ms_ = 0;
+    Vox::Mood mischief_mood_ = Vox::Mood::Mumble;
     EyePose mischief_from_left_;
     EyePose mischief_from_right_;
     EyePose mischief_to_left_;
     EyePose mischief_to_right_;
+    EyePose lab_pose_left_;
+    EyePose lab_pose_right_;
     bool pending_blink_event_ = false;
     bool pending_mischief_event_ = false;
     InteractionEventCallback interaction_event_callback_;
@@ -495,8 +730,6 @@ private:
     // ---- Touch hit-test boxes ----
     EyeBounds left_eye_box_, right_eye_box_;
     EyeBounds left_touch_box_, right_touch_box_;
-    static constexpr int kGamePlusFxCount = 6;
-    GamePlusFx game_plus_fx_[kGamePlusFxCount];
 
     // ---- Bathing ----
     static constexpr int kBathFoamCount = 14;
@@ -514,14 +747,15 @@ private:
     float feed_squint_px_ = 0.0f;   // extra bottom-lid mask added during a chomp
     float feed_shake_y_ = 0.0f;     // vertical chomp shake added to the eye centre
 
-    void DrawGamePlusFx(lv_layer_t* layer, uint32_t now_ms);
-
     // ---- Constants ----
     static constexpr int   CLOSED_HEIGHT  = 6;
     static constexpr int   TOUCH_PAD_X    = 18;
     static constexpr int   TOUCH_PAD_Y    = 24;
     static constexpr float HAPPY_SCALE    = 1.15f;
-    static constexpr int   SURPRISED_RADIUS = 32;
+    static constexpr int   SURPRISED_RADIUS = 50;  // user, 2026-09-29 (was 32); capped at size/2
+    static constexpr int   SURPRISED_SIZE   = 90;
+    static constexpr int   SESSION_SIZE     = 60;  // listening/speaking eye, user 2026-09-29
+    static constexpr int   SESSION_RADIUS   = 20;  // user, 2026-09-29: surprised ends 90x90
     static constexpr int   BOUNCE_AMPL    = 8;
 
     static constexpr uint32_t BLINK_CLOSE_MS  = 40;
@@ -638,12 +872,16 @@ private:
     void SyncBasePoseTargets();
     EyePose GetBaseLeftPose() const;
     EyePose GetBaseRightPose() const;
-    EyePose MakeRandomPoseFromBase(const EyePose& base_pose) const;
+    Vox::Mood PickMischiefMood() const;
+    void MakeMoodPoses(Vox::Mood mood, const EyePose& left_base, const EyePose& right_base,
+                       EyePose* left, EyePose* right) const;
+    uint32_t PickMoodHoldMs(Vox::Mood mood) const;
     EyePose LerpPose(const EyePose& from, const EyePose& to, float t) const;
     void ClampPose(EyePose* pose) const;
     void ClampShape(EyeShape* shape) const;
     void EmitInteractionEvent(InteractionEvent event);
-    void StartMischiefCycle(uint32_t now_ms);
+    // use_lab_pose: the lab's custom pose (mpose/mswing) instead of a mood pose.
+    void StartMischiefCycle(uint32_t now_ms, bool use_lab_pose = false);
     void FinishMischiefCycle();
     void RenderFrame();
     void RenderHatchingFrame(uint32_t now_ms);

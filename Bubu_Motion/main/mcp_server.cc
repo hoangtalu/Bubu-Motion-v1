@@ -18,6 +18,7 @@
 
 #include "application.h"
 #include "assets/lang_config.h"
+#include "audio/vox.h"
 #include "display.h"
 #include "oled_display.h"
 #include "board.h"
@@ -29,6 +30,7 @@
 #include "level_system.h"
 #include "display/menu_system.h"
 #include "display/pomodoro_timer.h"
+#include "message_board.h"
 #include "lvgl_theme.h"
 #include "lvgl_display.h"
 
@@ -201,61 +203,49 @@ const char* FeatureIdToString(LevelSystem::FeatureID feature) {
 }
 
 std::string_view ResolveSoundName(std::string_view sound_name) {
+    // Bubu vocalizations (vox_*, bed_*) are _a/_b pairs; one take is picked
+    // at random per call. System cues have a single clip (alt left empty).
     struct SoundBinding {
         std::string_view name;
         std::string_view sound;
+        std::string_view alt;
     };
 
-    static const std::array<SoundBinding, 50> kSoundBindings = {{
-        {"0", Lang::Sounds::OGG_0},
-        {"1", Lang::Sounds::OGG_1},
-        {"2", Lang::Sounds::OGG_2},
-        {"3", Lang::Sounds::OGG_3},
-        {"4", Lang::Sounds::OGG_4},
-        {"5", Lang::Sounds::OGG_5},
-        {"6", Lang::Sounds::OGG_6},
-        {"7", Lang::Sounds::OGG_7},
-        {"8", Lang::Sounds::OGG_8},
-        {"9", Lang::Sounds::OGG_9},
-        {"activation", Lang::Sounds::OGG_ACTIVATION},
-        {"bubu_angry1", Lang::Sounds::OGG_BUBU_ANGRY1},
-        {"bubu_angry2", Lang::Sounds::OGG_BUBU_ANGRY2},
-        {"bubu_bored1", Lang::Sounds::OGG_BUBU_BORED1},
-        {"bubu_curious1", Lang::Sounds::OGG_BUBU_CURIOUS1},
-        {"bubu_happy1", Lang::Sounds::OGG_BUBU_HAPPY1},
-        {"bubu_happy2", Lang::Sounds::OGG_BUBU_HAPPY2},
-        {"bubu_happy3", Lang::Sounds::OGG_BUBU_HAPPY3},
-        {"bubu_laugh", Lang::Sounds::OGG_BUBU_LAUGH},
-        {"bubu_mumble1", Lang::Sounds::OGG_BUBU_MUMBLING_1},
-        {"bubu_mumble2", Lang::Sounds::OGG_BUBU_MUMBLING_2},
-        {"bubu_mumble3", Lang::Sounds::OGG_BUBU_MUMBLING_3},
-        {"bubu_mumble4", Lang::Sounds::OGG_BUBU_MUMBLING_4},
-        {"bubu_mumbling1", Lang::Sounds::OGG_BUBU_MUMBLING_1},
-        {"bubu_mumbling2", Lang::Sounds::OGG_BUBU_MUMBLING_2},
-        {"bubu_mumbling3", Lang::Sounds::OGG_BUBU_MUMBLING_3},
-        {"bubu_mumbling4", Lang::Sounds::OGG_BUBU_MUMBLING_4},
-        {"bubu_mumbling_1", Lang::Sounds::OGG_BUBU_MUMBLING_1},
-        {"bubu_mumbling_2", Lang::Sounds::OGG_BUBU_MUMBLING_2},
-        {"bubu_mumbling_3", Lang::Sounds::OGG_BUBU_MUMBLING_3},
-        {"bubu_mumbling_4", Lang::Sounds::OGG_BUBU_MUMBLING_4},
-        {"bubu_sad1", Lang::Sounds::OGG_BUBU_SAD1},
-        {"bubu_sad2", Lang::Sounds::OGG_BUBU_SAD2},
-        {"bubu_sing1", Lang::Sounds::OGG_BUBU_SING1},
-        {"bubu_sing2", Lang::Sounds::OGG_BUBU_SING2},
-        {"bubu_sing3", Lang::Sounds::OGG_BUBU_SING3},
-        {"bubu_sing4", Lang::Sounds::OGG_BUBU_SING4},
-        {"bubu_tired1", Lang::Sounds::OGG_BUBU_TIRED1},
-        {"err_pin", Lang::Sounds::OGG_ERR_PIN},
-        {"err_reg", Lang::Sounds::OGG_ERR_REG},
-        {"exclamation", Lang::Sounds::OGG_EXCLAMATION},
-        {"low_battery", Lang::Sounds::OGG_LOW_BATTERY},
-        {"popup", Lang::Sounds::OGG_POPUP},
-        {"success", Lang::Sounds::OGG_SUCCESS},
-        {"upgrade", Lang::Sounds::OGG_UPGRADE},
-        {"vibration", Lang::Sounds::OGG_VIBRATION},
-        {"welcome", Lang::Sounds::OGG_WELCOME},
-        {"wificonfig", Lang::Sounds::OGG_WIFICONFIG},
-        {"wifi_config", Lang::Sounds::OGG_WIFICONFIG},
+    static const std::array<SoundBinding, 34> kSoundBindings = {{
+        {"activation", Lang::Sounds::OGG_ACTIVATION, {}},
+        {"err_pin", Lang::Sounds::OGG_ERR_PIN, {}},
+        {"err_reg", Lang::Sounds::OGG_ERR_REG, {}},
+        {"exclamation", Lang::Sounds::OGG_EXCLAMATION, {}},
+        {"low_battery", Lang::Sounds::OGG_LOW_BATTERY, {}},
+        {"popup", Lang::Sounds::OGG_POPUP, {}},
+        {"success", Lang::Sounds::OGG_SUCCESS, {}},
+        {"upgrade", Lang::Sounds::OGG_UPGRADE, {}},
+        {"vibration", Lang::Sounds::OGG_VIBRATION, {}},
+        {"welcome", Lang::Sounds::OGG_WELCOME, {}},
+        {"wificonfig", Lang::Sounds::OGG_WIFICONFIG, {}},
+        {"wifi_config", Lang::Sounds::OGG_WIFICONFIG, {}},
+        {"vox_think_1", Lang::Sounds::OGG_VOX_THINK_1_A, Lang::Sounds::OGG_VOX_THINK_1_B},
+        {"vox_think_2", Lang::Sounds::OGG_VOX_THINK_2_A, Lang::Sounds::OGG_VOX_THINK_2_B},
+        {"vox_surprise_1", Lang::Sounds::OGG_VOX_SURPRISE_1_A, Lang::Sounds::OGG_VOX_SURPRISE_1_B},
+        {"vox_surprise_2", Lang::Sounds::OGG_VOX_SURPRISE_2_A, Lang::Sounds::OGG_VOX_SURPRISE_2_B},
+        {"vox_happy_1", Lang::Sounds::OGG_VOX_HAPPY_1_A, Lang::Sounds::OGG_VOX_HAPPY_1_B},
+        {"vox_happy_2", Lang::Sounds::OGG_VOX_HAPPY_2_A, Lang::Sounds::OGG_VOX_HAPPY_2_B},
+        {"vox_laugh_1", Lang::Sounds::OGG_VOX_LAUGH_1_A, Lang::Sounds::OGG_VOX_LAUGH_1_B},
+        {"vox_sad_1", Lang::Sounds::OGG_VOX_SAD_1_A, Lang::Sounds::OGG_VOX_SAD_1_B},
+        {"vox_sad_2", Lang::Sounds::OGG_VOX_SAD_2_A, Lang::Sounds::OGG_VOX_SAD_2_B},
+        {"vox_annoyed_1", Lang::Sounds::OGG_VOX_ANNOYED_1_A, Lang::Sounds::OGG_VOX_ANNOYED_1_B},
+        {"vox_annoyed_2", Lang::Sounds::OGG_VOX_ANNOYED_2_A, Lang::Sounds::OGG_VOX_ANNOYED_2_B},
+        {"vox_yawn_1", Lang::Sounds::OGG_VOX_YAWN_1_A, Lang::Sounds::OGG_VOX_YAWN_1_B},
+        {"vox_mumble_1", Lang::Sounds::OGG_VOX_MUMBLE_1_A, Lang::Sounds::OGG_VOX_MUMBLE_1_B},
+        {"vox_mumble_2", Lang::Sounds::OGG_VOX_MUMBLE_2_A, Lang::Sounds::OGG_VOX_MUMBLE_2_B},
+        {"vox_mumble_3", Lang::Sounds::OGG_VOX_MUMBLE_3_A, Lang::Sounds::OGG_VOX_MUMBLE_3_B},
+        {"vox_mumble_4", Lang::Sounds::OGG_VOX_MUMBLE_4_A, Lang::Sounds::OGG_VOX_MUMBLE_4_B},
+        {"vox_hum_1", Lang::Sounds::OGG_VOX_HUM_1_A, Lang::Sounds::OGG_VOX_HUM_1_B},
+        {"vox_hum_2", Lang::Sounds::OGG_VOX_HUM_2_A, Lang::Sounds::OGG_VOX_HUM_2_B},
+        {"vox_hum_3", Lang::Sounds::OGG_VOX_HUM_3_A, Lang::Sounds::OGG_VOX_HUM_3_B},
+        {"vox_hum_4", Lang::Sounds::OGG_VOX_HUM_4_A, Lang::Sounds::OGG_VOX_HUM_4_B},
+        {"bed_talk_blocked", Lang::Sounds::OGG_BED_TALK_BLOCKED_A, Lang::Sounds::OGG_BED_TALK_BLOCKED_B},
+        {"bed_reminder", Lang::Sounds::OGG_BED_REMINDER_A, Lang::Sounds::OGG_BED_REMINDER_B},
     }};
 
     const std::string normalized = NormalizeToken(sound_name);
@@ -266,7 +256,7 @@ std::string_view ResolveSoundName(std::string_view sound_name) {
     if (it == kSoundBindings.end()) {
         return {};
     }
-    return it->sound;
+    return it->alt.empty() ? it->sound : Vox::Pick(it->sound, it->alt);
 }
 
 }  // namespace
@@ -359,6 +349,44 @@ void McpServer::AddCommonTools() {
                 display->SetEmotion(emotion.c_str());
                 return std::string("emotion set to " + emotion);
             });
+
+        // Tutor step cards (docs/tutor-mode-plan.md). The card holds the
+        // numbers while the voice guides, so the child is not asked to hold a
+        // calculation in their head from a sentence that has already gone by.
+        AddTool("self.tutor.show_step",
+            "Show one step card during study time. Use it to hold numbers the child is "
+            "working with, not to give the answer and not to repeat the guiding question. "
+            "`expr` is the calculation being worked on, e.g. `3 × 12 = ?`. `note` is a short "
+            "reminder of what the numbers mean. `label` is optional: leave it empty and the "
+            "screen numbers the card itself. Plain text only, `×` and `÷` for multiply and "
+            "divide, `-` for minus, no LaTeX. The screen is small and refuses text that does "
+            "not fit, saying which slot and how wide it was — shorten it and call again. At "
+            "most 4 cards per problem; call self.tutor.end before the next problem.",
+            PropertyList({
+                Property("expr", kPropertyTypeString),
+                Property("note", kPropertyTypeString, std::string()),
+                Property("label", kPropertyTypeString, std::string())
+            }),
+            [](const PropertyList& properties) -> ReturnValue {
+                const auto expr = properties["expr"].value<std::string>();
+                const auto note = properties["note"].value<std::string>();
+                const auto label = properties["label"].value<std::string>();
+                std::string error;
+                if (!MessageBoard::ShowStep(label, expr, note, &error)) {
+                    throw std::runtime_error(error);
+                }
+                return std::string("step card shown");
+            });
+
+        AddTool("self.tutor.end",
+            "Clear the step cards and close the card. Call it when the problem is finished "
+            "or the child moves on to another one.",
+            PropertyList(),
+            [](const PropertyList& properties) -> ReturnValue {
+                (void)properties;
+                MessageBoard::EndSteps();
+                return std::string("step cards cleared");
+            });
     }
 
     if (display && display->GetTheme() != nullptr) {
@@ -379,35 +407,13 @@ void McpServer::AddCommonTools() {
             });
     }
 
-    auto camera = board.GetCamera();
-    if (camera) {
-        AddTool("self.camera.take_photo",
-            "Always remember you have a camera. If the user asks you to see something, use this tool to take a photo and then explain it.\n"
-            "Args:\n"
-            "  `question`: The question that you want to ask about the photo.\n"
-            "Return:\n"
-            "  A JSON object that provides the photo information.",
-            PropertyList({
-                Property("question", kPropertyTypeString)
-            }),
-            [camera](const PropertyList& properties) -> ReturnValue {
-                // Lower the priority to do the camera capture
-                TaskPriorityReset priority_reset(1);
-
-                if (!camera->Capture()) {
-                    throw std::runtime_error("Failed to capture photo");
-                }
-                auto question = properties["question"].value<std::string>();
-                return camera->Explain(question);
-            });
-    }
 #endif
 
     AddTool("self.audio_speaker.play_sound",
         "Play a validated audio cue. Supported names include popup, success, vibration, "
         "exclamation, activation, upgrade, welcome, wificonfig, low_battery, err_pin, "
-        "err_reg, digits 0-9, and Bubu cues like bubu_happy1, bubu_laugh, bubu_sad1, "
-        "bubu_mumble1, and bubu_tired1.",
+        "err_reg, and Bubu vocalizations like vox_happy_1, vox_laugh_1, vox_sad_1, "
+        "vox_think_1, vox_surprise_1, vox_annoyed_1, vox_yawn_1, vox_mumble_1 and vox_hum_1.",
         PropertyList({
             Property("sound_name", kPropertyTypeString)
         }),

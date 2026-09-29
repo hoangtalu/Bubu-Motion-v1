@@ -13,8 +13,8 @@
  * status chrome from all running simultaneously regardless of what is on screen.
  *
  * The eye renderer is a drawing surface, not a screen: Main, Hatching, Feeding,
- * Bathing, Sleep and EyeTapGame all paint with it, so eye_fps is a
- * per-screen property rather than a property of the main screen.
+ * Bathing and Sleep all paint with it, so eye_fps is a per-screen property
+ * rather than a property of the main screen.
  *
  * Cheap 1 Hz bookkeeping (care decay, level/reminder saves, the screensaver and
  * sleep idle countdowns) is deliberately NOT governed here -- it is independent
@@ -44,10 +44,12 @@ enum class ScreenId : uint8_t {
     GamesList,
     Level,
     Fortune,
-    EyeTapGame,
+    GreenEyeGame,
     CheckerGame,
     QuickTapGame,
     SnakeGame,
+    TiltMazeGame,
+    TrafficRunnerGame,
     Pomodoro,
     Celebration,
     Count,

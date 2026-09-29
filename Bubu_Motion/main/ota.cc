@@ -289,6 +289,28 @@ esp_err_t Ota::CheckVersion() {
         ESP_LOGW(TAG, "No server_time section found!");
     }
 
+    // Study time, as set by a parent on the portal. Only the end of the window
+    // travels: the device compares it against its own clock, so the sound comes
+    // back at the right minute even if the next check-in is late or fails.
+    // "active" is what the gateway computes; "until" alone would mute a device
+    // whose clock is ahead of the server's.
+    has_study_state_ = false;
+    study_until_ms_ = 0;
+    cJSON *study = cJSON_GetObjectItem(root, "study");
+    if (cJSON_IsObject(study)) {
+        has_study_state_ = true;
+        cJSON *active = cJSON_GetObjectItem(study, "active");
+        cJSON *until = cJSON_GetObjectItem(study, "until");
+        if (cJSON_IsTrue(active) && cJSON_IsNumber(until)) {
+            study_until_ms_ = static_cast<int64_t>(until->valuedouble);
+        }
+        // Epoch seconds, not ms: this build uses nano printf, which has no
+        // %lld. Seconds fit a long here and stay readable in the log.
+        ESP_LOGI(TAG, "Study time: %s (until=%ld)",
+                 study_until_ms_ > 0 ? "on" : "off",
+                 static_cast<long>(study_until_ms_ / 1000));
+    }
+
     has_new_version_ = false;
     cJSON *firmware = cJSON_GetObjectItem(root, "firmware");
     if (cJSON_IsObject(firmware)) {

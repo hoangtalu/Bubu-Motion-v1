@@ -21,8 +21,8 @@ constexpr ScreenPolicy kBoot      { 30, false, false, true,  false, false, true 
 constexpr ScreenPolicy kHatching  { 30, false, false, false, false, false, true  };
 constexpr ScreenPolicy kMain      { 30, false, true,  true,  true,  true,  true  };
 constexpr ScreenPolicy kEyeSeq    { 30, false, false, true,  true,  false, true  };
-constexpr ScreenPolicy kEyeGame   { 30, false, false, false, false, false, false };
 constexpr ScreenPolicy kPanel     {  0, false, false, false, false, false, false };
+constexpr ScreenPolicy kImuPanel  {  0, false, true,  false, false, false, false };
 constexpr ScreenPolicy kSleep     {  4, true,  false, false, false, false, false };
 
 // Indexed by ScreenId. Order must match the enum.
@@ -48,10 +48,12 @@ constexpr ScreenPolicy kScreenPolicies[] = {
     kPanel,       // GamesList
     kPanel,       // Level
     kPanel,       // Fortune
-    kEyeGame,     // EyeTapGame     -- played on the full eye canvas
+    kPanel,       // GreenEyeGame
     kPanel,       // CheckerGame
     kPanel,       // QuickTapGame
     kPanel,       // SnakeGame
+    kImuPanel,    // TiltMazeGame  -- panel renderer plus accelerometer input
+    kImuPanel,    // TrafficRunnerGame -- panel renderer plus accelerometer input
     kPanel,       // Pomodoro
     kPanel,       // Celebration    -- level-up GIF owns the screen
 };
@@ -65,8 +67,9 @@ const char* const kScreenNames[] = {
     "clock",    "sleep",          "menu",    "care",    "connect",
     "keyboard", "settings",       "notes",   "note_detail", "reminders",
     "reminder_detail", "volume",  "stats", "games_list",
-    "level",    "fortune",        "eye_tap_game", "checker_game",
-    "quick_tap_game", "snake_game", "pomodoro", "celebration",
+    "level",    "fortune",        "green_eye_game", "checker_game",
+    "quick_tap_game", "snake_game", "tilt_maze_game", "traffic_runner_game",
+    "pomodoro", "celebration",
 };
 
 static_assert(sizeof(kScreenNames) / sizeof(kScreenNames[0]) ==

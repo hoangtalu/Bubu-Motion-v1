@@ -14,6 +14,7 @@
 #include "settings.h"
 #include "assets/lang_config.h"
 #include <algorithm>
+#include <cmath>
 #include <array>
 #include <ctime>
 #include <esp_log.h>
@@ -107,6 +108,10 @@ EyeDisplay::~EyeDisplay() {
   if (status_chrome_timer_ != nullptr) {
     lv_timer_delete(status_chrome_timer_);
     status_chrome_timer_ = nullptr;
+  }
+  if (status_anim_timer_ != nullptr) {
+    lv_timer_delete(status_anim_timer_);
+    status_anim_timer_ = nullptr;
   }
   if (subtitle_timer_ != nullptr) {
     lv_timer_delete(subtitle_timer_);
@@ -359,6 +364,9 @@ void EyeDisplay::SetTheme(Theme *theme) {
 void EyeDisplay::NotifyUserInteraction() {
   last_user_interaction_ms_ = GetNowMs();
   HideClockScreensaver();
+  if (sleep_mode_active_) {
+    StopSleepMode();
+  }
 }
 
 bool EyeDisplay::DismissClockScreensaver() {
@@ -367,6 +375,9 @@ bool EyeDisplay::DismissClockScreensaver() {
     return false;
   }
   HideClockScreensaver();
+  if (sleep_mode_active_) {
+    StopSleepMode();
+  }
   return true;
 }
 
@@ -411,6 +422,9 @@ void EyeDisplay::StopSleepMode() {
     return;
   }
 
+  // The 15-minute clock is the second stage of the same rest session.
+  // Leaving rest must dismiss it as well as restore the eyes and brightness.
+  HideClockScreensaver();
   sleep_mode_active_ = false;
   sleep_last_energy_tick_ms_ = 0;
   if (eye_animation_) {
@@ -448,16 +462,36 @@ bool IsWaitingStatus(const char *status) {
   return false;
 }
 
+// States the arc and voice waves already convey, so no words are drawn. What
+// stays as text is what a parent must read: OTA, asset download, activation,
+// errors and alerts.
+bool IsSilentStatus(const char *status) {
+  static const char *const kSilent[] = {
+      Lang::Strings::STANDBY,           Lang::Strings::LISTENING,
+      Lang::Strings::SPEAKING,          Lang::Strings::CONNECTING,
+      Lang::Strings::INITIALIZING,      Lang::Strings::REGISTERING_NETWORK,
+      Lang::Strings::DETECTING_MODULE,  Lang::Strings::LOADING_PROTOCOL,
+      Lang::Strings::CHECKING_NEW_VERSION,
+  };
+  for (const char *candidate : kSilent) {
+    if (candidate != nullptr && std::strcmp(status, candidate) == 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
 }  // namespace
 
 void EyeDisplay::SetStatus(const char *status) {
   NotifyUserInteraction();
   const char *safe = (status != nullptr) ? status : "";
-  // Idle needs no words: the dot alone says Bubu is fine. Rendering STANDBY as
-  // empty is deterministic, unlike collapsing it on a timer.
-  const bool idle_text = std::strcmp(safe, Lang::Strings::STANDBY) == 0;
-  status_base_text_ = idle_text ? "" : safe;
-  status_busy_ = !idle_text && IsWaitingStatus(safe);
+  // Idle, listening, speaking and plain loading need no words: the arc and the
+  // voice waves say it. Rendering them as empty is deterministic, unlike
+  // collapsing them on a timer.
+  const bool silent = IsSilentStatus(safe);
+  status_base_text_ = silent ? "" : safe;
+  status_busy_ = !silent && IsWaitingStatus(safe);
   status_ellipsis_phase_ = 0;
   SpiLcdDisplay::SetStatus(safe);
   RenderStatusText();
@@ -605,7 +639,7 @@ void EyeDisplay::UpdateStatusBar(bool update_all) {
 
   if (bottom_icons_ != nullptr) {
     DisplayLockGuard lock(this);
-    if (MenuSystem::IsAnyOpen()) {
+    if (MenuSystem::IsAnyOpen() || !ScreenManager::Policy().status_chrome) {
       lv_obj_add_flag(bottom_icons_, LV_OBJ_FLAG_HIDDEN);
     } else {
       lv_obj_remove_flag(bottom_icons_, LV_OBJ_FLAG_HIDDEN);
@@ -688,7 +722,139 @@ void EyeDisplay::SetupStatusChrome() {
   RenderStatusText();
   UpdateStatusArcColor();
 
+  SetupVoiceWaves();
+
   status_chrome_timer_ = lv_timer_create(StatusChromeTimerCb, kStatusChromeTickMs, this);
+  status_anim_timer_ = lv_timer_create(StatusAnimTimerCb, kStatusAnimTickMs, this);
+}
+
+// Three rings either side of the eyes, fixed in place; the eyes may drift over
+// them. Listening: yellow, the wave runs inward. Speaking: green, outward.
+void EyeDisplay::SetupVoiceWaves() {
+  lv_obj_t *screen = lv_screen_active();
+  for (int side = 0; side < 2; ++side) {
+    for (int ring = 0; ring < 3; ++ring) {
+      const int size = kVoiceWaveRadius[ring] * 2;
+      lv_obj_t *arc = lv_arc_create(screen);
+      lv_obj_remove_style(arc, nullptr, LV_PART_KNOB);
+      lv_obj_remove_flag(arc, LV_OBJ_FLAG_CLICKABLE);
+      lv_obj_set_size(arc, size, size);
+      lv_arc_set_rotation(arc, 0);
+      lv_obj_set_style_arc_opa(arc, LV_OPA_TRANSP, LV_PART_MAIN);
+      lv_obj_set_style_arc_width(arc, kVoiceWaveWidth, LV_PART_INDICATOR);
+      lv_obj_set_style_arc_rounded(arc, true, LV_PART_INDICATOR);
+      lv_obj_add_flag(arc, LV_OBJ_FLAG_HIDDEN);
+      // Inward rings' circles are centred off-screen; without FLOATING the
+      // screen counts them as overflow and draws a scrollbar at the bottom.
+      lv_obj_add_flag(arc, LV_OBJ_FLAG_FLOATING);
+      voice_waves_[side][ring] = arc;
+    }
+  }
+  PlaceVoiceWaves(false);
+}
+
+// Speaking: rings bulge away from the eyes, ")))" on the right. Listening: each
+// ring is turned 180 degrees about its own midpoint, "(((" on the right, so it
+// cups toward the eye. The midpoint stays put, so only the curvature flips.
+void EyeDisplay::PlaceVoiceWaves(bool inward) {
+  if (voice_waves_inward_ == static_cast<int>(inward)) {
+    return;
+  }
+  voice_waves_inward_ = inward;
+  for (int side = 0; side < 2; ++side) {
+    const int out = side == 0 ? -1 : 1;  // direction away from the face centre
+    for (int ring = 0; ring < 3; ++ring) {
+      lv_obj_t *arc = voice_waves_[side][ring];
+      if (arc == nullptr) {
+        continue;
+      }
+      // `ring` is the slot (0 = nearest the eye); the midpoint of each slot is
+      // fixed. Inward rings also swap sizes: largest curve nearest the eye,
+      // tightest at the edge, like a wave converging on the face.
+      const int mid_x = kVoiceWaveEyeOffsetX + kVoiceWaveRadius[ring];
+      const int r = kVoiceWaveRadius[inward ? 2 - ring : ring];
+      // Circle centre sits r behind the midpoint: toward the eye for outward
+      // rings, away from it for inward ones.
+      const int cx = out * (inward ? mid_x + r : mid_x - r);
+      lv_obj_set_size(arc, r * 2, r * 2);
+      // LVGL angles: 0 = right, clockwise. The drawn span faces the midpoint.
+      const bool faces_right = (out > 0) != inward;
+      const int mid = faces_right ? 0 : 180;
+      lv_obj_align(arc, LV_ALIGN_CENTER, cx, 0);
+      lv_arc_set_bg_angles(arc, (mid - kVoiceWaveHalfSpan + 360) % 360,
+                           (mid + kVoiceWaveHalfSpan) % 360);
+      lv_arc_set_angles(arc, (mid - kVoiceWaveHalfSpan + 360) % 360,
+                        (mid + kVoiceWaveHalfSpan) % 360);
+    }
+  }
+}
+
+void EyeDisplay::StatusAnimTimerCb(lv_timer_t *timer) {
+  auto *self = static_cast<EyeDisplay *>(lv_timer_get_user_data(timer));
+  if (self != nullptr) {
+    self->StatusAnimTick();
+  }
+}
+
+void EyeDisplay::StatusAnimTick() {
+  if (status_arc_ == nullptr) {
+    return;
+  }
+  const auto state = Application::GetInstance().GetDeviceState();
+  const bool chrome = ScreenManager::Policy().status_chrome;
+  const bool breathing =
+      chrome && (state == kDeviceStateStarting || state == kDeviceStateConnecting ||
+                 state == kDeviceStateActivating ||
+                 state == kDeviceStateWifiConfiguring ||
+                 state == kDeviceStateUpgrading);
+  const bool listening = state == kDeviceStateListening;
+  const bool waves = chrome && (listening || state == kDeviceStateSpeaking);
+  const uint32_t now = lv_tick_get();
+
+  if (breathing) {
+    const float t = static_cast<float>(now % kArcBreathPeriodMs) / kArcBreathPeriodMs;
+    const float level = 0.5f + 0.5f * std::cos(2.0f * static_cast<float>(M_PI) * t);
+    lv_obj_set_style_arc_opa(status_arc_, static_cast<lv_opa_t>(70 + 185 * level),
+                             LV_PART_INDICATOR);
+  } else {
+    lv_obj_set_style_arc_opa(status_arc_, LV_OPA_COVER, LV_PART_INDICATOR);
+  }
+
+  if (waves) {
+    PlaceVoiceWaves(listening);
+  }
+  const lv_color_t wave_color = lv_color_hex(listening ? 0xF5C542 : 0x5ADC82);
+  const float t = static_cast<float>(now % kVoiceWavePeriodMs) / kVoiceWavePeriodMs;
+  for (int ring = 0; ring < 3; ++ring) {
+    // Outward (speaking): inner ring leads. Inward (listening): outer leads.
+    const int order = listening ? 2 - ring : ring;
+    // Rings fire one per quarter period, then a quarter of rest: the pause is
+    // what makes the direction readable (a seamless 3-phase loop reads as
+    // either way). Each ring snaps on and fades, so the lit edge leads.
+    float d = t - order / 4.0f;
+    d -= std::floor(d);
+    const float level = d < 0.45f ? 1.0f - d / 0.45f : 0.0f;
+    const lv_opa_t opa = static_cast<lv_opa_t>(35 + 220 * level * level);
+    for (int side = 0; side < 2; ++side) {
+      lv_obj_t *arc = voice_waves_[side][ring];
+      if (arc == nullptr) {
+        continue;
+      }
+      if (!waves) {
+        lv_obj_add_flag(arc, LV_OBJ_FLAG_HIDDEN);
+        continue;
+      }
+      lv_obj_remove_flag(arc, LV_OBJ_FLAG_HIDDEN);
+      lv_obj_set_style_arc_color(arc, wave_color, LV_PART_INDICATOR);
+      lv_obj_set_style_arc_opa(arc, opa, LV_PART_INDICATOR);
+      lv_obj_move_foreground(arc);
+    }
+  }
+
+  // Nothing moving: stop ticking until the next state change resumes us.
+  if (!breathing && !waves) {
+    lv_timer_pause(status_anim_timer_);
+  }
 }
 
 void EyeDisplay::StatusChromeTimerCb(lv_timer_t *timer) {
@@ -724,13 +890,9 @@ void EyeDisplay::UpdateStatusArcColor() {
   uint32_t color = 0x5A6068;
   switch (Application::GetInstance().GetDeviceState()) {
   case kDeviceStateIdle:
-    color = 0x46A05A;   // calm green
-    break;
   case kDeviceStateListening:
-    color = 0x5ADC82;   // bright green
-    break;
   case kDeviceStateSpeaking:
-    color = 0x5AAAFF;   // blue
+    color = 0x5ADC82;   // green: fine; the voice waves tell listening from speaking
     break;
   case kDeviceStateConnecting:
   case kDeviceStateStarting:
@@ -748,16 +910,52 @@ void EyeDisplay::UpdateStatusArcColor() {
     break;
   }
   lv_obj_set_style_arc_color(status_arc_, lv_color_hex(color), LV_PART_INDICATOR);
+  // Breathing and the voice waves need the fast tick; it pauses itself again
+  // once nothing is moving.
+  if (status_anim_timer_ != nullptr) {
+    lv_timer_resume(status_anim_timer_);
+  }
+}
+
+void EyeDisplay::SyncDeviceLook() {
+  if (!eye_animation_) {
+    return;
+  }
+  EyeAnimation::DeviceLook look = EyeAnimation::DeviceLook::Idle;
+  switch (Application::GetInstance().GetDeviceState()) {
+  case kDeviceStateConnecting:
+    look = EyeAnimation::DeviceLook::Connecting;
+    break;
+  case kDeviceStateListening:
+    look = EyeAnimation::DeviceLook::Listening;
+    break;
+  case kDeviceStateSpeaking:
+    look = EyeAnimation::DeviceLook::Speaking;
+    break;
+  default:
+    break;
+  }
+  eye_animation_->SetDeviceLook(look);
 }
 
 void EyeDisplay::StatusChromeTick() {
   DisplayLockGuard lock(this);
+  // Polled here (every kStatusChromeTickMs) so the eyes follow the session:
+  // connecting = head shake, listening = still, speaking = still + bounce.
+  SyncDeviceLook();
   if (status_label_ == nullptr || status_arc_ == nullptr) {
     return;
   }
 
   if (!ScreenManager::Policy().status_chrome) {
     lv_obj_add_flag(status_arc_, LV_OBJ_FLAG_HIDDEN);
+    for (auto &side : voice_waves_) {
+      for (lv_obj_t *arc : side) {
+        if (arc != nullptr) {
+          lv_obj_add_flag(arc, LV_OBJ_FLAG_HIDDEN);
+        }
+      }
+    }
     return;
   }
   // The arc lives on the bezel, so notifications no longer collide with it.
@@ -792,10 +990,6 @@ void EyeDisplay::ApplyEmotionInternal(const char *emotion, bool is_external) {
   }
   current_eye_emotion_ = safe_emotion;
   if (sleep_mode_active_) {
-    return;
-  }
-  // Remembered above, applied when the game ends -- see SetEyeGameMode().
-  if (eye_animation_->IsGameMode()) {
     return;
   }
 
@@ -902,55 +1096,6 @@ void EyeDisplay::SetRightEyeBorderRadius(int r) {
 void EyeDisplay::SetEyeColor(uint8_t r, uint8_t g, uint8_t b) {
   if (eye_animation_)
     eye_animation_->SetEyeColor(r, g, b);
-}
-
-void EyeDisplay::SetLeftEyeColor(uint8_t r, uint8_t g, uint8_t b) {
-  if (eye_animation_)
-    eye_animation_->SetLeftEyeColor(r, g, b);
-}
-
-void EyeDisplay::SetRightEyeColor(uint8_t r, uint8_t g, uint8_t b) {
-  if (eye_animation_)
-    eye_animation_->SetRightEyeColor(r, g, b);
-}
-
-void EyeDisplay::TriggerEyeGamePlus(bool left_eye) {
-  if (eye_animation_) {
-    eye_animation_->TriggerGamePlus(left_eye);
-  }
-}
-
-void EyeDisplay::SetEyeMoodColorAuto(bool enabled) {
-  if (eye_animation_) {
-    eye_animation_->SetMoodColorAutoEnabled(enabled);
-  }
-}
-
-void EyeDisplay::SetEyeGameMode(bool active) {
-  if (!eye_animation_) {
-    return;
-  }
-  const bool was_active = eye_animation_->IsGameMode();
-  eye_animation_->SetGameMode(active);
-  if (active == was_active) {
-    return;
-  }
-  // The game plays on whatever eyes were already on screen, and some of them
-  // are not eyes the game can use. The legacy emotions (love, cry, confuse,
-  // cyclop, ...) take RenderFrame over entirely and return before the normal
-  // eyes are drawn, so the game's colours never appear at all -- cyclop even
-  // empties the right eye's touch box. Lid moods (sleepy, angry, skeptic) half
-  // cover the colour. So the game starts on plain neutral eyes, and whatever
-  // Bubu was showing comes back when it ends. Emotions arriving mid-game are
-  // recorded in current_eye_emotion_ by ApplyEmotionInternal and restored here.
-  //
-  // EyeEmotion_Apply directly, not ApplyEmotionInternal: that one takes the
-  // display lock, and some callers of this already hold it.
-  if (active) {
-    EyeEmotion_Apply("neutral", eye_animation_.get());
-  } else {
-    EyeEmotion_Apply(current_eye_emotion_.c_str(), eye_animation_.get());
-  }
 }
 
 void EyeDisplay::SetBaseLeftEyeShape(const EyeShape &shape) {
@@ -1161,10 +1306,6 @@ bool EyeDisplay::CanShowClockScreensaver() const {
   if (IsHatchingActive()) {
     return false;
   }
-  if (sleep_mode_active_) {
-    return false;
-  }
-
   if (MenuSystem::IsAnyOpen()) {
     return false;
   }
@@ -1227,6 +1368,9 @@ void EyeDisplay::ShowClockScreensaver() {
   }
   if (clock_screensaver_) {
     lv_obj_clear_flag(clock_screensaver_, LV_OBJ_FLAG_HIDDEN);
+    // This object is created before later status/menu siblings. Bring it to the
+    // top when activated so the clock is the sole owner of the screen.
+    lv_obj_move_foreground(clock_screensaver_);
   }
   clock_screensaver_active_ = true;
 }
@@ -1260,24 +1404,15 @@ void EyeDisplay::HideClockScreensaver() {
 }
 
 void EyeDisplay::UpdateClockScreensaver(uint64_t now_ms) {
-  if (sleep_mode_active_) {
-    HideClockScreensaver();
-    return;
-  }
-
-  UpdateClockLabels(now_ms);
-
-  time_t now = time(nullptr);
-  struct tm tm_info;
-  localtime_r(&now, &tm_info);
-  const bool time_valid = tm_info.tm_year >= 2025 - 1900;
-
-  if (!time_valid || !CanShowClockScreensaver() ||
+  // Show this stage on schedule even before SNTP is ready. UpdateClockLabels()
+  // renders --:--/-- as a safe fallback and replaces it once time is valid.
+  if (!CanShowClockScreensaver() ||
       now_ms - last_user_interaction_ms_ < kClockIdleTimeoutMs) {
     HideClockScreensaver();
     return;
   }
 
+  UpdateClockLabels(now_ms);
   ShowClockScreensaver();
 }
 
@@ -1294,7 +1429,7 @@ void EyeDisplay::UpdateSleepMode(uint64_t now_ms) {
 
     while (sleep_last_energy_tick_ms_ != 0 &&
            now_ms - sleep_last_energy_tick_ms_ >= kSleepEnergyTickMs) {
-      CareSystem::AddEnergy(1);
+      CareSystem::AddEnergy(kSleepEnergyBoostPerTick);
       sleep_last_energy_tick_ms_ += kSleepEnergyTickMs;
     }
     return;
@@ -1325,11 +1460,11 @@ ScreenManager::ScreenId EyeDisplay::DeriveScreen() const {
   if (IsHatchingActive()) {
     return ScreenId::Hatching;
   }
-  if (sleep_mode_active_) {
-    return ScreenId::Sleep;
-  }
   if (clock_screensaver_active_) {
     return ScreenId::Clock;
+  }
+  if (sleep_mode_active_) {
+    return ScreenId::Sleep;
   }
   if (MenuSystem::IsAnyOpen()) {
     // MenuSystem knows which panel is up; it owns that half of the mapping.
@@ -1360,6 +1495,23 @@ void EyeDisplay::ApplyScreenPolicy(ScreenManager::ScreenId screen) {
   const ScreenManager::ScreenPolicy policy = ScreenManager::PolicyFor(screen);
   DisplayLockGuard lock(this);
   eye_animation_->SetRenderPolicy(policy.eye_fps, policy.eye_static);
+  // Status widgets are siblings of the eye canvas, so the render policy alone
+  // cannot hide them. Bind them to the same screen ownership decision to keep
+  // both screensaver stages free of stale battery/Wi-Fi/status overlays.
+  if (status_bar_) {
+    if (policy.status_chrome) {
+      lv_obj_remove_flag(status_bar_, LV_OBJ_FLAG_HIDDEN);
+    } else {
+      lv_obj_add_flag(status_bar_, LV_OBJ_FLAG_HIDDEN);
+    }
+  }
+  if (bottom_icons_) {
+    if (policy.status_chrome) {
+      lv_obj_remove_flag(bottom_icons_, LV_OBJ_FLAG_HIDDEN);
+    } else {
+      lv_obj_add_flag(bottom_icons_, LV_OBJ_FLAG_HIDDEN);
+    }
+  }
 }
 
 void EyeDisplay::UpdateMischiefEngineState() {
@@ -1386,15 +1538,15 @@ void EyeDisplay::HandlePendingInteractionVoices() {
 }
 
 void EyeDisplay::MaybePlayInteractionVoice(BubuInteractionEvent event) {
+  const Vox::Mood mood =
+      eye_animation_ ? eye_animation_->GetMischiefMood() : Vox::Mood::Mumble;
   const std::string_view sound = interaction_voice_.GetVoiceForEvent(
-      event, GetNowMs(), ScreenManager::Policy().interaction_voices);
+      event, GetNowMs(), ScreenManager::Policy().interaction_voices, mood);
   if (!sound.empty()) {
     Application::GetInstance().PlayOverlaySound(sound);
     if (event == BubuInteractionEvent::Mischief && eye_animation_) {
-      // Mumbling/singing clips can run well past the mischief pose's own
-      // random hold (up to ~17s vs. as little as 1.8s) - stretch the pose to
-      // cover however long this clip actually plays instead of retreating
-      // to neutral mid-voice.
+      // Stretch the pose to cover however long this clip actually plays so
+      // it never retreats to neutral mid-voice.
       const uint32_t duration_ms = interaction_voice_.GetVoiceDurationMs(sound);
       eye_animation_->ExtendMischiefHold(duration_ms);
     }
@@ -1537,6 +1689,20 @@ EyeDisplay::SelectOverlayEmotionForBase(const std::string &base_emotion) const {
 }
 
 void EyeDisplay::UpdateCareEmotionScheduler(uint64_t now_ms) {
+  // With the carousel off nothing else ever replaces an emotion, so one sent by
+  // Gemini, a game or a voice command would stay forever. Once the device is
+  // idle, hold it kEmotionReturnMs after it arrived, then go back to neutral so
+  // the idle eyes take over. sleepy is left alone: it is a state (power save),
+  // not a reaction.
+  if (!care_emotion_config_.enabled && eye_animation_ &&
+      Application::GetInstance().GetDeviceState() == kDeviceStateIdle &&
+      last_external_emotion_ms_ != 0 &&
+      now_ms - last_external_emotion_ms_ >= kEmotionReturnMs &&
+      current_eye_emotion_ != "neutral" && current_eye_emotion_ != "sleepy") {
+    ESP_LOGI(TAG, "Emotion '%s' held %u ms, back to neutral", current_eye_emotion_.c_str(),
+             static_cast<unsigned>(kEmotionReturnMs));
+    ApplyEmotionInternal("neutral", false);
+  }
   if (!ShouldRunCareEmotionScheduler()) {
     care_next_emotion_change_ms_ = 0;
     care_overlay_until_ms_ = 0;

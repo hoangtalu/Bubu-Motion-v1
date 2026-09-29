@@ -10,7 +10,7 @@ Any AI agent or human changing this workspace should read this file first before
 ## Scope
 The active firmware project in this workspace is:
 
-- `/Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion`
+- `/Users/judes/Downloads/Bubu-Motion-v1-main/Bubu_Motion`
 
 Historical upstream/source path used by older notes:
 
@@ -25,31 +25,31 @@ Do not treat sibling folders, vendor samples, or `references/bubu_ota` as the ru
 ## Mandatory First Reads
 Read these before board-specific changes:
 
-1. `/Users/judes/Documents/Arduino/Bubu_Motion_V1/BUBU_SYSTEM_MAP.md`
-2. `/Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/main/boards/esp32s3-1.28-round-i80/config.h`
-3. `/Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/main/boards/esp32s3-1.28-round-i80/esp32s3_round_i80_board.cc`
+1. `/Users/judes/Downloads/Bubu-Motion-v1-main/BUBU_SYSTEM_MAP.md`
+2. `/Users/judes/Downloads/Bubu-Motion-v1-main/Bubu_Motion/main/boards/esp32s3-1.28-round-i80/config.h`
+3. `/Users/judes/Downloads/Bubu-Motion-v1-main/Bubu_Motion/main/boards/esp32s3-1.28-round-i80/esp32s3_round_i80_board.cc`
 
 ## Active Build Selection
 The round board is selected by:
 
-- `xiaozhi-doremon/xiaozhi-esp32/sdkconfig`
+- `Bubu_Motion/sdkconfig`
   - `CONFIG_BOARD_TYPE_ESP32S3_128_ROUND_I80=y`
   - `CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y`
   - `CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions/v2/16m.csv"`
-- `xiaozhi-doremon/xiaozhi-esp32/sdkconfig.defaults.round_i80`
+- `Bubu_Motion/sdkconfig.defaults.round_i80`
   - `CONFIG_BOARD_TYPE_ESP32S3_128_ROUND_I80=y`
   - `CONFIG_LANGUAGE_EN_US=y`
   - `CONFIG_USE_AFE_WAKE_WORD=y`
   - `CONFIG_SEND_WAKE_WORD_DATA=y`
   - `CONFIG_LV_FONT_MONTSERRAT_48=y`
-- `xiaozhi-doremon/xiaozhi-esp32/main/CMakeLists.txt`
+- `Bubu_Motion/main/CMakeLists.txt`
   - maps `CONFIG_BOARD_TYPE_ESP32S3_128_ROUND_I80` to `BOARD_TYPE "esp32s3-1.28-round-i80"`
   - uses `font_puhui_basic_20_4`, `font_awesome_20_4`, and `twemoji_64`
   - compiles all `main/boards/esp32s3-1.28-round-i80/*.cc` and `*.c`
 
 The active partition table is:
 
-- `xiaozhi-doremon/xiaozhi-esp32/partitions/v2/16m.csv`
+- `Bubu_Motion/partitions/v2/16m.csv`
 
 Important partition entries:
 

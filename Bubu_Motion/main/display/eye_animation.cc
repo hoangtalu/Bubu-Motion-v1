@@ -3,9 +3,12 @@
 
 #include <cmath>
 #include <cstring>
+#include <cstdio>
+#include <string>
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <initializer_list>
 #include <limits>
 #include <utility>
 
@@ -263,12 +266,53 @@ void MarkLegacySeedRuntimeNone(const EyeAnimation* owner) {
 } // namespace
 
 // ---------------------------------------------------------------------------
-// EyeEmotion_Apply  (replaces old EyeEmotion_FromString + SetEmotion(enum))
+// Emotion slots (Eye Lab, 2026-09-29)
+//
+// The product firmware accepts 38 names, but on the screen they reduce to 21
+// looks. The 21 are the ACTIVE emotions below. The other 17 names were
+// aliases that drew the same eyes as an active one; they are kept as EMPTY
+// slots so the names stay reserved (Gemini, MCP and old callers still send
+// them) and can each be given their own look later. An empty slot draws
+// plain neutral eyes and says so in the log.
+// ---------------------------------------------------------------------------
+const char* const kEyeActiveEmotions[] = {
+    "neutral", "happy", "surprised", "sad", "worried", "embarrassed",
+    "nervous", "angry", "annoyed", "skeptic", "doubt", "confused", "sleepy",
+    "legacy_emo_love", "legacy_emo_cyclop", "legacy_emo_drunk", "legacy_emo_confuse",
+    "legacy_emo_angry", "legacy_emo_furious", "legacy_emo_banh_chung",
+    "legacy_emo_deadpool", "legacy_emo_cry",
+};
+const int kEyeActiveEmotionCount = sizeof(kEyeActiveEmotions) / sizeof(kEyeActiveEmotions[0]);
+
+// Empty slot -> the active emotion it used to copy (for reference only).
+const char* const kEyeEmptySlots[][2] = {
+    {"relaxed", "neutral"},   {"cool", "neutral"},
+    {"funny", "happy"},       {"laughing", "happy"},   {"confident", "happy"},
+    {"loving", "happy"},      {"kissy", "happy"},      {"delicious", "happy"},
+    {"shocked", "happy"},
+    {"crying", "sad"},
+    {"anxious", "nervous"},
+    {"thinking", "sad"},      {"winking", "sad"},      {"silly", "sad"},
+    {"skeptical", "skeptic"}, {"doubtful", "doubt"},
+};
+const int kEyeEmptySlotCount = sizeof(kEyeEmptySlots) / sizeof(kEyeEmptySlots[0]);
+
+bool EyeEmotion_IsEmptySlot(const char* emotion) {
+    if (!emotion) return false;
+    for (int i = 0; i < kEyeEmptySlotCount; ++i) {
+        if (strcmp(emotion, kEyeEmptySlots[i][0]) == 0) return true;
+    }
+    return false;
+}
+
+// ---------------------------------------------------------------------------
+// EyeEmotion_Apply
 // ---------------------------------------------------------------------------
 void EyeEmotion_Apply(const char* emotion, EyeAnimation* anim) {
     if (!emotion || !anim) return;
 
-    // Reset sweat — re-enabled only for matching emotions
+    // Clear everything a previous emotion may have set, lids included, so no
+    // look inherits the one before it (confused used to keep sleepy's lids).
     anim->SetSweat(false);
     anim->SetSurprised(false);
     anim->SetSkeptic(false);
@@ -277,147 +321,101 @@ void EyeEmotion_Apply(const char* emotion, EyeAnimation* anim) {
     anim->SetTiredLidStrength(0.5f);
     anim->SetAngryLidStrength(0.5f);
     anim->SetSkepticLidStrength(0.35f);
+    anim->SetMood(false, false, false);
+    anim->SetCurious(false);
+    anim->StopDoze();
+    anim->CancelSurprised();
 
-    if (strcmp(emotion, "neutral") == 0 || strcmp(emotion, "relaxed") == 0 ||
-        strcmp(emotion, "cool") == 0) {
-        anim->SetMood(false, false, false);
-        anim->SetCurious(false);
+    auto is = [emotion](const char* name) { return strcmp(emotion, name) == 0; };
+
+    if (EyeEmotion_IsEmptySlot(emotion)) {
+        ESP_LOGI("EyeEmotion", "'%s' is an empty slot: neutral eyes", emotion);
         return;
     }
-    if (strcmp(emotion, "happy") == 0 || strcmp(emotion, "funny") == 0) {
+    if (is("neutral")) {
+        return;
+    }
+    if (is("happy")) {
         anim->SetMood(false, false, true);
         return;
     }
-    if (strcmp(emotion, "laughing") == 0 || strcmp(emotion, "confident") == 0 ||
-        strcmp(emotion, "loving") == 0  || strcmp(emotion, "kissy") == 0 ||
-        strcmp(emotion, "delicious") == 0 || strcmp(emotion, "shocked") == 0) {
-        anim->SetMood(false, false, true);
-        anim->AnimLaugh();
+    if (is("surprised")) {
+        // Bounce once, then settle rounder (r24 -> r40), see PlaySurprised.
+        anim->PlaySurprised();
         return;
     }
-    if (strcmp(emotion, "surprised") == 0) {
-        anim->SetMood(false, false, false);
-        anim->SetCurious(false);
-        anim->SetSurprised(true);
-        return;
-    }
-    if (strcmp(emotion, "sad") == 0 || strcmp(emotion, "crying") == 0) {
+    if (is("sad")) {
         anim->SetMood(true, false, false);
-        anim->SetTiredLidStrength(0.55f);   // Steeper than worried.
+        anim->SetTiredLidStrength(0.55f);
         return;
     }
-    if (strcmp(emotion, "worried") == 0) {
+    if (is("worried")) {
         anim->SetMood(true, false, false);
-        anim->SetTiredLidStrength(0.30f);   // Shallower than sad.
+        anim->SetTiredLidStrength(0.30f);
         return;
     }
-    if (strcmp(emotion, "embarrassed") == 0) {
+    if (is("embarrassed")) {
         anim->SetMood(true, false, false);
         anim->SetSweat(true);
         return;
     }
-    if (strcmp(emotion, "nervous") == 0 || strcmp(emotion, "anxious") == 0) {
-        anim->SetMood(false, false, false);
+    if (is("nervous")) {
         anim->SetSweat(true);
         return;
     }
-    if (strcmp(emotion, "angry") == 0) {
+    if (is("angry")) {
         anim->SetMood(false, true, false);
-        anim->SetAngryLidStrength(0.55f);   // Steeper than annoyed.
+        anim->SetAngryLidStrength(0.55f);
         return;
     }
-    if (strcmp(emotion, "annoyed") == 0) {
+    if (is("annoyed")) {
         anim->SetMood(false, true, false);
-        anim->SetAngryLidStrength(0.30f);   // Shallower than angry.
+        anim->SetAngryLidStrength(0.30f);
         return;
     }
-    if (strcmp(emotion, "sleepy") == 0) {
-        anim->SetMood(true, false, false);
-        return;
-    }
-    if (strcmp(emotion, "thinking") == 0 || strcmp(emotion, "winking") == 0 ||
-        strcmp(emotion, "silly") == 0) {
-        anim->SetCurious(true);
-        return;
-    }
-    if (strcmp(emotion, "skeptic") == 0 || strcmp(emotion, "skeptical") == 0) {
-        anim->SetMood(false, false, false);
-        anim->SetCurious(false);
-        // Skeptic: asymmetrical single-eye inner-corner top lid.
-        // Randomize side so skeptic can appear on either eye.
+    if (is("skeptic")) {
+        // Asymmetrical single-eye inner-corner top lid, on a random side.
         anim->SetSkeptic(true, RandomInt(0, 1) == 0);
-        anim->SetSkepticLidStrength(0.30f); // Shallower than doubt.
+        anim->SetSkepticLidStrength(0.30f);
         return;
     }
-    if (strcmp(emotion, "doubt") == 0 || strcmp(emotion, "doubtful") == 0) {
-        anim->SetMood(false, false, false);
-        anim->SetCurious(false);
+    if (is("doubt")) {
         anim->SetSkeptic(true, RandomInt(0, 1) == 0);
-        anim->SetSkepticLidStrength(0.55f); // Steeper than skeptic.
+        anim->SetSkepticLidStrength(0.55f);
         return;
     }
-    if (strcmp(emotion, "confused") == 0) {
+    if (is("confused")) {
         anim->AnimConfused();
         return;
     }
-    if (strcmp(emotion, "legacy_emo_love") == 0 || strcmp(emotion, "legacy_love") == 0) {
-        anim->SetMood(false, false, false);
-        anim->SetCurious(false);
-        anim->SetLegacyEmotionMode(EyeAnimation::LegacyEmotionMode::Love);
+    if (is("sleepy")) {
+        // Dozing off (gù gật), see UpdateDoze.
+        anim->StartDoze();
         return;
     }
-    if (strcmp(emotion, "legacy_emo_cyclop") == 0 || strcmp(emotion, "legacy_cyclop") == 0) {
-        anim->SetMood(false, false, false);
-        anim->SetCurious(false);
-        anim->SetCyclops(true);
-        anim->SetLegacyEmotionMode(EyeAnimation::LegacyEmotionMode::Cyclop);
-        return;
+
+    // Legacy scenes accept the short names (legacy_love) too.
+    struct LegacyName { const char* full; const char* short_name; EyeAnimation::LegacyEmotionMode mode; };
+    static const LegacyName kLegacy[] = {
+        {"legacy_emo_love", "legacy_love", EyeAnimation::LegacyEmotionMode::Love},
+        {"legacy_emo_cyclop", "legacy_cyclop", EyeAnimation::LegacyEmotionMode::Cyclop},
+        {"legacy_emo_drunk", "legacy_drunk", EyeAnimation::LegacyEmotionMode::Drunk},
+        {"legacy_emo_confuse", "legacy_confuse", EyeAnimation::LegacyEmotionMode::Confuse},
+        {"legacy_emo_angry", "legacy_angry", EyeAnimation::LegacyEmotionMode::Angry},
+        {"legacy_emo_furious", "legacy_furious", EyeAnimation::LegacyEmotionMode::Furious},
+        {"legacy_emo_banh_chung", "legacy_banh_chung", EyeAnimation::LegacyEmotionMode::BanhChung},
+        {"legacy_emo_deadpool", "legacy_deadpool", EyeAnimation::LegacyEmotionMode::Deadpool},
+        {"legacy_emo_cry", "legacy_cry", EyeAnimation::LegacyEmotionMode::Cry},
+    };
+    for (const auto& l : kLegacy) {
+        if (is(l.full) || is(l.short_name)) {
+            if (l.mode == EyeAnimation::LegacyEmotionMode::Cyclop) anim->SetCyclops(true);
+            anim->SetLegacyEmotionMode(l.mode);
+            return;
+        }
     }
-    if (strcmp(emotion, "legacy_emo_drunk") == 0 || strcmp(emotion, "legacy_drunk") == 0) {
-        anim->SetMood(false, false, false);
-        anim->SetCurious(false);
-        anim->SetLegacyEmotionMode(EyeAnimation::LegacyEmotionMode::Drunk);
-        return;
-    }
-    if (strcmp(emotion, "legacy_emo_confuse") == 0 || strcmp(emotion, "legacy_confuse") == 0) {
-        anim->SetMood(false, false, false);
-        anim->SetCurious(false);
-        anim->SetLegacyEmotionMode(EyeAnimation::LegacyEmotionMode::Confuse);
-        return;
-    }
-    if (strcmp(emotion, "legacy_emo_angry") == 0 || strcmp(emotion, "legacy_angry") == 0) {
-        anim->SetMood(false, false, false);
-        anim->SetCurious(false);
-        anim->SetLegacyEmotionMode(EyeAnimation::LegacyEmotionMode::Angry);
-        return;
-    }
-    if (strcmp(emotion, "legacy_emo_furious") == 0 || strcmp(emotion, "legacy_furious") == 0) {
-        anim->SetMood(false, false, false);
-        anim->SetCurious(false);
-        anim->SetLegacyEmotionMode(EyeAnimation::LegacyEmotionMode::Furious);
-        return;
-    }
-    if (strcmp(emotion, "legacy_emo_banh_chung") == 0 || strcmp(emotion, "legacy_banh_chung") == 0) {
-        anim->SetMood(false, false, false);
-        anim->SetCurious(false);
-        anim->SetLegacyEmotionMode(EyeAnimation::LegacyEmotionMode::BanhChung);
-        return;
-    }
-    if (strcmp(emotion, "legacy_emo_deadpool") == 0 || strcmp(emotion, "legacy_deadpool") == 0) {
-        anim->SetMood(false, false, false);
-        anim->SetCurious(false);
-        anim->SetLegacyEmotionMode(EyeAnimation::LegacyEmotionMode::Deadpool);
-        return;
-    }
-    if (strcmp(emotion, "legacy_emo_cry") == 0 || strcmp(emotion, "legacy_cry") == 0) {
-        anim->SetMood(false, false, false);
-        anim->SetCurious(false);
-        anim->SetLegacyEmotionMode(EyeAnimation::LegacyEmotionMode::Cry);
-        return;
-    }
-    // Unknown emotion — go neutral
-    anim->SetMood(false, false, false);
-    anim->SetCurious(false);
+
+    ESP_LOGW("EyeEmotion", "unknown emotion '%s': neutral eyes", emotion);
 }
 
 // ---------------------------------------------------------------------------
@@ -616,64 +614,6 @@ void EyeAnimation::SetMoodColorAutoEnabled(bool enabled) {
     if (mood_color_auto_enabled_) {
         UpdateMoodColor();
     }
-}
-
-void EyeAnimation::SetGameMode(bool active) {
-    game_mode_active_ = active;
-    if (game_mode_active_) {
-        if (feed_.active) { FeedFinish(); }
-        // Game visuals are color-driven only; disable overlays and eye drift.
-        CancelBathing();
-        SetSweat(false);
-        FinishMischiefCycle();
-        look_active_ = false;
-        blink_active_ = false;
-        top_offset_ = 0;
-        off_x_ = 0.0f;
-        off_y_ = 0.0f;
-        target_off_x_ = 0.0f;
-        target_off_y_ = 0.0f;
-        touch_end_ms_ = 0;
-        touch_off_x_ = 0.0f;
-        touch_off_y_ = 0.0f;
-        flicker_off_x_ = 0;
-        flicker_off_y_ = 0;
-        angry_bounce_off_y_ = 0.0f;
-        for (auto& fx : game_plus_fx_) {
-            fx.active = false;
-        }
-    }
-}
-
-void EyeAnimation::TriggerGamePlus(bool left_eye) {
-    if (!game_mode_active_) {
-        return;
-    }
-
-    GamePlusFx* slot = nullptr;
-    for (auto& fx : game_plus_fx_) {
-        if (!fx.active) {
-            slot = &fx;
-            break;
-        }
-    }
-    if (slot == nullptr) {
-        slot = &game_plus_fx_[0];
-    }
-
-    const EyeBounds& eye = left_eye ? left_eye_box_ : right_eye_box_;
-    float x = left_eye ? static_cast<float>(screen_w_ / 2 - 40) : static_cast<float>(screen_w_ / 2 + 40);
-    float y = static_cast<float>(screen_h_ / 2);
-    if (eye.w > 0 && eye.h > 0) {
-        x = static_cast<float>(eye.x + eye.w / 2);
-        y = static_cast<float>(eye.y + eye.h / 2);
-    }
-
-    slot->active = true;
-    slot->left_eye = left_eye;
-    slot->start_x = x;
-    slot->start_y = y;
-    slot->start_ms = lv_tick_get();
 }
 
 void EyeAnimation::SetBaseLeftShape(const EyeShape& shape) {
@@ -877,6 +817,10 @@ void EyeAnimation::SetSleepMode(bool active) {
         SetSurprised(false);
         SetSkeptic(false);
         SetSweat(false);
+        // Sleep owns the canvas. Clear legacy modes explicitly because their
+        // renderer returns before the normal closed-eye + Z animation is drawn.
+        // EyeDisplay remembers the prior emotion and reapplies it on wake.
+        SetLegacyEmotionMode(LegacyEmotionMode::None);
         CancelBathing();
         FinishMischiefCycle();
         SetEyeColor(255, 255, 255);
@@ -903,6 +847,80 @@ void EyeAnimation::SetAngryLidStrength(float strength) {
 }
 void EyeAnimation::SetSkepticLidStrength(float strength) {
     skeptic_lid_strength_ = ClampFloat(strength, 0.0f, 1.0f);
+}
+
+// ---- Dozing (gù gật) ----
+// The top edge of both eyes sinks slowly (ease-in, like fighting sleep) to a
+// depth picked fresh each cycle between doze_min_px_ and doze_max_px_, holds,
+// rises again (ease-out), stays open, and sinks again. Each phase's time
+// varies by +-25% so it never looks mechanical.
+void EyeAnimation::StartDoze() {
+    if (doze_active_) return;
+    doze_active_ = true;
+    doze_capped_ = false;  // the cap starts once the first droop has sunk past it
+    doze_close_ = 0.0f;
+    doze_from_ = 0.0f;
+    // First droop starts from fully open and sinks at least to the resting
+    // droop, so switching the max-open cap on afterwards causes no jump.
+    doze_phase_ = DozePhase::Droop;
+    doze_phase_start_ms_ = lv_tick_get();
+    doze_phase_ms_ = doze_droop_ms_;
+    doze_target_px_ = std::max(DozeRestPx(), static_cast<float>(RandomInt(doze_min_px_, std::max(doze_min_px_, doze_max_px_))));
+}
+
+void EyeAnimation::StopDoze() {
+    doze_active_ = false;
+    doze_close_ = 0.0f;
+}
+
+void EyeAnimation::UpdateDoze(uint32_t now_ms) {
+    if (!doze_active_) return;
+    const float t = ClampFloat(static_cast<float>(now_ms - doze_phase_start_ms_) /
+                               static_cast<float>(std::max<uint32_t>(1, doze_phase_ms_)), 0.0f, 1.0f);
+    const float depth = doze_target_px_;
+    auto vary = [](uint32_t ms) {
+        return static_cast<uint32_t>(RandomInt(static_cast<int>(ms * 3 / 4), static_cast<int>(ms * 5 / 4)));
+    };
+    switch (doze_phase_) {
+        case DozePhase::Droop:
+            doze_close_ = Lerp(doze_from_, depth, t * t * t);  // slow start, gives in at the end
+            break;
+        case DozePhase::Hold:
+            doze_close_ = depth;
+            break;
+        case DozePhase::Snap: {
+            const float u = 1.0f - t;
+            doze_close_ = Lerp(doze_from_, DozeRestPx(), 1.0f - u * u * u);  // fast, then settles
+            break;
+        }
+        case DozePhase::Open:
+            doze_close_ = DozeRestPx();
+            break;
+    }
+    if (t < 1.0f) return;
+
+    doze_phase_start_ms_ = now_ms;
+    doze_from_ = doze_close_;
+    doze_capped_ = true;
+    switch (doze_phase_) {
+        case DozePhase::Open:
+            doze_phase_ = DozePhase::Droop;
+            doze_phase_ms_ = vary(doze_droop_ms_);
+            doze_target_px_ = std::max(DozeRestPx(), static_cast<float>(RandomInt(doze_min_px_, std::max(doze_min_px_, doze_max_px_))));
+            break;
+        case DozePhase::Droop:
+            doze_phase_ = DozePhase::Hold;
+            doze_phase_ms_ = vary(doze_hold_ms_);
+            break;
+        case DozePhase::Hold:
+            doze_phase_ = DozePhase::Snap;
+            doze_phase_ms_ = vary(doze_snap_ms_);
+            break;
+        case DozePhase::Snap:
+            doze_phase_ = DozePhase::Open;
+            doze_phase_ms_ = vary(doze_open_ms_);
+            break;
+    }
 }
 
 void EyeAnimation::AnimConfused() {
@@ -1007,9 +1025,34 @@ bool EyeAnimation::IsTouchInsideEyes(int x, int y) const {
 // ---------------------------------------------------------------------------
 // Timer callback
 // ---------------------------------------------------------------------------
+void EyeAnimation::RefrStartCb(lv_event_t* e) {
+    auto* self = static_cast<EyeAnimation*>(lv_event_get_user_data(e));
+    if (!self || self->render_fps_ == 0) return;
+    self->Update(lv_tick_get());
+    self->RenderFrame();
+}
+
+void EyeAnimation::SyncToDisplayRefresh(lv_display_t* disp, bool on) {
+    if (synced_disp_) {
+        lv_display_remove_event_cb_with_user_data(synced_disp_, RefrStartCb, this);
+        synced_disp_ = nullptr;
+    }
+    if (on && disp) {
+        synced_disp_ = disp;
+        lv_display_add_event_cb(disp, RefrStartCb, LV_EVENT_REFR_START, this);
+        // The timer keeps running, but in sync mode it only marks the canvas
+        // dirty: LVGL 9 pauses its refresh timer when nothing is invalid, so
+        // without this kick the refresh (and the render inside it) stops.
+    }
+}
+
 void EyeAnimation::TimerCallback(lv_timer_t* timer) {
     auto* self = static_cast<EyeAnimation*>(lv_timer_get_user_data(timer));
     if (!self) return;
+    if (self->synced_disp_) {
+        if (self->canvas_) lv_obj_invalidate(self->canvas_);
+        return;
+    }
     self->Update(lv_tick_get());
     self->RenderFrame();
 }
@@ -1026,24 +1069,7 @@ void EyeAnimation::Update(uint32_t now_ms) {
     UpdateMoodColor();
     UpdateGeometryLerp();
     UpdateEyeColor(now_ms);
-    if (game_mode_active_) {
-        // Keep eyes stable while game logic drives colors.
-        touch_off_x_ = 0.0f;
-        touch_off_y_ = 0.0f;
-        off_x_ = 0.0f;
-        off_y_ = 0.0f;
-        target_off_x_ = 0.0f;
-        target_off_y_ = 0.0f;
-        eye_l_h_offset_ = 0;
-        eye_r_h_offset_ = 0;
-        angry_bounce_off_y_ = 0.0f;
-        flicker_off_x_ = 0;
-        flicker_off_y_ = 0;
-        UpdateImuOffset();
-        bounce_y_ = 0.0f;
-        eye_scale_ += (target_eye_scale_ - eye_scale_) * 0.16f;
-        return;
-    } else if (sleep_mode_) {
+    if (sleep_mode_) {
         UpdateSleepMode(now_ms);
     } else if (feed_.active) {
         UpdateFeeding(now_ms);
@@ -1062,6 +1088,7 @@ void EyeAnimation::Update(uint32_t now_ms) {
         UpdateBlink(now_ms);
         UpdateIdleLook(now_ms);
         UpdateCuriousMode();
+        UpdateDoze(now_ms);
     }
     UpdateAngryBounce(now_ms);
     UpdateFlicker();
@@ -1087,12 +1114,21 @@ void EyeAnimation::Update(uint32_t now_ms) {
 void EyeAnimation::UpdateGeometryLerp() {
     // Curious height offsets are applied during curious mode update;
     // we lerp the base geometry here without them.
-    HalfStepI(eye_l_w_current_, eye_l_w_next_);
-    HalfStepI(eye_l_h_current_, eye_l_h_next_);
-    HalfStepI(eye_l_r_current_, eye_l_r_next_);
-    HalfStepI(eye_r_w_current_, eye_r_w_next_);
-    HalfStepI(eye_r_h_current_, eye_r_h_next_);
-    HalfStepI(eye_r_r_current_, eye_r_r_next_);
+    // Surprised grows both eyes to SURPRISED_SIZE (user, 2026-09-29: 90x90).
+    // Listening and speaking use a smaller eye (user, 2026-09-29: 60x60 r20).
+    const bool session = listening_active_ || speaking_active_;
+    const int lw = surprised_ ? SURPRISED_SIZE : session ? SESSION_SIZE : eye_l_w_next_;
+    const int lh = surprised_ ? SURPRISED_SIZE : session ? SESSION_SIZE : eye_l_h_next_;
+    const int rw = surprised_ ? SURPRISED_SIZE : session ? SESSION_SIZE : eye_r_w_next_;
+    const int rh = surprised_ ? SURPRISED_SIZE : session ? SESSION_SIZE : eye_r_h_next_;
+    const int lr = session ? SESSION_RADIUS : eye_l_r_next_;
+    const int rr = session ? SESSION_RADIUS : eye_r_r_next_;
+    HalfStepI(eye_l_w_current_, lw);
+    HalfStepI(eye_l_h_current_, lh);
+    HalfStepI(eye_l_r_current_, lr);
+    HalfStepI(eye_r_w_current_, rw);
+    HalfStepI(eye_r_h_current_, rh);
+    HalfStepI(eye_r_r_current_, rr);
     HalfStepI(gap_current_,   gap_next_);
 
     // Clamp
@@ -1192,6 +1228,14 @@ void EyeAnimation::UpdateBlink(uint32_t now_ms) {
 void EyeAnimation::UpdateIdleLook(uint32_t now_ms) {
     if (!idle_active_) return;
 
+    // Connecting and speaking play at the centre: pull the look back, pause it.
+    if (connecting_active_ || speaking_active_ || listening_active_) {
+        look_active_ = false;
+        HalfStep(off_x_, 0.0f);
+        HalfStep(off_y_, 0.0f);
+        return;
+    }
+
     if (now_ms < imu_motion_hold_until_ms_) {
         look_active_ = false;
         off_x_ += (0.0f - off_x_) * 0.35f;
@@ -1207,6 +1251,9 @@ void EyeAnimation::UpdateIdleLook(uint32_t now_ms) {
         look_start_ms_   = now_ms;
         look_duration_ms_= static_cast<uint32_t>(RandomInt(180, 320));
         look_active_     = true;
+        MaybeIdleGesture(now_ms);
+        MaybeIdleTilt();
+        MaybeIdleGaze();
     }
 
     if (!look_active_) return;
@@ -1224,6 +1271,26 @@ void EyeAnimation::UpdateIdleLook(uint32_t now_ms) {
     float eased = EaseInOutCubic(ClampFloat(t, 0.0f, 1.0f));
     off_x_ = Lerp(off_start_x_, target_off_x_, eased);
     off_y_ = Lerp(off_start_y_, target_off_y_, eased);
+}
+
+// Idle tilt timing: each step holds 1.5-4 s, then picks the next state.
+void EyeAnimation::UpdateIdleTilt(uint32_t now_ms) {
+    if (head_shake_active_ || now_ms < next_look_ms_) return;
+    // Leave a running mischief cycle alone; only tilts own the phases here.
+    if (tilt_ == Tilt::Off && mischief_phase_ != MischiefPhase::Waiting) return;
+
+    constexpr int kHoldMinMs = 1500;
+    constexpr int kHoldMaxMs = 4000;
+    next_look_ms_ = now_ms + static_cast<uint32_t>(RandomInt(kHoldMinMs, kHoldMaxMs));
+
+    // From the centre: tilt to a random side with idle_tilt_chance_ %.
+    // From a tilt: always come back to the centre first, so the eyes never
+    // swing straight from one side to the other while idling.
+    Tilt next = Tilt::Off;
+    if (tilt_ == Tilt::Off && RandomInt(1, 100) <= static_cast<int>(idle_tilt_chance_)) {
+        next = RandomInt(0, 1) == 0 ? Tilt::Left : Tilt::Right;
+    }
+    if (next != tilt_) SetTilt(next);
 }
 
 // ---- Curious mode: outer eye grows when looking far left/right ----
@@ -1346,12 +1413,6 @@ void EyeAnimation::UpdateEyeColor(uint32_t now_ms) {
     uint32_t dt = now_ms - color_last_ms_;
     color_last_ms_ = now_ms;
     float alpha = ClampFloat(static_cast<float>(dt) / EYE_COLOR_FADE_MS, 0.0f, 1.0f);
-    // MẮT XANH is judged on the colour the logic holds, so the screen must show
-    // that colour, not a 500ms blend towards it. Mid-fade, red->green reads as
-    // olive and a child tapping what already looks green was scored wrong.
-    if (game_mode_active_) {
-        alpha = 1.0f;
-    }
     l_cr_ += (l_tr_ - l_cr_) * alpha;
     l_cg_ += (l_tg_ - l_cg_) * alpha;
     l_cb_ += (l_tb_ - l_cb_) * alpha;
@@ -1558,7 +1619,7 @@ void EyeAnimation::SetDirtyLevel(int cleanliness) {
 }
 
 void EyeAnimation::StartBathing(uint32_t now_ms) {
-    if (hatch_.active || sleep_mode_ || game_mode_active_ || feed_.active) {
+    if (hatch_.active || sleep_mode_ || feed_.active) {
         return;
     }
 
@@ -1932,7 +1993,7 @@ constexpr uint8_t kFeedKibbleR = 252, kFeedKibbleG = 107, kFeedKibbleB = 1;
 }  // namespace
 
 void EyeAnimation::StartFeeding(uint32_t now_ms, int hunger) {
-    if (hatch_.active || sleep_mode_ || game_mode_active_ || bath_.active) {
+    if (hatch_.active || sleep_mode_ || bath_.active) {
         return;
     }
 
@@ -2382,59 +2443,675 @@ void EyeAnimation::ClampShape(EyeShape* shape) const {
     shape->radius = std::min(shape->radius, shape->h / 2);
 }
 
-EyeAnimation::EyePose EyeAnimation::MakeRandomPoseFromBase(const EyePose& base_pose) const {
-    auto pose_is_too_close = [](const EyePose& a, const EyePose& b) {
-        int color_delta = std::abs(static_cast<int>(a.red) - static_cast<int>(b.red)) +
-                          std::abs(static_cast<int>(a.green) - static_cast<int>(b.green)) +
-                          std::abs(static_cast<int>(a.blue) - static_cast<int>(b.blue));
-        return std::abs(a.w - b.w) < 8 &&
-               std::abs(a.h - b.h) < 8 &&
-               std::abs(a.radius - b.radius) < 4 &&
-               color_delta < 28;
-    };
-
-    struct MischiefColor {
-        uint8_t red;
-        uint8_t green;
-        uint8_t blue;
-    };
-
-    static constexpr MischiefColor kPlayfulPalette[] = {
-        {255,  92, 122},  // hot coral
-        {255, 162,  65},  // mango orange
-        {255, 214,  64},  // bright yellow
-        {118, 255,  88},  // electric lime
-        { 72, 250, 210},  // aqua mint
-        { 75, 190, 255},  // bright sky
-        {164, 110, 255},  // vivid violet
-        {255,  98, 230},  // bubblegum magenta
-    };
-    static constexpr int kPlayfulPaletteCount =
-        static_cast<int>(sizeof(kPlayfulPalette) / sizeof(kPlayfulPalette[0]));
-
-    auto varied_channel = [this](uint8_t base, uint8_t min_value, uint8_t max_value) {
-        int value = static_cast<int>(base) + RandomInt(-18, 18);
-        value = std::max<int>(min_value, std::min<int>(max_value, value));
-        return static_cast<uint8_t>(value);
-    };
-
-    EyePose pose = base_pose;
-    for (int attempt = 0; attempt < 5; ++attempt) {
-        pose.w = RandomInt(mischief_config_.min_w, mischief_config_.max_w);
-        pose.h = RandomInt(mischief_config_.min_h, mischief_config_.max_h);
-        pose.radius = RandomInt(mischief_config_.min_radius, mischief_config_.max_radius);
-
-        const auto& palette_color = kPlayfulPalette[RandomInt(0, kPlayfulPaletteCount - 1)];
-        pose.red = varied_channel(palette_color.red, mischief_config_.min_r, mischief_config_.max_r);
-        pose.green = varied_channel(palette_color.green, mischief_config_.min_g, mischief_config_.max_g);
-        pose.blue = varied_channel(palette_color.blue, mischief_config_.min_b, mischief_config_.max_b);
-
-        ClampPose(&pose);
-        if (!pose_is_too_close(pose, base_pose)) {
-            break;
+Vox::Mood EyeAnimation::PickMischiefMood() const {
+    // Eye Lab: `mood <name>` pins one mood; `mweight` edits the odds live.
+    if (lab_forced_mood_ >= 0 && lab_forced_mood_ < 8) {
+        return static_cast<Vox::Mood>(lab_forced_mood_);
+    }
+    int total = 0;
+    for (int w : lab_mood_weights_) {
+        total += std::max(0, w);
+    }
+    if (total <= 0) {
+        return Vox::Mood::Mumble;
+    }
+    int roll = RandomInt(1, total);
+    for (int i = 0; i < 8; ++i) {
+        roll -= std::max(0, lab_mood_weights_[i]);
+        if (roll <= 0) {
+            return static_cast<Vox::Mood>(i);
         }
     }
-    return pose;
+    return Vox::Mood::Mumble;
+}
+
+void EyeAnimation::LabSetMoodWeight(int mood, int weight) {
+    if (mood >= 0 && mood < 8) lab_mood_weights_[mood] = std::max(0, weight);
+}
+
+int EyeAnimation::LabMoodWeight(int mood) const {
+    return (mood >= 0 && mood < 8) ? lab_mood_weights_[mood] : 0;
+}
+
+void EyeAnimation::LabSetPose(int side, int w, int h, int r, uint8_t red, uint8_t green, uint8_t blue) {
+    EyePose pose{w, h, r, red, green, blue};
+    ClampPose(&pose);
+    if (!lab_pose_active_) {
+        lab_pose_left_ = GetBaseLeftPose();
+        lab_pose_right_ = GetBaseRightPose();
+        lab_pose_active_ = true;
+    }
+    if (side == 0 || side == 1) lab_pose_left_ = pose;
+    if (side == 0 || side == 2) lab_pose_right_ = pose;
+    // Live: swap the pose on screen now, or start a cycle to show it.
+    if (mischief_phase_ == MischiefPhase::Holding || mischief_phase_ == MischiefPhase::Changing) {
+        mischief_to_left_ = lab_pose_left_;
+        mischief_to_right_ = lab_pose_right_;
+        if (mischief_phase_ == MischiefPhase::Holding) {
+            ApplyMischiefPose(mischief_to_left_, mischief_to_right_);
+        }
+    } else {
+        StartMischiefCycle(lv_tick_get(), true);
+    }
+}
+
+void EyeAnimation::LabSwapPoses() {
+    if (!lab_pose_active_) return;
+    std::swap(lab_pose_left_, lab_pose_right_);
+    if (lab_shift_px_ != 0) {
+        const int left_area = lab_pose_left_.w * lab_pose_left_.h;
+        const int right_area = lab_pose_right_.w * lab_pose_right_.h;
+        lab_shift_from_ = tilt_off_x_;
+        lab_shift_y_from_ = lab_shift_y_to_ = head_off_y_;
+        lab_shift_to_ = right_area > left_area ? static_cast<float>(lab_shift_px_)
+                      : left_area > right_area ? -static_cast<float>(lab_shift_px_) : 0.0f;
+        lab_shift_moving_ = true;
+    }
+    if (mischief_phase_ == MischiefPhase::Holding || mischief_phase_ == MischiefPhase::Changing) {
+        // Ease from whatever is on screen now to the swapped pair.
+        mischief_from_left_ = mischief_to_left_;
+        mischief_from_right_ = mischief_to_right_;
+        mischief_to_left_ = lab_pose_left_;
+        mischief_to_right_ = lab_pose_right_;
+        mischief_phase_ = MischiefPhase::Changing;
+        mischief_phase_start_ms_ = lv_tick_get();
+        mischief_phase_duration_ms_ = mischief_config_.change_ms;
+    } else {
+        StartMischiefCycle(lv_tick_get(), true);
+    }
+}
+
+// Moves both eyes into a held pose, sliding them by (x, y) px, easing over
+// change_ms. Rides the mischief Changing/Holding phases; holds until the next
+// head pose or ReleaseHeadPose.
+void EyeAnimation::ApplyHeadPose(const EyePose& left, const EyePose& right, float x, float y,
+                                 uint32_t change_ms) {
+    lab_shift_from_ = tilt_off_x_;
+    lab_shift_y_from_ = head_off_y_;
+    lab_shift_to_ = x;
+    lab_shift_y_to_ = y;
+    lab_shift_moving_ = true;
+    mischief_from_left_ = (mischief_phase_ == MischiefPhase::Waiting) ? GetBaseLeftPose() : mischief_to_left_;
+    mischief_from_right_ = (mischief_phase_ == MischiefPhase::Waiting) ? GetBaseRightPose() : mischief_to_right_;
+    lab_pose_left_ = left;
+    lab_pose_right_ = right;
+    ClampPose(&lab_pose_left_);
+    ClampPose(&lab_pose_right_);
+    lab_pose_active_ = true;
+    head_pose_hold_ = true;  // hold until the next head pose / release
+    mischief_to_left_ = lab_pose_left_;
+    mischief_to_right_ = lab_pose_right_;
+    mischief_phase_ = MischiefPhase::Changing;
+    mischief_phase_start_ms_ = lv_tick_get();
+    mischief_phase_duration_ms_ = change_ms ? change_ms : mischief_config_.change_ms;
+    mischief_started_ = true;
+}
+
+// Eases back to the resting eyes and the centre over retreat_ms.
+void EyeAnimation::ReleaseHeadPose(uint32_t retreat_ms) {
+    lab_pose_active_ = false;
+    head_pose_hold_ = false;
+    lab_shift_px_ = 0;
+    lab_shift_from_ = tilt_off_x_;
+    lab_shift_y_from_ = head_off_y_;
+    lab_shift_to_ = 0.0f;
+    lab_shift_y_to_ = 0.0f;
+    if (mischief_phase_ == MischiefPhase::Waiting) {
+        lab_shift_moving_ = false;
+        tilt_off_x_ = 0.0f;
+        head_off_y_ = 0.0f;
+        return;
+    }
+    lab_shift_moving_ = true;
+    mischief_from_left_ = mischief_to_left_;
+    mischief_from_right_ = mischief_to_right_;
+    mischief_to_left_ = GetBaseLeftPose();
+    mischief_to_right_ = GetBaseRightPose();
+    mischief_phase_ = MischiefPhase::Retreating;
+    mischief_phase_start_ms_ = lv_tick_get();
+    mischief_phase_duration_ms_ = retreat_ms ? retreat_ms : mischief_config_.retreat_ms;
+}
+
+void EyeAnimation::SetTilt(Tilt tilt, uint32_t change_ms, uint32_t retreat_ms) {
+    // Locked values, see the header.
+    static constexpr int kTiltShiftPx = 10;
+    const EyePose small{65, 70, 20, 255, 250, 240};
+    const EyePose big{80, 80, 24, 255, 250, 240};
+
+    tilt_ = tilt;
+    gaze_ = Gaze::Off;
+    if (tilt == Tilt::Off) {
+        ReleaseHeadPose(retreat_ms);
+        return;
+    }
+    lab_shift_px_ = kTiltShiftPx;
+    const bool left = tilt == Tilt::Left;
+    ApplyHeadPose(left ? small : big, left ? big : small,
+                  left ? static_cast<float>(kTiltShiftPx) : -static_cast<float>(kTiltShiftPx), 0.0f,
+                  change_ms);
+}
+
+void EyeAnimation::SetGaze(Gaze gaze, uint32_t change_ms, uint32_t retreat_ms) {
+    // Locked values, see the header.
+    static constexpr int kGazeShiftPx = 60;
+    const EyePose pose{70, 70, 30, 255, 250, 240};
+
+    gaze_ = gaze;
+    tilt_ = Tilt::Off;
+    if (gaze == Gaze::Off) {
+        ReleaseHeadPose(retreat_ms);
+        return;
+    }
+    ApplyHeadPose(pose, pose, 0.0f,
+                  gaze == Gaze::Down ? static_cast<float>(kGazeShiftPx) : -static_cast<float>(kGazeShiftPx),
+                  change_ms);
+}
+
+namespace {
+// Locked head-shake values, see the header.
+constexpr uint32_t kHeadShakeSwingMs = 500;   // time between direction changes
+constexpr uint32_t kHeadShakeEaseMs = 500;    // each swing's ease
+constexpr uint32_t kHeadShakeReturnMs = 1000; // ease back when it stops
+}  // namespace
+
+// Idle tilt: each new idle look may tilt, but only toward the side the eyes
+// are heading. Tilt::Left slides the eyes toward +x, so it is only allowed
+// when the look target is on the +x side, and Tilt::Right only on -x. A look
+// back to the centre, or to the other side, eases the tilt off first.
+void EyeAnimation::MaybeIdleTilt() {
+    if (connecting_active_ || speaking_active_ || listening_active_ || idle_tilt_chance_ == 0 || head_shake_active_ || nod_active_ || bounce_active_) return;
+    // Leave a running mischief cycle alone; only tilts own the phases here.
+    if (tilt_ == Tilt::Off && mischief_phase_ != MischiefPhase::Waiting) return;
+
+    constexpr float kSideThresholdPx = 3.0f;
+    const Tilt side = target_off_x_ >= kSideThresholdPx ? Tilt::Left
+                    : target_off_x_ <= -kSideThresholdPx ? Tilt::Right
+                    : Tilt::Off;
+    if (tilt_ != Tilt::Off && tilt_ != side) {
+        SetTilt(Tilt::Off);  // never hold a tilt that points away from the eyes
+        return;
+    }
+    if (tilt_ == Tilt::Off && side != Tilt::Off &&
+        RandomInt(1, 100) <= static_cast<int>(idle_tilt_chance_)) {
+        SetTilt(side);
+    }
+}
+
+void EyeAnimation::MaybeIdleGaze() {
+    if (connecting_active_ || speaking_active_ || listening_active_ || idle_gaze_chance_ == 0 || head_shake_active_ || nod_active_ || bounce_active_) return;
+    if (gaze_ == Gaze::Off && mischief_phase_ != MischiefPhase::Waiting) return;
+
+    constexpr float kSideThresholdPx = 3.0f;
+    const Gaze side = target_off_y_ >= kSideThresholdPx ? Gaze::Down
+                    : target_off_y_ <= -kSideThresholdPx ? Gaze::Up
+                    : Gaze::Off;
+    if (gaze_ != Gaze::Off && gaze_ != side) {
+        SetGaze(Gaze::Off);  // never hold a gaze that points away from the look
+        return;
+    }
+    if (gaze_ == Gaze::Off && side != Gaze::Off &&
+        RandomInt(1, 100) <= static_cast<int>(idle_gaze_chance_)) {
+        SetGaze(side);
+    }
+}
+
+// Idle gesture: now and then a whole nod or head shake, from a neutral
+// start only (no tilt or gaze held, no mischief pose), with a cooldown so
+// it stays an occasional beat rather than a habit.
+void EyeAnimation::MaybeIdleGesture(uint32_t now_ms) {
+    if (connecting_active_ || speaking_active_ || listening_active_ || idle_gesture_chance_ == 0 || head_shake_active_ || nod_active_ || bounce_active_) return;
+    if (tilt_ != Tilt::Off || gaze_ != Gaze::Off) return;
+    if (mischief_phase_ != MischiefPhase::Waiting) return;
+    if (static_cast<int32_t>(now_ms - idle_gesture_ready_ms_) < 0) return;
+    if (RandomInt(1, 100) > static_cast<int>(idle_gesture_chance_)) return;
+
+    constexpr int kNodQuarters = 4;   // down, centre, up, centre
+    constexpr int kShakeSwings = 4;   // left, right, left, right
+    constexpr int kCooldownMinMs = 20000;
+    constexpr int kCooldownMaxMs = 40000;
+    if (RandomInt(0, 1) == 0) {
+        StartNod(kNodQuarters);
+    } else {
+        StartHeadShake(kShakeSwings);
+    }
+    idle_gesture_ready_ms_ = now_ms + static_cast<uint32_t>(RandomInt(kCooldownMinMs, kCooldownMaxMs));
+}
+
+// Bounce in place (trial). One bounce = one period: the eyes leave the
+// centre, rise bounce_height_px_ and land again, y = -h * sin(pi * p).
+// Shape is squash & stretch driven by the same phase:
+//   squash  = cos^8(pi p)          -> 1 only at the moment of landing
+//   stretch = |cos(pi p)| - squash -> peaks while moving fast, 0 at the top
+// Base is the resting 80x80 r24; squash/stretch add their px deltas.
+void EyeAnimation::StartBounce(int count) {
+    StopNod();
+    StopHeadShake();
+    tilt_ = Tilt::Off;
+    gaze_ = Gaze::Off;
+    bounce_active_ = true;
+    bounce_left_ = count > 0 ? count : -1;
+    bounce_start_ms_ = lv_tick_get();
+    lab_pose_active_ = true;
+    head_pose_hold_ = true;  // hold until the next head pose / release
+    mischief_started_ = true;
+}
+
+void EyeAnimation::StartBounceStyle(BounceStyle style, int count) {
+    struct Preset { int height_px; uint32_t period_ms; };
+    static constexpr Preset kPresets[] = {
+        {12, 500},  // LowFast
+        {12, 800},  // LowSlow
+        {30, 500},  // MidFast
+        {30, 800},  // MidSlow
+        {50, 800},  // HighSlow
+    };
+    const Preset& p = kPresets[static_cast<int>(style)];
+    SetBounceParams(p.height_px, p.period_ms);
+    StartBounce(count);
+}
+
+// Connecting: something that reads as "working on it" for a few seconds.
+//   Bounce   - MidSlow bounce in place at the centre, until stopped
+//   TiltHold - tilt to one side, hold 1.2-2 s, tilt to the other, ...
+//   Shake    - continuous head shake
+void EyeAnimation::StartConnecting(ConnectingStyle style) {
+    if (style == ConnectingStyle::Random) {
+        style = static_cast<ConnectingStyle>(RandomInt(1, 3));
+    }
+    StopConnecting();
+    connecting_active_ = true;
+    connecting_style_ = style;
+    head_off_y_ = 0.0f;
+    switch (style) {
+        case ConnectingStyle::Bounce:
+            StartBounceStyle(BounceStyle::MidSlow, 0);
+            break;
+        case ConnectingStyle::Shake:
+            StartHeadShake(0);
+            break;
+        case ConnectingStyle::TiltHold:
+        case ConnectingStyle::Random:
+            connecting_style_ = ConnectingStyle::TiltHold;
+            StopBounce();
+            StopNod();
+            StopHeadShake();
+            SetTilt(RandomInt(0, 1) == 0 ? Tilt::Left : Tilt::Right);
+            connecting_next_ms_ = lv_tick_get() + static_cast<uint32_t>(RandomInt(1200, 2000));
+            break;
+    }
+}
+
+void EyeAnimation::StopConnecting() {
+    if (!connecting_active_) return;
+    connecting_active_ = false;
+    switch (connecting_style_) {
+        case ConnectingStyle::Bounce: StopBounce(); break;
+        case ConnectingStyle::Shake: StopHeadShake(); break;
+        default: SetTilt(Tilt::Off); break;
+    }
+}
+
+void EyeAnimation::UpdateSpeaking(uint32_t now_ms) {
+    if (!speaking_active_ || bounce_active_ || bounce_settling_) return;
+    if (static_cast<int32_t>(now_ms - speaking_next_bounce_ms_) < 0) return;
+    StartBounceStyle(speaking_bounce_, 1);
+    // Next one only after this bounce is over, plus a random gap.
+    speaking_next_bounce_ms_ = now_ms + bounce_period_ms_ +
+        static_cast<uint32_t>(RandomInt(kSpeakingGapMinMs, kSpeakingGapMaxMs));
+}
+
+void EyeAnimation::UpdateConnecting(uint32_t now_ms) {
+    if (!connecting_active_ || connecting_style_ != ConnectingStyle::TiltHold) return;
+    if (static_cast<int32_t>(now_ms - connecting_next_ms_) < 0) return;
+    SetTilt(tilt_ == Tilt::Left ? Tilt::Right : Tilt::Left);
+    connecting_next_ms_ = now_ms + static_cast<uint32_t>(RandomInt(1200, 2000));
+}
+
+void EyeAnimation::SetDeviceLook(DeviceLook look) {
+    if (look == device_look_) return;
+    // Leave the old state first.
+    if (device_look_ == DeviceLook::Connecting) StopConnecting();
+    if (device_look_ == DeviceLook::Speaking) {
+        speaking_active_ = false;
+        StopBounce();
+    }
+    listening_active_ = false;
+    device_look_ = look;
+    switch (look) {
+        case DeviceLook::Connecting:
+            StartConnecting(ConnectingStyle::Shake);
+            break;
+        case DeviceLook::Speaking:
+            // Still (blinking allowed), with one LowSlow bounce now and then.
+            speaking_active_ = true;
+            StopNod();
+            StopHeadShake();
+            if (tilt_ != Tilt::Off || gaze_ != Gaze::Off) {
+                ReleaseHeadPose(0);
+                tilt_ = Tilt::Off;
+                gaze_ = Gaze::Off;
+            }
+            speaking_next_bounce_ms_ = lv_tick_get() +
+                static_cast<uint32_t>(RandomInt(kSpeakingGapMinMs, kSpeakingGapMaxMs));
+            break;
+        case DeviceLook::Listening:
+            // Still and attentive: centred, no look-around, no idle extras,
+            // no mischief; the autoblinker keeps running.
+            listening_active_ = true;
+            StopBounce();
+            StopNod();
+            StopHeadShake();
+            if (tilt_ != Tilt::Off || gaze_ != Gaze::Off || mischief_phase_ != MischiefPhase::Waiting) {
+                ReleaseHeadPose(0);
+                tilt_ = Tilt::Off;
+                gaze_ = Gaze::Off;
+            }
+            break;
+        case DeviceLook::Idle:
+            break;  // normal idle eyes
+    }
+}
+
+void EyeAnimation::PlaySurprised() {
+    surprised_after_bounce_ = true;
+    StartBounceStyle(BounceStyle::MidFast, 1);
+}
+
+void EyeAnimation::CancelSurprised() {
+    if (surprised_after_bounce_) {
+        surprised_after_bounce_ = false;
+        StopBounce();
+    }
+}
+
+void EyeAnimation::StopBounce() {
+    if (!bounce_active_) return;
+    bounce_active_ = false;
+    ReleaseHeadPose(bounce_period_ms_ / 2);
+}
+
+void EyeAnimation::UpdateBounce(uint32_t now_ms) {
+    if (bounce_settling_) {
+        HalfStep(head_off_y_, 0.0f);
+        if (std::fabs(head_off_y_) < 0.5f) {
+            head_off_y_ = 0.0f;
+            bounce_settling_ = false;
+        }
+    }
+    if (!bounce_active_) return;
+    const uint32_t period = std::max<uint32_t>(50, bounce_period_ms_);
+    const uint32_t elapsed = now_ms - bounce_start_ms_;
+    if (bounce_left_ > 0 && elapsed >= static_cast<uint32_t>(bounce_left_) * period) {
+        // Landed for the last time. Hand the squashed shape to the geometry
+        // lerp instead of snapping: current = the landing pose, target = the
+        // resting eye, so it springs back over a few frames.
+        bounce_active_ = false;
+        bounce_settling_ = true;
+        lab_pose_active_ = false;
+        head_pose_hold_ = false;
+        lab_shift_moving_ = false;
+        mischief_phase_ = MischiefPhase::Waiting;
+        mischief_phase_start_ms_ = 0;
+        mischief_phase_duration_ms_ = 0;
+        mischief_started_ = false;
+        SyncBasePoseTargets();
+        if (surprised_after_bounce_) {
+            surprised_after_bounce_ = false;
+            SetSurprised(true);  // radius eases 24 -> 40 while it settles
+        }
+        return;
+    }
+    const float p = static_cast<float>(elapsed % period) / static_cast<float>(period);
+    const float c = std::cos(3.14159265f * p);
+    const float ac = std::fabs(c);
+    const float c2 = c * c, c4 = c2 * c2;
+    const float squash = c4 * c4;
+    const float stretch = std::max(0.0f, ac - squash);
+
+    // Speaking bounces the smaller session eye; everything else the resting one.
+    EyePose pose = speaking_active_ ? EyePose{SESSION_SIZE, SESSION_SIZE, SESSION_RADIUS, 255, 250, 240}
+                                    : EyePose{80, 80, 24, 255, 250, 240};
+    const float base_h = static_cast<float>(pose.h);
+    pose.w += RoundToInt(squash * bounce_squash_[0] + stretch * bounce_stretch_[0]);
+    pose.h += RoundToInt(squash * bounce_squash_[1] + stretch * bounce_stretch_[1]);
+    pose.radius += RoundToInt(squash * bounce_squash_[2] + stretch * bounce_stretch_[2]);
+    ClampPose(&pose);
+    // Keep the bottom edge on the floor while squashing, so it reads as
+    // landing rather than shrinking towards the middle.
+    const float floor_fix = (base_h - static_cast<float>(pose.h)) * 0.5f;
+    head_off_y_ = -static_cast<float>(bounce_height_px_) * std::sin(3.14159265f * p) + floor_fix;
+    tilt_off_x_ = 0.0f;
+    lab_shift_moving_ = false;
+    lab_pose_left_ = lab_pose_right_ = pose;
+    mischief_to_left_ = mischief_to_right_ = pose;
+    mischief_phase_ = MischiefPhase::Holding;
+    mischief_phase_start_ms_ = now_ms;
+    mischief_phase_duration_ms_ = 3600000u;
+    ApplyMischiefPose(pose, pose);
+}
+
+void EyeAnimation::StartNod(int swings) {
+    StopBounce();
+    StopHeadShake();
+    tilt_ = Tilt::Off;
+    gaze_ = Gaze::Off;
+    nod_active_ = true;
+    nod_left_ = swings > 0 ? swings : -1;  // quarter nods (centre->down = 1)
+    nod_start_ms_ = lv_tick_get();
+    lab_pose_active_ = true;
+    head_pose_hold_ = true;  // hold until the next head pose / release
+    mischief_started_ = true;
+}
+
+void EyeAnimation::StopNod() {
+    if (!nod_active_) return;
+    nod_active_ = false;
+    gaze_ = Gaze::Off;
+    ReleaseHeadPose(nod_return_ms_);
+}
+
+// Nod: one continuous sine, so the eyes pass the centre at full speed and
+// only slow down at the top and bottom (step-by-step easing stopped dead at
+// the centre). Height y = nod_px_ * sin(phase), down first; the shape
+// follows |sin|: resting 80x80 r24 at the centre, 70x70 r30 at +-nod_px_.
+// A full nod (down, centre, up, centre) takes 4 * nod_swing_ms_.
+void EyeAnimation::UpdateNod(uint32_t now_ms) {
+    if (!nod_active_) return;
+    const uint32_t elapsed = now_ms - nod_start_ms_;
+    if (nod_left_ > 0 && elapsed >= static_cast<uint32_t>(nod_left_) * nod_swing_ms_) {
+        StopNod();
+        return;
+    }
+    const EyePose centre{80, 80, 24, 255, 250, 240};
+    const EyePose moved{70, 70, 30, 255, 250, 240};
+    const float phase = 6.2831853f * static_cast<float>(elapsed) /
+                        static_cast<float>(4 * std::max<uint32_t>(1, nod_swing_ms_));
+    const float s = std::sin(phase);
+    EyePose pose = LerpPose(centre, moved, std::fabs(s));
+    head_off_y_ = s * static_cast<float>(nod_px_);
+    tilt_off_x_ = 0.0f;
+    lab_shift_moving_ = false;
+    lab_pose_left_ = lab_pose_right_ = pose;
+    mischief_to_left_ = mischief_to_right_ = pose;
+    mischief_phase_ = MischiefPhase::Holding;
+    mischief_phase_start_ms_ = now_ms;
+    mischief_phase_duration_ms_ = 3600000u;  // the nod, not the hold timer, ends it
+    ApplyMischiefPose(pose, pose);
+}
+
+void EyeAnimation::StartHeadShake(int swings) {
+    StopNod();
+    StopBounce();
+    head_shake_active_ = true;
+    head_shake_left_ = swings > 0 ? swings : -1;
+    head_shake_next_ms_ = lv_tick_get();  // first swing now
+}
+
+void EyeAnimation::StopHeadShake() {
+    if (!head_shake_active_) return;
+    head_shake_active_ = false;
+    SetTilt(Tilt::Off, 0, kHeadShakeReturnMs);
+}
+
+void EyeAnimation::UpdateHeadShake(uint32_t now_ms) {
+    if (!head_shake_active_ || now_ms < head_shake_next_ms_) return;
+    if (head_shake_left_ == 0) {
+        StopHeadShake();
+        return;
+    }
+    SetTilt(tilt_ == Tilt::Left ? Tilt::Right : Tilt::Left, kHeadShakeEaseMs);
+    if (head_shake_left_ > 0) --head_shake_left_;
+    head_shake_next_ms_ = now_ms + kHeadShakeSwingMs;
+}
+
+void EyeAnimation::LabClearPose() {
+    lab_pose_active_ = false;
+}
+
+void EyeAnimation::LabDescribe() const {
+    static const char* kNames[] = {"mumble", "hum", "think", "surprise", "happy", "laugh", "annoyed", "sleepy"};
+    static const char* kPhase[] = {"waiting", "changing", "holding", "retreating"};
+    printf("mischief: %s, phase %s, mood %s%s\n", mischief_enabled_ ? "on" : "off",
+           kPhase[static_cast<int>(mischief_phase_)], kNames[static_cast<int>(mischief_mood_)],
+           lab_forced_mood_ >= 0 ? " (forced)" : "");
+    printf("weights:");
+    for (int i = 0; i < 8; ++i) printf(" %s=%d", kNames[i], lab_mood_weights_[i]);
+    printf("\nhold: %s\n", lab_hold_ms_ ? std::to_string(lab_hold_ms_).c_str() : "per mood");
+    const auto& m = mischief_config_;
+    printf("cfg: stay %lu-%lu ms, change %lu ms, retreat %lu ms\n", (unsigned long)m.min_stay_ms,
+           (unsigned long)m.max_stay_ms, (unsigned long)m.change_ms, (unsigned long)m.retreat_ms);
+    printf("cfg limits: w %d-%d h %d-%d radius %d-%d rgb %u-%u/%u-%u/%u-%u\n", m.min_w, m.max_w, m.min_h,
+           m.max_h, m.min_radius, m.max_radius, m.min_r, m.max_r, m.min_g, m.max_g, m.min_b, m.max_b);
+    const EyePose& l = mischief_to_left_;
+    const EyePose& r = mischief_to_right_;
+    printf("pose L: %dx%d r%d rgb(%u,%u,%u)  R: %dx%d r%d rgb(%u,%u,%u)%s\n", l.w, l.h, l.radius, l.red,
+           l.green, l.blue, r.w, r.h, r.radius, r.red, r.green, r.blue,
+           lab_pose_active_ ? "  [custom pose]" : "");
+}
+
+void EyeAnimation::MakeMoodPoses(Vox::Mood mood, const EyePose& left_base, const EyePose& right_base,
+                                 EyePose* left, EyePose* right) const {
+    struct Rgb {
+        uint8_t r;
+        uint8_t g;
+        uint8_t b;
+    };
+    auto tint = [](EyePose* pose, const Rgb& c) {
+        pose->red = c.r;
+        pose->green = c.g;
+        pose->blue = c.b;
+    };
+    auto pick = [](std::initializer_list<Rgb> colors) {
+        return *(colors.begin() + RandomInt(0, static_cast<int>(colors.size()) - 1));
+    };
+    constexpr Rgb kCoral{255, 92, 122};
+    constexpr Rgb kMango{255, 162, 65};
+    constexpr Rgb kYellow{255, 214, 64};
+    constexpr Rgb kLime{118, 255, 88};
+    constexpr Rgb kMint{72, 250, 210};
+    constexpr Rgb kSky{75, 190, 255};
+    constexpr Rgb kViolet{164, 110, 255};
+    constexpr Rgb kMagenta{255, 98, 230};
+
+    EyePose pose = left_base;
+    switch (mood) {
+        case Vox::Mood::Surprise:
+            // Wide-open round eyes.
+            pose.w = pose.h = RandomInt(90, 96);
+            pose.radius = 36;
+            tint(&pose, pick({kYellow, kSky}));
+            break;
+        case Vox::Mood::Happy:
+            // Wide, soft, a little shorter - a smiling squint.
+            pose.w = RandomInt(86, 96);
+            pose.h = RandomInt(54, 62);
+            pose.radius = RandomInt(30, 36);
+            tint(&pose, pick({kLime, kYellow, kMagenta}));
+            break;
+        case Vox::Mood::Laugh:
+            // Squeezed almost shut from laughing.
+            pose.w = RandomInt(90, 96);
+            pose.h = RandomInt(38, 46);
+            pose.radius = RandomInt(18, 22);
+            tint(&pose, pick({kYellow, kMango}));
+            break;
+        case Vox::Mood::Annoyed:
+            // Flat, hard-edged slits.
+            pose.w = RandomInt(84, 96);
+            pose.h = RandomInt(34, 40);
+            pose.radius = RandomInt(2, 8);
+            tint(&pose, kCoral);
+            break;
+        case Vox::Mood::Sleepy:
+            // Heavy, half-closed and narrower.
+            pose.w = RandomInt(72, 84);
+            pose.h = RandomInt(34, 38);
+            pose.radius = RandomInt(14, 18);
+            tint(&pose, kViolet);
+            break;
+        case Vox::Mood::Think: {
+            // One eye narrows, the other stays put - a lopsided "hmm?".
+            EyePose narrowed = left_base;
+            narrowed.w = RandomInt(70, 78);
+            narrowed.h = RandomInt(48, 56);
+            narrowed.radius = RandomInt(16, 22);
+            EyePose steady = right_base;
+            tint(&narrowed, kMint);
+            tint(&steady, kMint);
+            ClampPose(&narrowed);
+            ClampPose(&steady);
+            if (RandomInt(0, 1) == 0) {
+                *left = narrowed;
+                *right = steady;
+            } else {
+                *left = steady;
+                *right = narrowed;
+            }
+            return;
+        }
+        case Vox::Mood::Mumble:
+        case Vox::Mood::Hum:
+            // Talking/humming to itself: stay close to the resting shape and
+            // only shift colour, so the eyes read as "busy", not as a feeling.
+            pose.w = left_base.w + RandomInt(-10, 10);
+            pose.h = left_base.h + RandomInt(-10, 10);
+            pose.radius = left_base.radius + RandomInt(-6, 6);
+            tint(&pose, mood == Vox::Mood::Hum ? pick({kMango, kMagenta}) : pick({kSky, kMint}));
+            break;
+    }
+    ClampPose(&pose);
+    *left = pose;
+    *right = pose;
+}
+
+uint32_t EyeAnimation::PickMoodHoldMs(Vox::Mood mood) const {
+    if (head_pose_hold_) {
+        return 3600000u;  // tilt/gaze/nod/bounce: held until changed or released
+    }
+    if (lab_hold_ms_ > 0) {
+        return lab_hold_ms_;  // console `mhold`
+    }
+    // A reaction only reads as one if it is brief; mumbling/humming keeps the
+    // engine's long idle range. The voice can still stretch this via
+    // ExtendMischiefHold so a clip never outlives its pose.
+    switch (mood) {
+        case Vox::Mood::Surprise:
+            return RandomInt(1200, 2500);
+        case Vox::Mood::Laugh:
+            return RandomInt(1500, 3000);
+        case Vox::Mood::Happy:
+        case Vox::Mood::Annoyed:
+            return RandomInt(2000, 4000);
+        case Vox::Mood::Think:
+            return RandomInt(2500, 5000);
+        case Vox::Mood::Sleepy:
+            return RandomInt(3000, 6000);
+        case Vox::Mood::Mumble:
+        case Vox::Mood::Hum:
+            break;
+    }
+    return RandomInt(static_cast<int>(mischief_config_.min_stay_ms),
+                     static_cast<int>(mischief_config_.max_stay_ms));
 }
 
 EyeAnimation::EyePose EyeAnimation::LerpPose(const EyePose& from, const EyePose& to, float t) const {
@@ -2466,6 +3143,7 @@ void EyeAnimation::ApplyMischiefPose(const EyePose& left_pose, const EyePose& ri
 }
 
 void EyeAnimation::FinishMischiefCycle() {
+    head_pose_hold_ = false;
     mischief_phase_ = MischiefPhase::Waiting;
     mischief_phase_start_ms_ = 0;
     mischief_phase_duration_ms_ = 0;
@@ -2486,39 +3164,39 @@ void EyeAnimation::FinishMischiefCycle() {
     SyncBasePoseTargets();
 }
 
-void EyeAnimation::StartMischiefCycle(uint32_t now_ms) {
+void EyeAnimation::StartMischiefCycle(uint32_t now_ms, bool use_lab_pose) {
     auto left_base = GetBaseLeftPose();
     auto right_base = GetBaseRightPose();
 
-    mischief_from_left_ = left_base;
-    mischief_from_right_ = right_base;
+    // Ease from what is on screen, which may be a held head pose.
+    const bool from_pose = mischief_phase_ != MischiefPhase::Waiting;
+    mischief_from_left_ = from_pose ? mischief_to_left_ : left_base;
+    mischief_from_right_ = from_pose ? mischief_to_right_ : right_base;
 
-    int roll = RandomInt(1, std::max(1,
-        static_cast<int>(mischief_config_.both_sync_chance) +
-        static_cast<int>(mischief_config_.both_independent_chance) +
-        static_cast<int>(mischief_config_.left_only_chance) +
-        static_cast<int>(mischief_config_.right_only_chance)));
+    if (!use_lab_pose) {
+        // A mood cycle replaces any held tilt/gaze/nod/bounce: drop it and slide
+        // its offsets home during the change.
+        bounce_active_ = false;
+        nod_active_ = false;
+        head_shake_active_ = false;
+        tilt_ = Tilt::Off;
+        gaze_ = Gaze::Off;
+        lab_pose_active_ = false;
+        head_pose_hold_ = false;
+        lab_shift_from_ = tilt_off_x_;
+        lab_shift_y_from_ = head_off_y_;
+        lab_shift_to_ = 0.0f;
+        lab_shift_y_to_ = 0.0f;
+        lab_shift_moving_ = tilt_off_x_ != 0.0f || head_off_y_ != 0.0f;
+    }
 
-    int threshold = mischief_config_.both_sync_chance;
-    if (roll <= threshold) {
-        auto pose = MakeRandomPoseFromBase(left_base);
-        mischief_to_left_ = pose;
-        mischief_to_right_ = pose;
-    } else {
-        threshold += mischief_config_.both_independent_chance;
-        if (roll <= threshold) {
-            mischief_to_left_ = MakeRandomPoseFromBase(left_base);
-            mischief_to_right_ = MakeRandomPoseFromBase(right_base);
-        } else {
-            threshold += mischief_config_.left_only_chance;
-            if (roll <= threshold) {
-                mischief_to_left_ = MakeRandomPoseFromBase(left_base);
-                mischief_to_right_ = right_base;
-            } else {
-                mischief_to_left_ = left_base;
-                mischief_to_right_ = MakeRandomPoseFromBase(right_base);
-            }
-        }
+    // Feeling first, then the pose for it; the voice layer reads
+    // GetMischiefMood() so the clip it plays matches what is on screen.
+    mischief_mood_ = PickMischiefMood();
+    MakeMoodPoses(mischief_mood_, left_base, right_base, &mischief_to_left_, &mischief_to_right_);
+    if (lab_pose_active_) {
+        mischief_to_left_ = lab_pose_left_;
+        mischief_to_right_ = lab_pose_right_;
     }
 
     mischief_phase_ = MischiefPhase::Changing;
@@ -2529,6 +3207,11 @@ void EyeAnimation::StartMischiefCycle(uint32_t now_ms) {
 }
 
 void EyeAnimation::UpdateMischief(uint32_t now_ms) {
+    UpdateConnecting(now_ms);
+    UpdateSpeaking(now_ms);
+    UpdateHeadShake(now_ms);
+    UpdateNod(now_ms);
+    UpdateBounce(now_ms);
     // Timed Mischief is idle-only/menu-closed, but a manual eye tap should still
     // be allowed to run a single cycle even while the timed engine is gated off.
     if (!mischief_enabled_ && mischief_phase_ == MischiefPhase::Waiting) {
@@ -2544,6 +3227,9 @@ void EyeAnimation::UpdateMischief(uint32_t now_ms) {
 
     switch (mischief_phase_) {
         case MischiefPhase::Waiting:
+            if (listening_active_ || speaking_active_ || connecting_active_) {
+                return;  // no timed mischief while in a session state
+            }
             if (now_ms >= mischief_next_cycle_ms_) {
                 StartMischiefCycle(now_ms);
             }
@@ -2552,14 +3238,18 @@ void EyeAnimation::UpdateMischief(uint32_t now_ms) {
         case MischiefPhase::Changing: {
             float t = static_cast<float>(now_ms - mischief_phase_start_ms_) /
                       static_cast<float>(mischief_phase_duration_ms_);
+            if (lab_shift_moving_) {
+                const float st = ClampFloat(t, 0.0f, 1.0f);
+                tilt_off_x_ = Lerp(lab_shift_from_, lab_shift_to_, EaseInOutCubic(st));
+                head_off_y_ = Lerp(lab_shift_y_from_, lab_shift_y_to_, EaseInOutCubic(st));
+                if (st >= 1.0f) lab_shift_moving_ = false;
+            }
             if (t >= 1.0f) {
                 ApplyMischiefPose(mischief_to_left_, mischief_to_right_);
                 mischief_phase_ = MischiefPhase::Holding;
                 mischief_phase_start_ms_ = now_ms;
                 mischief_phase_duration_ms_ = std::max<uint32_t>(
-                    RandomInt(static_cast<int>(mischief_config_.min_stay_ms),
-                              static_cast<int>(mischief_config_.max_stay_ms)),
-                    mischief_min_hold_extension_ms_);
+                    PickMoodHoldMs(mischief_mood_), mischief_min_hold_extension_ms_);
                 mischief_min_hold_extension_ms_ = 0;
                 return;
             }
@@ -2587,6 +3277,11 @@ void EyeAnimation::UpdateMischief(uint32_t now_ms) {
             float t = static_cast<float>(now_ms - mischief_phase_start_ms_) /
                       static_cast<float>(mischief_phase_duration_ms_);
             if (t >= 1.0f) {
+                if (lab_shift_moving_) {
+                    tilt_off_x_ = lab_shift_to_;
+                    head_off_y_ = lab_shift_y_to_;
+                    lab_shift_moving_ = false;
+                }
                 FinishMischiefCycle();
                 if (mischief_enabled_) {
                     mischief_next_cycle_ms_ = now_ms + RandomInt(
@@ -2596,6 +3291,10 @@ void EyeAnimation::UpdateMischief(uint32_t now_ms) {
                 return;
             }
             float eased = EaseInOutCubic(ClampFloat(t, 0.0f, 1.0f));
+            if (lab_shift_moving_) {
+                tilt_off_x_ = Lerp(lab_shift_from_, lab_shift_to_, eased);
+                head_off_y_ = Lerp(lab_shift_y_from_, lab_shift_y_to_, eased);
+            }
             ApplyMischiefPose(
                 LerpPose(mischief_from_left_, mischief_to_left_, eased),
                 LerpPose(mischief_from_right_, mischief_to_right_, eased));
@@ -2701,8 +3400,8 @@ void EyeAnimation::RenderFrame() {
     }
 
     // Eye center (all offsets combined)
-    int cx = screen_w_ / 2 + RoundToInt(off_x_ + touch_off_x_ + imu_off_x_) + flicker_off_x_;
-    int cy = screen_h_ / 2 + RoundToInt(off_y_ + bounce_y_ + touch_off_y_ + imu_off_y_ + angry_bounce_off_y_ + feed_shake_y_) + flicker_off_y_;
+    int cx = screen_w_ / 2 + RoundToInt(off_x_ + tilt_off_x_ + touch_off_x_ + imu_off_x_) + flicker_off_x_;
+    int cy = screen_h_ / 2 + base_off_y_ + RoundToInt(head_off_y_ + off_y_ + bounce_y_ + touch_off_y_ + imu_off_y_ + angry_bounce_off_y_ + feed_shake_y_) + flicker_off_y_;
 
     // Eye Y positions (blink shifts top edge down)
     int left_base_top    = cy - left_eye_h / 2;
@@ -2713,6 +3412,16 @@ void EyeAnimation::RenderFrame() {
     // Clamp blink offset
     int left_top_y  = left_base_top + (blink_left_  ? static_cast<int>(top_offset_) : 0);
     int right_top_y = right_base_top + (blink_right_ ? static_cast<int>(top_offset_) : 0);
+    // Dozing: the top edge sinks by doze_close_ px, and while dozing the eye
+    // never opens taller than doze_max_open_px_ (user, 2026-09-29: 60 of 80).
+    if (doze_close_ > 0.0f) {
+        left_top_y  += RoundToInt(doze_close_);
+        right_top_y += RoundToInt(doze_close_);
+    }
+    if (doze_active_ && doze_capped_) {
+        left_top_y  = std::max(left_top_y,  left_base_bottom  - doze_max_open_px_);
+        right_top_y = std::max(right_top_y, right_base_bottom - doze_max_open_px_);
+    }
     if (sleep_mode_) {
         left_top_y = left_base_top;
         right_top_y = right_base_top;
@@ -2914,67 +3623,7 @@ void EyeAnimation::RenderFrame() {
         DrawBathFoam(&layer);
     }
 
-    if (game_mode_active_) {
-        DrawGamePlusFx(&layer, lv_tick_get());
-    }
-
     lv_canvas_finish_layer(canvas_, &layer);
-}
-
-void EyeAnimation::DrawGamePlusFx(lv_layer_t* layer, uint32_t now_ms) {
-    static constexpr uint32_t kRiseMs = 220;
-    static constexpr uint32_t kFadeMs = 180;
-    static constexpr uint32_t kTotalMs = kRiseMs + kFadeMs;
-    static constexpr float kRisePx = 40.0f;
-
-    lv_draw_rect_dsc_t rect_dsc;
-    lv_draw_rect_dsc_init(&rect_dsc);
-    rect_dsc.bg_color = lv_color_make(0, 255, 0);
-    rect_dsc.border_opa = LV_OPA_TRANSP;
-    rect_dsc.radius = 1;
-
-    for (auto& fx : game_plus_fx_) {
-        if (!fx.active) {
-            continue;
-        }
-
-        const uint32_t elapsed = now_ms - fx.start_ms;
-        if (elapsed >= kTotalMs) {
-            fx.active = false;
-            continue;
-        }
-
-        float y = fx.start_y;
-        lv_opa_t opa = LV_OPA_COVER;
-        if (elapsed < kRiseMs) {
-            const float t = static_cast<float>(elapsed) / static_cast<float>(kRiseMs);
-            y -= kRisePx * t;
-        } else {
-            y -= kRisePx;
-            const float t = static_cast<float>(elapsed - kRiseMs) / static_cast<float>(kFadeMs);
-            const float alpha = std::max(0.0f, 1.0f - t);
-            opa = static_cast<lv_opa_t>(alpha * static_cast<float>(LV_OPA_COVER));
-        }
-
-        rect_dsc.bg_opa = opa;
-        const int cx = RoundToInt(fx.start_x);
-        const int cy = RoundToInt(y);
-
-        lv_area_t hbar = {
-            static_cast<int16_t>(cx - 5),
-            static_cast<int16_t>(cy - 1),
-            static_cast<int16_t>(cx + 5),
-            static_cast<int16_t>(cy + 1),
-        };
-        lv_area_t vbar = {
-            static_cast<int16_t>(cx - 1),
-            static_cast<int16_t>(cy - 5),
-            static_cast<int16_t>(cx + 1),
-            static_cast<int16_t>(cy + 5),
-        };
-        lv_draw_rect(layer, &rect_dsc, &hbar);
-        lv_draw_rect(layer, &rect_dsc, &vbar);
-    }
 }
 
 void EyeAnimation::DrawHatchEgg(lv_layer_t* layer, float cx, float cy, float w, float h,

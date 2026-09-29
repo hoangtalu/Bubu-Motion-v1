@@ -88,6 +88,12 @@ public:
      */
     void Schedule(std::function<void()>&& callback);
 
+    // Interactive games own the child's attention and never consume voice
+    // input. While one is active, keep WakeNet/AFE stopped so game rendering
+    // and IMU processing do not compete with an unused recognition pipeline.
+    void SetInteractiveGameActive(bool active);
+    bool IsInteractiveGameActive() const { return interactive_game_active_.load(); }
+
     /**
      * Alert with status, message, emotion and optional sound
      */
@@ -165,6 +171,15 @@ private:
     // loop can legitimately sit in kDeviceStateIdle.
     std::atomic<bool> activation_done_{false};
     std::atomic<bool> assets_refresh_running_{false};
+    // Portal study time ("giờ học"). Epoch ms of the window's end, 0 when no
+    // window is running; mirrored to NVS so a reboot mid-window stays quiet.
+    std::atomic<int64_t> study_until_ms_{0};
+    // The two independent reasons the overlay lane is muted. Kept apart so one
+    // ending never unmutes while the other still holds (a study window outlives
+    // any number of AI sessions inside it).
+    std::atomic<bool> study_sfx_muted_{false};
+    std::atomic<bool> ai_session_active_{false};
+    std::atomic<bool> interactive_game_active_{false};
     bool play_popup_on_listening_ = false;  // Flag to play popup sound after state changes to listening
     int clock_ticks_ = 0;
     TaskHandle_t activation_task_handle_ = nullptr;
@@ -221,6 +236,12 @@ private:
     void UpdateBindRequiredState(const std::string& message, const std::string& code);
     void ClearBindRequiredState();
     bool CanPlayIdleOnlySfx();
+    /* Study time: what the portal decided, what the clock says about it, and
+     * the one place that hands the verdict to the audio service. */
+    void ApplyStudyWindow(int64_t until_ms);
+    void RestoreStudyWindow();
+    void UpdateStudyMute();
+    void ApplySfxMutePolicy();
     void SetListeningMode(ListeningMode mode);
     ListeningMode GetDefaultListeningMode() const;
     

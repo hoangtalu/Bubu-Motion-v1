@@ -4,6 +4,8 @@
 #include <random>
 #include <string_view>
 
+#include "vox.h"
+
 enum class BubuInteractionEvent : uint8_t {
     EyeTap,
     Blink,
@@ -14,7 +16,10 @@ class BubuInteractionVoice {
 public:
     BubuInteractionVoice();
 
-    std::string_view GetVoiceForEvent(BubuInteractionEvent event, uint64_t now_ms, bool allow_playback);
+    // For Mischief, `mood` is the feeling the eye pose is showing (see
+    // EyeAnimation::GetMischiefMood); the clip is chosen to match it.
+    std::string_view GetVoiceForEvent(BubuInteractionEvent event, uint64_t now_ms, bool allow_playback,
+                                      Vox::Mood mood = Vox::Mood::Mumble);
 
     // Playback duration of a clip previously returned by GetVoiceForEvent, or
     // 0 if unknown. Lets a caller (e.g. the mischief pose) hold its visual
@@ -23,7 +28,7 @@ public:
 
 private:
     bool CooldownElapsed(uint64_t now_ms, uint64_t last_ms, uint64_t cooldown_ms) const;
-    std::string_view GetOccasionalMumblingVoice();
+    std::string_view GetVoiceForMood(Vox::Mood mood);
     void MarkPlayed(BubuInteractionEvent event, uint64_t now_ms);
 
     std::mt19937 rng_;

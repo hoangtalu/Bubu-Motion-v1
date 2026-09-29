@@ -10,9 +10,6 @@ namespace CareSystem {
   static constexpr int kSleepBoost         = 90;   // Energy (sleep)
   static constexpr int kBathBoost          = 90;   // Cleanliness (bath)
   static constexpr int kCleanAnimBoost     = 90;   // Clean animation reward
-  static constexpr int kGameRewardPerHit   = 10;   // XP per correct tap
-  static constexpr int kGameWrongTapMood   = -1;   // Wrong tap mood penalty
-  static constexpr int kGameWrongTapEnergy = -5;   // Wrong tap energy penalty
 
   enum StatId {
     STAT_HUNGER = 0,

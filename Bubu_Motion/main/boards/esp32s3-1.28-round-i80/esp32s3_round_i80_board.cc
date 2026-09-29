@@ -6,7 +6,6 @@
 #include "screen_manager.h"
 #include "message_board.h"
 #include "application.h"
-#include "button.h"
 #include "config.h"
 #include "i2c_device.h"
 #include "qmi8658.h"
@@ -605,13 +604,15 @@ private:
             break;
         }
 
-        // Games drive the eyes themselves; the pet's own tap reactions fight them.
-        // Snake is here because a tap IS its steering control -- a tap voice
-        // on every turn would talk over the whole round. (QuickTapGame is
-        // deliberately left off this list, unchanged from before.)
+        // The pet's own tap reactions fight a game. MẮT XANH and Snake are
+        // here because a tap IS their control -- a tap voice on every eye or
+        // every turn would talk over the whole round, and MẮT XANH plays its
+        // own hit/miss sounds. (QuickTapGame is deliberately left off this
+        // list, unchanged from before.)
         const bool game_active =
-            screen == ScreenId::EyeTapGame || screen == ScreenId::CheckerGame ||
-            screen == ScreenId::SnakeGame;
+            screen == ScreenId::GreenEyeGame || screen == ScreenId::CheckerGame ||
+            screen == ScreenId::SnakeGame || screen == ScreenId::TiltMazeGame ||
+            screen == ScreenId::TrafficRunnerGame;
         if (!game_active && eye_display) {
             eye_display->PlayTapVoice();
             eye_display->NotifyUserInteraction();
@@ -839,13 +840,18 @@ private:
                 // EyeAnimation's shared state is handed to the main task
                 // (same as every other input path here) so it can't race
                 // with the LVGL animation timer that reads it back.
-                if (self->imu_ && self->eye_display_ &&
-                    ScreenManager::Policy().imu) {
+                if (self->imu_ && ScreenManager::Policy().imu) {
                     float ax, ay, az;
                     self->imu_->ReadAccel(ax, ay, az);
                     auto eye_display = self->eye_display_;
-                    Application::GetInstance().Schedule([eye_display, ax, ay]() {
-                        eye_display->SetImuAccel(ax, ay);
+                    const auto screen = ScreenManager::Current();
+                    Application::GetInstance().Schedule([eye_display, screen, ax, ay, az]() {
+                        if (screen == ScreenManager::ScreenId::TiltMazeGame ||
+                            screen == ScreenManager::ScreenId::TrafficRunnerGame) {
+                            MenuSystem::HandleImuAccel(ax, ay, az);
+                        } else if (eye_display != nullptr) {
+                            eye_display->SetImuAccel(ax, ay);
+                        }
                     });
                 }
 
@@ -988,6 +994,17 @@ private:
                                     ESP_LOGI(TAG, "[Touch] SWIPE dx=%d dy=%d dur=%ldms",
                                              sdx, sdy, static_cast<long>(dur));
                                     Application::GetInstance().Schedule([dir]() {
+                                        // An open step card owns left/right:
+                                        // the child is paging through the steps,
+                                        // not changing the screen behind it.
+                                        const bool horizontal =
+                                            dir == MenuSystem::SwipeDirection::kLeft ||
+                                            dir == MenuSystem::SwipeDirection::kRight;
+                                        if (horizontal &&
+                                            MessageBoard::HandleSwipe(
+                                                dir == MenuSystem::SwipeDirection::kLeft)) {
+                                            return;
+                                        }
                                         MenuSystem::HandleSwipe(dir);
                                     });
                                 } else {

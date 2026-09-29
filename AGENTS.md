@@ -1,11 +1,15 @@
 # AGENTS.md
 
-Read `/Users/judes/Documents/Arduino/Bubu_Motion_V1/BUBU_SYSTEM_MAP.md` first before exploring or changing this workspace.
+Read `/Users/judes/Downloads/Bubu-Motion-v1-main/BUBU_SYSTEM_MAP.md` first before exploring or changing this workspace.
 
 ## Scope
-The active firmware project in this workspace is:
+The active workspace root is:
 
-- `/Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion`
+- `/Users/judes/Downloads/Bubu-Motion-v1-main`
+
+The active firmware project inside this workspace is:
+
+- `/Users/judes/Downloads/Bubu-Motion-v1-main/Bubu_Motion`
 
 Do not assume sibling folders are the runtime target.
 
@@ -17,9 +21,10 @@ Do not assume sibling folders are the runtime target.
 - For board-specific work, start from the round-board files and the system map.
 
 ## Mandatory First Reads
-1. `/Users/judes/Documents/Arduino/Bubu_Motion_V1/BUBU_SYSTEM_MAP.md`
-2. `/Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/main/boards/esp32s3-1.28-round-i80/config.h`
-3. `/Users/judes/Documents/Arduino/Bubu_Motion_V1/Bubu_Motion/main/boards/esp32s3-1.28-round-i80/esp32s3_round_i80_board.cc`
+1. `/Users/judes/Downloads/Bubu-Motion-v1-main/BUBU_SYSTEM_MAP.md`
+2. `/Users/judes/Downloads/Bubu-Motion-v1-main/Bubu_Motion/main/boards/esp32s3-1.28-round-i80/config.h`
+3. `/Users/judes/Downloads/Bubu-Motion-v1-main/Bubu_Motion/main/boards/esp32s3-1.28-round-i80/esp32s3_round_i80_board.cc`
+
 
 ## Important Project-Specific Traps
 - Local `.ogg` playback is Ogg Opus, not generic Ogg/Vorbis.

@@ -81,11 +81,6 @@ public:
     void SetLeftEyeBorderRadius(int r);
     void SetRightEyeBorderRadius(int r);
     void SetEyeColor(uint8_t r, uint8_t g, uint8_t b);
-    void SetLeftEyeColor(uint8_t r, uint8_t g, uint8_t b);
-    void SetRightEyeColor(uint8_t r, uint8_t g, uint8_t b);
-    void TriggerEyeGamePlus(bool left_eye);
-    void SetEyeGameMode(bool active);
-    void SetEyeMoodColorAuto(bool enabled);
     void SetBaseLeftEyeShape(const EyeShape& shape);
     void SetBaseRightEyeShape(const EyeShape& shape);
     void SetEyeMischiefEnabled(bool enabled);
@@ -132,7 +127,10 @@ public:
 
 private:
     struct CareEmotionConfig {
-        bool enabled = true;
+        // Off since 2026-09-29 (user): the random emotion "carousel" is
+        // replaced by the idle behaviours in EyeAnimation (look-around,
+        // side-matched tilt/gaze, occasional nod/shake). Code kept.
+        bool enabled = false;
         uint32_t min_duration_ms = 1000;
         uint32_t max_duration_ms = 3000;
         uint32_t legacy_min_duration_ms = 3000;
@@ -151,9 +149,17 @@ private:
     uint64_t last_clock_refresh_ms_ = 0;
     bool clock_screensaver_active_ = false;
 
-    static constexpr uint32_t kClockRefreshMs = 1000;
-    static constexpr uint32_t kClockIdleTimeoutMs = 5 * 60 * 1000;
+    // The clock only displays hours and minutes, so one refresh per minute
+    // avoids waking the LCD path every second in the deepest screen stage.
+    static constexpr uint32_t kClockRefreshMs = 60 * 1000;
+    // Two-stage screensaver:
+    //   5 min  -> sleeping eyes at 4 FPS and 50% brightness
+    //   15 min -> clock/date with the eye renderer fully stopped
+    static constexpr uint32_t kClockIdleTimeoutMs = 15 * 60 * 1000;
     CareEmotionConfig care_emotion_config_;
+    // How long an emotion from Gemini/a game/a voice command stays once the
+    // device is idle, before the eyes return to neutral (carousel off).
+    static constexpr uint64_t kEmotionReturnMs = 6000;
     uint64_t care_next_emotion_change_ms_ = 0;
     uint64_t care_overlay_until_ms_ = 0;
     uint64_t last_external_emotion_ms_ = 0;
@@ -170,6 +176,12 @@ private:
     lv_obj_t* status_arc_ = nullptr;   // state indicator hugging the top bezel
     lv_obj_t* bottom_icons_ = nullptr; // wifi / mute / battery row
     lv_timer_t* status_chrome_timer_ = nullptr;
+    // Smooth-motion driver for the breathing arc and the voice waves; paused
+    // whenever neither is animating.
+    lv_timer_t* status_anim_timer_ = nullptr;
+    // Voice waves beside the eyes: [side][ring], ring 0 innermost.
+    lv_obj_t* voice_waves_[2][3] = {};
+    int voice_waves_inward_ = -1;  // -1 = not yet placed
     std::string status_base_text_;
     bool status_busy_ = false;        // append animated waiting dots
     uint8_t status_ellipsis_phase_ = 0;
@@ -187,6 +199,8 @@ private:
     void HideClockScreensaver();
     bool CanShowClockScreensaver() const;
     void UpdateMischiefEngineState();
+    // Device state -> EyeAnimation::DeviceLook (connecting/listening/speaking).
+    void SyncDeviceLook();
     ScreenManager::ScreenId DeriveScreen() const;
     void ApplyScreenPolicy(ScreenManager::ScreenId screen);
     int screen_listener_id_ = -1;
@@ -205,6 +219,10 @@ private:
     void UpdateStatusArcColor();
     void StatusChromeTick();
     static void StatusChromeTimerCb(lv_timer_t* timer);
+    void SetupVoiceWaves();
+    void PlaceVoiceWaves(bool inward);
+    void StatusAnimTick();
+    static void StatusAnimTimerCb(lv_timer_t* timer);
     void SetupSubtitle();
     void SubtitleTick();
     static void SubtitleTimerCb(lv_timer_t* timer);
@@ -213,14 +231,24 @@ private:
 
     BubuInteractionVoice interaction_voice_;
 
-    static constexpr uint32_t kSleepIdleTimeoutMs = 15 * 60 * 1000;
+    static constexpr uint32_t kSleepIdleTimeoutMs = 5 * 60 * 1000;
     static constexpr uint32_t kSleepEnergyTickMs = 60 * 1000;
+    static constexpr int kSleepEnergyBoostPerTick = 10;
     static constexpr uint8_t kSleepBrightnessPct = 50;
     static constexpr uint32_t kStatusChromeTickMs = 250;
     static constexpr int kStatusArcSize = 210;   // radius ~103, clears the bezel
     static constexpr int kStatusArcWidth = 4;
     static constexpr int kStatusArcStart = 250;  // degrees; 270 = top of screen
     static constexpr int kStatusArcEnd = 290;
+    static constexpr uint32_t kStatusAnimTickMs = 50;
+    static constexpr uint32_t kArcBreathPeriodMs = 1600;
+    static constexpr uint32_t kVoiceWavePeriodMs = 1000;
+    // Rings sit just outside the default 80px eyes (half-width 40, gap 10),
+    // centred on each eye; the outer ring stays ~15px inside the round glass.
+    static constexpr int kVoiceWaveEyeOffsetX = 45;
+    static constexpr int kVoiceWaveRadius[3] = {50, 58, 66};
+    static constexpr int kVoiceWaveWidth = 3;
+    static constexpr int kVoiceWaveHalfSpan = 28;  // degrees either side of horizontal
     static constexpr int kStatusBarTopY = 40;  // measured: keeps the row inside the bezel
     // Subtitle pill: y=163..193, clear of the wifi/mute/battery row (y=211..233).
     // Measured with tools/fit.py against lv_font_montserrat_vn_20: a full 180px

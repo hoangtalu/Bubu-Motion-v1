@@ -59,8 +59,8 @@
 //
 // PlayOverlaySound's OggDemuxer parses the whole embedded clip synchronously
 // in one call, firing one decode-queue push per ~60ms Opus packet back to
-// back — for the longest clips in the mischief pool (bubu_sing4.ogg is
-// ~17s, ~285 packets) that happens far faster than OpusCodecTask, a
+// back — even for the longest clips in the mischief pool (vox_mumble_*/
+// vox_hum_*, ~3s) that happens far faster than OpusCodecTask, a
 // separate task, can drain them. The decode queue has to be sized to
 // absorb a whole clip's worth of (small, compressed) packets up front, or
 // everything past the first few packets gets silently dropped and the
@@ -73,8 +73,8 @@
 #define OPUS_SFX_FRAME_DURATION_MS 20
 // Compressed-packet backlog, deliberately left at the count it has always had
 // rather than rescaled to the real packet size. At 20ms packets this is ~6.6s
-// of audio, not the 20s the old expression implied — so the longest clips
-// (bubu_sing3 ~15.3s, bubu_sing4 ~17.1s) already lose their tail. Growing it
+// of audio, not the 20s the old expression implied. Today's longest overlay
+// clip is ~3s so nothing is cut, but a clip past ~6.6s would lose its tail. Growing it
 // is the wrong fix: payloads are ~79 bytes each, and anything under
 // CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL (2048) is allocated from INTERNAL RAM,
 // so covering a 17s clip would park ~100KB in exactly the pool AFE needs to

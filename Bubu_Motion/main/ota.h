@@ -1,6 +1,7 @@
 #ifndef _OTA_H
 #define _OTA_H
 
+#include <cstdint>
 #include <functional>
 #include <string>
 
@@ -20,6 +21,13 @@ public:
     bool HasWebsocketConfig() { return has_websocket_config_; }
     bool HasActivationCode() { return has_activation_code_; }
     bool HasServerTime() { return has_server_time_; }
+    // Portal-defined study time ("giờ học"). The gateway puts a "study"
+    // object in every check-in reply; HasStudyState() is false for a server
+    // that does not send one yet, so an old gateway leaves the device alone
+    // instead of looking like "study just ended".
+    bool HasStudyState() const { return has_study_state_; }
+    // Epoch ms when the window ends, 0 when no window is running.
+    int64_t GetStudyUntilMs() const { return study_until_ms_; }
     bool StartUpgrade(std::function<void(int progress, size_t speed)> callback);
     static bool Upgrade(const std::string& firmware_url, std::function<void(int progress, size_t speed)> callback);
     void MarkCurrentVersionValid();
@@ -38,6 +46,8 @@ private:
     bool has_mqtt_config_ = false;
     bool has_websocket_config_ = false;
     bool has_server_time_ = false;
+    bool has_study_state_ = false;
+    int64_t study_until_ms_ = 0;
     bool has_activation_code_ = false;
     bool has_serial_number_ = false;
     bool has_activation_challenge_ = false;

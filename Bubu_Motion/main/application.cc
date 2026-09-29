@@ -19,6 +19,7 @@
 
 #include <cctype>
 #include <cstring>
+#include <sys/time.h>
 #include <esp_log.h>
 #include <cJSON.h>
 #include <driver/gpio.h>
@@ -42,11 +43,25 @@ constexpr uint64_t kListeningMicStallTimeoutMs = 5000;
 // it is not a retry window, because nothing retries.
 constexpr uint64_t kListeningNoChannelTimeoutMs = 3000;
 // How often the device asks the console whether its assets bundle (and so its
-// wake word) changed. Counted in 1 Hz clock ticks. 15 minutes is a compromise:
-// short enough that a parent changing the wake word in the portal sees it apply
-// while they still remember doing it, long enough that it is not a meaningful
-// load on the console or the battery.
-constexpr int kAssetsRefreshIntervalSeconds = 15 * 60;
+// wake word) changed, and whether a study window is running. Counted in 1 Hz
+// clock ticks. Was 15 minutes while the bundle was the only thing this carried;
+// study time sets the bar now, because this interval IS the worst-case delay
+// between a parent pressing "Bắt đầu giờ học" and the toy going quiet. Five
+// minutes is the compromise: a 30-minute window is not mostly over before it
+// takes effect, and the check-in (one TLS handshake to the gateway, one to
+// GitHub) still runs 12 times an hour, not 60.
+constexpr int kAssetsRefreshIntervalSeconds = 5 * 60;
+// Below this the clock has not been set yet (2026-01-01). A study window is a
+// comparison against the wall clock, so with no clock we do not know whether it
+// is study time -- and an unknown must leave the toy audible, never mute it
+// forever on a device that has been offline since it booted.
+constexpr int64_t kSaneClockMs = 1767225600000LL;
+int64_t WallClockMs() {
+    struct timeval tv;
+    gettimeofday(&tv, nullptr);
+    return static_cast<int64_t>(tv.tv_sec) * 1000 + tv.tv_usec / 1000;
+}
+
 constexpr uint32_t kStopListeningDrainMs = 200;
 constexpr uint32_t kStopListeningPostDisableDrainMs = 120;
 constexpr std::string_view kLocalCommandPrefix = "__local_cmd__:";
@@ -126,6 +141,30 @@ bool Application::SetDeviceState(DeviceState state) {
     return state_machine_.TransitionTo(state);
 }
 
+void Application::SetInteractiveGameActive(bool active) {
+    const bool previous = interactive_game_active_.exchange(active);
+    if (previous == active) {
+        return;
+    }
+
+    if (active) {
+        ESP_LOGI(TAG, "Interactive game active: stopping wake word detection");
+        audio_service_.EnableWakeWordDetection(false);
+        return;
+    }
+
+    // A game can also be torn down while Wi-Fi setup, activation, listening or
+    // speaking owns the audio path. Only Idle normally runs WakeNet, so do not
+    // accidentally re-enable it in any other device state.
+    if (GetDeviceState() == kDeviceStateIdle) {
+        ESP_LOGI(TAG, "Interactive game ended: restoring wake word detection");
+        audio_service_.EnableWakeWordDetection(true);
+    } else {
+        ESP_LOGI(TAG, "Interactive game ended: wake word remains off in state %d",
+                 static_cast<int>(GetDeviceState()));
+    }
+}
+
 void Application::Initialize() {
     auto& board = Board::GetInstance();
     SetDeviceState(kDeviceStateStarting);
@@ -164,12 +203,18 @@ void Application::Initialize() {
         bool ai_session = new_state == kDeviceStateConnecting ||
                           new_state == kDeviceStateListening ||
                           new_state == kDeviceStateSpeaking;
-        audio_service_.SetSfxMuted(ai_session);
+        ai_session_active_.store(ai_session);
+        ApplySfxMutePolicy();
         xEventGroupSetBits(event_group_, MAIN_EVENT_STATE_CHANGED);
     });
 
     // Before anything formats a time: the clock holds UTC, TZ makes it local.
     TimeSync::Begin();
+
+    // A reboot inside a study window (an assets install is one) must not hand
+    // the sound back. Takes effect as soon as the clock is set, which is
+    // earlier than the first check-in reply.
+    RestoreStudyWindow();
 
     // Initialize care and level systems
     LevelSystem::Begin();
@@ -384,6 +429,10 @@ void Application::Run() {
             MenuSystem::Render();
             CheckListeningInactivityTimeout();
 
+            // The window ends on the device's own clock, so the sound comes
+            // back the minute it is over rather than at the next check-in.
+            UpdateStudyMute();
+
             // Print debug info every 10 seconds
             if (clock_ticks_ % 10 == 0) {
                 SystemInfo::PrintHeapStats();
@@ -458,6 +507,10 @@ void Application::HandleActivationDoneEvent() {
     ESP_LOGI(TAG, "Activation done");
 
     SystemInfo::PrintHeapStats();
+    // The bind board was opened by ShowActivationCode(); activation succeeding
+    // is what makes it stale, so close it here rather than waiting for a
+    // protocol connection that may not come until the first conversation.
+    ClearBindRequiredState();
     SetDeviceState(kDeviceStateIdle);
 
     has_server_time_ = ota_->HasServerTime();
@@ -925,6 +978,12 @@ void Application::AssetsRefreshTask() {
         return;
     }
 
+    // The same reply carries the study window. This poll is the only thing that
+    // tells an idle device a parent has started (or ended) study time.
+    if (ota_->HasStudyState()) {
+        ApplyStudyWindow(ota_->GetStudyUntilMs());
+    }
+
     Settings settings("assets", false);
     std::string download_url = settings.GetString("download_url");
     if (download_url.empty() || download_url == settings.GetString("applied_url")) {
@@ -981,6 +1040,10 @@ void Application::CheckNewVersion() {
         }
         retry_count = 0;
         retry_delay = 10; // Reset retry delay
+
+        if (ota_->HasStudyState()) {
+            ApplyStudyWindow(ota_->GetStudyUntilMs());
+        }
 
         if (ota_->HasNewVersion()) {
             if (UpgradeFirmware(ota_->GetFirmwareUrl(), ota_->GetFirmwareVersion())) {
@@ -1079,23 +1142,6 @@ void Application::InitializeProtocol() {
 }
 
 void Application::ShowActivationCode(const std::string& code, const std::string& message) {
-    struct digit_sound {
-        char digit;
-        const std::string_view& sound;
-    };
-    static const std::array<digit_sound, 10> digit_sounds{{
-        digit_sound{'0', Lang::Sounds::OGG_0},
-        digit_sound{'1', Lang::Sounds::OGG_1}, 
-        digit_sound{'2', Lang::Sounds::OGG_2},
-        digit_sound{'3', Lang::Sounds::OGG_3},
-        digit_sound{'4', Lang::Sounds::OGG_4},
-        digit_sound{'5', Lang::Sounds::OGG_5},
-        digit_sound{'6', Lang::Sounds::OGG_6},
-        digit_sound{'7', Lang::Sounds::OGG_7},
-        digit_sound{'8', Lang::Sounds::OGG_8},
-        digit_sound{'9', Lang::Sounds::OGG_9}
-    }};
-
     // Append the code to the message so it's visible on the screen
     std::string full_message = message;
     if (!code.empty() && full_message.find(code) == std::string::npos) {
@@ -1103,14 +1149,6 @@ void Application::ShowActivationCode(const std::string& code, const std::string&
     }
     Alert(Lang::Strings::ACTIVATION, full_message.c_str(), "link", Lang::Sounds::OGG_ACTIVATION);
     UpdateBindRequiredState(message, code);
-
-    for (const auto& digit : code) {
-        auto it = std::find_if(digit_sounds.begin(), digit_sounds.end(),
-            [digit](const digit_sound& ds) { return ds.digit == digit; });
-        if (it != digit_sounds.end()) {
-            audio_service_.PlaySound(it->sound);
-        }
-    }
 }
 
 void Application::UpdateBindRequiredState(const std::string& message, const std::string& code) {
@@ -1155,6 +1193,71 @@ void Application::DismissAlert() {
 
 bool Application::CanPlayIdleOnlySfx() {
     return GetDeviceState() == kDeviceStateIdle && audio_service_.IsIdle();
+}
+
+/*
+ * Study time ("giờ học"), as a parent sets it on the portal: while it runs the
+ * overlay lane is hard-muted, so games, tap and mischief voices, emotion lines
+ * and the Pomodoro chimes all go silent. The AI's own voice is untouched --
+ * that is the tutor talking, and it rides the main lane.
+ *
+ * Only the end of the window is held here. The device decides "is it study
+ * time" against its own clock every second, so nothing depends on a check-in
+ * arriving on time: a late, failed or offline poll can delay the start of the
+ * silence, never its end.
+ */
+void Application::ApplyStudyWindow(int64_t until_ms) {
+    if (until_ms < 0) {
+        until_ms = 0;
+    }
+    if (study_until_ms_.exchange(until_ms) != until_ms) {
+        // Seconds, not milliseconds: NVS gives us int32 here, which holds epoch
+        // seconds until 2038 and would overflow on milliseconds today.
+        Settings settings("study", true);
+        settings.SetInt("until_s", static_cast<int32_t>(until_ms / 1000));
+        // Epoch seconds: nano printf (CONFIG_NEWLIB_NANO_FORMAT) has no %lld.
+        ESP_LOGI(TAG, "Study window %s (until=%ld)",
+                 until_ms > 0 ? "set" : "cleared", static_cast<long>(until_ms / 1000));
+    }
+    UpdateStudyMute();
+}
+
+void Application::RestoreStudyWindow() {
+    Settings settings("study", false);
+    int32_t until_s = settings.GetInt("until_s", 0);
+    if (until_s > 0) {
+        study_until_ms_.store(static_cast<int64_t>(until_s) * 1000);
+    }
+    UpdateStudyMute();
+}
+
+void Application::UpdateStudyMute() {
+    const int64_t until_ms = study_until_ms_.load();
+    const int64_t now_ms = WallClockMs();
+    const bool active = until_ms > 0 && now_ms > kSaneClockMs && now_ms < until_ms;
+    if (study_sfx_muted_.exchange(active) != active) {
+        ESP_LOGI(TAG, "Study time %s, SFX %s", active ? "started" : "ended",
+                 active ? "muted" : "unmuted");
+        if (!active && until_ms > 0 && now_ms > kSaneClockMs) {
+            // Window served its purpose; forget it so a later reboot with a
+            // fresh clock cannot resurrect it.
+            study_until_ms_.store(0);
+            Settings settings("study", true);
+            settings.SetInt("until_s", 0);
+        }
+    }
+    // Unconditional, not only on a change: this runs every second, so it is
+    // also what re-asserts the mute if the state-change listener and this tick
+    // ever raced each other into the wrong verdict. SetSfxMuted returns
+    // immediately when nothing changed.
+    ApplySfxMutePolicy();
+}
+
+/* The single writer of the overlay mute. Either reason holds it down on its
+ * own, so an AI session ending inside study time does not bring the games
+ * back. */
+void Application::ApplySfxMutePolicy() {
+    audio_service_.SetSfxMuted(ai_session_active_.load() || study_sfx_muted_.load());
 }
 
 void Application::PlayEmotionalVoice(const std::string& emotion) {
@@ -1527,7 +1630,7 @@ void Application::HandleStateChangedEvent() {
             display->SetStatus(Lang::Strings::STANDBY);
             display->ClearChatMessages();  // Clear messages first
             audio_service_.EnableVoiceProcessing(false);
-            audio_service_.EnableWakeWordDetection(true);
+            audio_service_.EnableWakeWordDetection(!interactive_game_active_.load());
             break;
         case kDeviceStateConnecting:
             listening_started_ms_.store(0);
