@@ -331,6 +331,23 @@ public:
     bool HandleFeedTap(uint32_t now_ms);   // true when the tap was consumed
     int ConsumeFeedBites();                // pending bites for the care system to credit
 
+    // ---- Care (EyeDisplay::UpdateCareExpression decides; this only draws) ----
+    // Thought bubble above the right eye: the most urgent need, or a medal when
+    // a HUY HIỆU is waiting to be received. Primitives only, no image.
+    enum class CareBubble : uint8_t { None, Food, Bath, Moon, Heart, Medal };
+    void SetCareBubble(CareBubble bubble);
+    CareBubble GetCareBubble() const { return care_bubble_; }
+    // True when (x, y) lands on the bubble drawn in the last frame.
+    bool IsTouchOnCareBubble(int x, int y) const;
+    // Eye tint while the mood colour is automatic: a need is showing, or a
+    // stat sits at its floor.
+    enum class CareTint : uint8_t { Normal, Needs, Critical };
+    void SetCareTint(CareTint tint) { care_tint_ = tint; }
+    // Idle mischief mood odds, in Vox::Mood order. Needs and the TÌNH BẠN
+    // trait scale kDefaultMoodWeights; the Eye Lab `mweight` edits the same array.
+    static constexpr int kDefaultMoodWeights[8] = {28, 10, 16, 12, 12, 6, 8, 8};
+    void SetMoodWeights(const int (&weights)[8]);
+
 private:
     struct SweatDrop {
         float x         = 0.0f;
@@ -481,7 +498,7 @@ private:
     // Render policy (see SetRenderPolicy). Defaults match the timer created in Init().
     uint8_t render_fps_   = 30;
     int lab_forced_mood_ = -1;
-    int lab_mood_weights_[8] = {28, 10, 16, 12, 12, 6, 8, 8};  // Vox::Mood order
+    int lab_mood_weights_[8] = {28, 10, 16, 12, 12, 6, 8, 8};  // = kDefaultMoodWeights
     uint32_t lab_hold_ms_ = 0;
     bool lab_pose_active_ = false;
     bool head_pose_hold_ = false;  // a tilt/gaze/nod/bounce pose is being held
@@ -705,6 +722,10 @@ private:
     uint8_t r_base_red_ = 255, r_base_green_ = 255, r_base_blue_ = 255;
     bool mood_color_auto_enabled_ = true;
     uint32_t color_last_ms_ = 0;
+    CareTint care_tint_ = CareTint::Normal;
+    CareBubble care_bubble_ = CareBubble::None;
+    uint32_t care_bubble_since_ms_ = 0;   // pop-in starts here
+    bool care_bubble_drawn_ = false;      // in the last frame; hit-tests use it
 
     // ---- Mischief Engine ----
     MischiefConfig mischief_config_;
@@ -818,6 +839,21 @@ private:
     static constexpr uint32_t kFeedCrumbLifeMs = 380;
     static constexpr uint32_t kFeedHardCapMs = 12000;
 
+    // ---- Care thought bubble ----
+    // Above the right eye (default 80x80, gap 10: x 125..205, y 80..160).
+    // Centre at r=86 from the screen centre, so with the 2 px bob its far
+    // edge stays at r<=110 of the 120 px glass; its near edge stays >=8 px
+    // from the status arc's end (156, 21) and 6 px above the eye. The trail
+    // dots lead down to the eye's top-right corner. The bubble is skipped for
+    // any frame where the eye reaches up into it (gaze up, bounce, surprise).
+    static constexpr int kCareBubbleX = 170;
+    static constexpr int kCareBubbleY = 50;
+    static constexpr int kCareBubbleR = 22;
+    static constexpr int kCareBubbleHitR = 34;     // generous for small fingers
+    static constexpr int kCareBubbleBobPx = 2;
+    static constexpr uint32_t kCareBubbleBobMs = 1800;
+    static constexpr uint32_t kCareBubblePopMs = 220;
+
     // IMU
     static constexpr float IMU_SENSITIVITY = 14.0f;
     static constexpr float IMU_MAX_OFFSET  = 18.0f;
@@ -867,6 +903,8 @@ private:
     void DrawFeedFood(lv_layer_t* layer) const;
     void DrawFeedCrumbs(lv_layer_t* layer, uint32_t now_ms) const;
     void DrawFeedSparkles(lv_layer_t* layer, uint32_t now_ms) const;
+    bool CareBubbleVisible() const;
+    void DrawCareBubble(lv_layer_t* layer, uint32_t now_ms) const;
     void UpdateMischief(uint32_t now_ms);
     void ApplyMischiefPose(const EyePose& left_pose, const EyePose& right_pose);
     void SyncBasePoseTargets();

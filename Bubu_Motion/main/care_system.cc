@@ -1,212 +1,453 @@
 #include "care_system.h"
+
 #include "level_system.h"
 #include "settings.h"
+
+#include <algorithm>
+#include <cmath>
+#include <cstring>
+#include <ctime>
+#include <mutex>
+
 #include <esp_log.h>
 #include <esp_timer.h>
 
 static const char* TAG = "CareSystem";
 
-// Stat range
-static constexpr int STAT_MIN = 0;
-static constexpr int STAT_MAX = 100;
-
-// "Needs attention" band
-static constexpr int ATTENTION_MIN = 20;
-static constexpr int ATTENTION_MAX = 39;
-
-// Decay schedule: minutes per -1 point
-static constexpr uint32_t HUNGER_DECAY_MIN      = 6;
-static constexpr uint32_t MOOD_DECAY_MIN        = 8;
-static constexpr uint32_t ENERGY_DECAY_MIN      = 5;
-static constexpr uint32_t CLEANLINESS_DECAY_MIN = 10;
-
-static constexpr uint32_t SAVE_INTERVAL_MS  = 3UL * 60UL * 1000UL;  // save every 3 min
-static constexpr uint32_t DECAY_TICK_MS     = 60UL * 1000UL;         // tick every 60s
-static constexpr int      DEFAULT_STAT      = 30;
-
-static inline uint32_t Millis() {
-    return (uint32_t)(esp_timer_get_time() / 1000ULL);
-}
-
 namespace CareSystem {
+namespace {
 
-static int hunger      = 80;
-static int mood        = 80;
-static int energy      = 80;
-static int cleanliness = 80;
+constexpr const char* kCareNs = "care_stats";
+constexpr const char* kBadgeNs = "badges";
+constexpr uint32_t kSaveIntervalMs = 3UL * 60UL * 1000UL;
 
-static uint32_t last_decay_ms_  = 0;
-static uint32_t hunger_acc_min_ = 0;
-static uint32_t mood_acc_min_   = 0;
-static uint32_t energy_acc_min_ = 0;
-static uint32_t clean_acc_min_  = 0;
-static uint32_t last_save_ms_   = 0;
-static bool     decay_suspended_ = false;
+// Guards everything below. Update() and the actions run on the main task;
+// the menu reads stats from the LVGL task.
+std::mutex s_mutex;
+care::Model s_model;
+care::Badges s_badges;
+int64_t s_last_tick_us = 0;
+int64_t s_last_save_ms = 0;
+int32_t s_saved_epoch = 0;     // wall clock at the last save of a previous boot
+int32_t s_pending_xp = 0;      // the finished days' XP, not yet paid (persisted)
+bool s_clock_seen = false;     // the time the device was off has been applied
+bool s_badges_dirty = false;
+bool s_save_now = false;
+int s_stage = -1;
 
-static int Clamp(int v) {
-    if (v < STAT_MIN) return STAT_MIN;
-    if (v > STAT_MAX) return STAT_MAX;
-    return v;
+int64_t NowMs() { return esp_timer_get_time() / 1000; }
+
+// The local time as the model sees it. Before SNTP (or the OTA reply) sets the
+// clock, it is not valid: no windows, no anchors, no badge progress.
+care::Clock NowClock(int64_t* epoch_out = nullptr) {
+    care::Clock clk;
+    const time_t now = time(nullptr);
+    if (epoch_out != nullptr) {
+        *epoch_out = static_cast<int64_t>(now);
+    }
+    struct tm lt;
+    localtime_r(&now, &lt);
+    if (lt.tm_year < 2025 - 1900) {
+        return clk;
+    }
+    clk.valid = true;
+    clk.day = care::DaysFromCivil(lt.tm_year + 1900, lt.tm_mon + 1, lt.tm_mday);
+    clk.minute = lt.tm_hour * 60 + lt.tm_min;
+    return clk;
 }
 
-static void SaveSnapshot() {
-    Settings s("care_stats", true);
-    s.SetBool("has", true);
-    s.SetInt("h", hunger);
-    s.SetInt("m", mood);
-    s.SetInt("e", energy);
-    s.SetInt("c", cleanliness);
-    ESP_LOGI(TAG, "Saved: hunger=%d mood=%d energy=%d clean=%d", hunger, mood, energy, cleanliness);
+void SaveLocked() {
+    const care::Snapshot snap = s_model.Save();
+    int64_t epoch = 0;
+    const care::Clock clk = NowClock(&epoch);
+    {
+        Settings settings(kCareNs, true);
+        settings.SetBlob("snap", &snap, sizeof(snap));
+        // 0 = unknown, so a later boot does not count clock-less time twice.
+        settings.SetInt("t", clk.valid ? static_cast<int32_t>(epoch) : 0);
+        settings.SetInt("xp", s_pending_xp);
+    }
+    if (s_badges_dirty) {
+        Settings settings(kBadgeNs, true);
+        const care::BadgeState& st = s_badges.state();
+        settings.SetBlob("st", &st, sizeof(st));
+        s_badges_dirty = false;
+    }
+    s_last_save_ms = NowMs();
+    s_save_now = false;
 }
 
-static void LoadSnapshot() {
-    Settings s("care_stats", false);
-    bool has = s.GetBool("has", false);
-    if (has) {
-        hunger      = Clamp(s.GetInt("h", DEFAULT_STAT));
-        mood        = Clamp(s.GetInt("m", DEFAULT_STAT));
-        energy      = Clamp(s.GetInt("e", DEFAULT_STAT));
-        cleanliness = Clamp(s.GetInt("c", DEFAULT_STAT));
-        ESP_LOGI(TAG, "Loaded: hunger=%d mood=%d energy=%d clean=%d", hunger, mood, energy, cleanliness);
+void LoadLocked() {
+    Settings settings(kCareNs, false);
+    const std::vector<uint8_t> blob = settings.GetBlob("snap");
+    care::Snapshot snap;
+    if (blob.size() == sizeof(snap)) {
+        std::memcpy(&snap, blob.data(), sizeof(snap));
+    }
+    if (blob.size() == sizeof(snap) && snap.version == 2) {
+        s_model.Restore(snap);
+        s_saved_epoch = settings.GetInt("t", 0);
+        s_pending_xp = settings.GetInt("xp", 0);
+        const care::Stats& s = s_model.stats();
+        ESP_LOGI(TAG, "Loaded: full=%.1f energy=%.1f clean=%.1f mood=%.1f day=%ld",
+                 s.full, s.energy, s.clean, s.mood, static_cast<long>(snap.day.index));
+    } else if (settings.GetBool("has", false)) {
+        // Stats from the old care system mean nothing under the new rules and
+        // are usually near 0 by now: start the new Bubu at 70 across the board.
+        // The old keys are left alone so a rollback still finds them.
+        s_model.StartFresh();
+        s_save_now = true;
+        ESP_LOGI(TAG, "Upgraded from the old care stats: fresh start");
     } else {
-        hunger = mood = energy = cleanliness = DEFAULT_STAT;
-        SaveSnapshot();
-        ESP_LOGI(TAG, "First boot — defaults written");
+        // A brand-new Bubu: content, but a little hungry, so the first bubble
+        // shows up within minutes and teaches the loop.
+        s_model.StartNew();
+        s_save_now = true;
+        ESP_LOGI(TAG, "First boot: new Bubu");
+    }
+
+    Settings badge_settings(kBadgeNs, false);
+    const std::vector<uint8_t> badge_blob = badge_settings.GetBlob("st");
+    care::BadgeState st;
+    if (badge_blob.size() == sizeof(st)) {
+        std::memcpy(&st, badge_blob.data(), sizeof(st));
+        if (st.version == 1) {
+            s_badges.Restore(st);
+        }
     }
 }
 
-static void ApplyDecay(uint32_t minutes) {
-    if (minutes == 0) return;
-
-    hunger_acc_min_ += minutes;
-    mood_acc_min_   += minutes;
-    energy_acc_min_ += minutes;
-    clean_acc_min_  += minutes;
-
-    if (hunger_acc_min_ >= HUNGER_DECAY_MIN) {
-        uint32_t steps = hunger_acc_min_ / HUNGER_DECAY_MIN;
-        hunger -= (int)steps;
-        hunger_acc_min_ -= steps * HUNGER_DECAY_MIN;
+// Friendship stage from the current level; awards the stage badges.
+void SyncStageLocked(int level) {
+    const int stage = care::StageForLevel(level, s_model.rules());
+    if (stage == s_stage) {
+        return;
     }
-    if (mood_acc_min_ >= MOOD_DECAY_MIN) {
-        uint32_t steps = mood_acc_min_ / MOOD_DECAY_MIN;
-        mood -= (int)steps;
-        mood_acc_min_ -= steps * MOOD_DECAY_MIN;
+    s_stage = stage;
+    const uint16_t before = s_badges.state().stage_done;
+    s_badges.OnStage(stage);
+    if (s_badges.state().stage_done != before) {
+        s_badges_dirty = true;
+        s_save_now = true;
+        ESP_LOGI(TAG, "TÌNH BẠN stage %d (%s)", stage, care::StageName(stage));
     }
-    if (energy_acc_min_ >= ENERGY_DECAY_MIN) {
-        uint32_t steps = energy_acc_min_ / ENERGY_DECAY_MIN;
-        energy -= (int)steps;
-        energy_acc_min_ -= steps * ENERGY_DECAY_MIN;
-    }
-    if (clean_acc_min_ >= CLEANLINESS_DECAY_MIN) {
-        uint32_t steps = clean_acc_min_ / CLEANLINESS_DECAY_MIN;
-        cleanliness -= (int)steps;
-        clean_acc_min_ -= steps * CLEANLINESS_DECAY_MIN;
-    }
-
-    hunger      = Clamp(hunger);
-    mood        = Clamp(mood);
-    energy      = Clamp(energy);
-    cleanliness = Clamp(cleanliness);
 }
+
+}  // namespace
 
 void Begin() {
-    LoadSnapshot();
-    last_decay_ms_ = Millis();
-    last_save_ms_  = last_decay_ms_;
-    hunger_acc_min_ = mood_acc_min_ = energy_acc_min_ = clean_acc_min_ = 0;
-    ESP_LOGI(TAG, "CareSystem ready");
+    std::lock_guard<std::mutex> lock(s_mutex);
+    LoadLocked();
+    s_last_tick_us = esp_timer_get_time();
+    s_last_save_ms = NowMs();
+    // LevelSystem::Begin() runs first (application.cc), so the level is known.
+    SyncStageLocked(LevelSystem::GetLevel());
+    if (s_save_now) {
+        SaveLocked();
+    }
+    ESP_LOGI(TAG, "CareSystem ready (stage %d)", s_stage);
 }
 
 void Update() {
-    uint32_t now = Millis();
+    int xp = 0;
+    {
+        std::lock_guard<std::mutex> lock(s_mutex);
+        const int64_t now_us = esp_timer_get_time();
+        const float dt = static_cast<float>(now_us - s_last_tick_us) / 1e6f;
+        s_last_tick_us = now_us;
 
-    if (last_decay_ms_ == 0) {
-        last_decay_ms_ = now;
-        return;
+        int64_t epoch = 0;
+        const care::Clock clk = NowClock(&epoch);
+        if (clk.valid && !s_clock_seen) {
+            s_clock_seen = true;
+            // The device was off from the last save until it booted.
+            if (s_saved_epoch > 0) {
+                const double boot_epoch = static_cast<double>(epoch) - static_cast<double>(now_us) / 1e6;
+                const double offline = boot_epoch - static_cast<double>(s_saved_epoch);
+                if (offline > 60.0) {
+                    s_model.CatchUp(static_cast<float>(offline));
+                    ESP_LOGI(TAG, "Was off for %.1f h", offline / 3600.0);
+                }
+            }
+        }
+
+        s_model.Tick(dt, clk);
+
+        care::DaySummary day;
+        while (s_model.PopSummary(&day)) {
+            ESP_LOGI(TAG, "Day %ld: breakfast=%d clean=%d bed=%d together=%d -> %d points, +%d XP",
+                     static_cast<long>(day.index), day.breakfast, day.clean_bed, day.bed,
+                     day.together, day.anchors, day.xp);
+            s_badges.OnDay(day);
+            s_badges_dirty = true;
+            s_save_now = true;
+            s_pending_xp += day.xp;
+        }
+        // Days end at midnight, but the XP is paid when the child is next with
+        // Bubu in the daytime, so a level-up and its celebration happen in
+        // front of them, never on a sleeping screen.
+        const care::Rules& r = s_model.rules();
+        if (s_pending_xp > 0 && clk.valid && s_model.mode() == care::Mode::Awake &&
+            clk.minute >= r.wake && clk.minute < r.sleepy_from && s_model.Present(60.0)) {
+            xp = s_pending_xp;
+            s_pending_xp = 0;
+            s_save_now = true;
+        }
+        if (s_model.TakeFirstFeed()) {
+            s_badges.OnFirstFeed();
+            s_badges_dirty = true;
+            s_save_now = true;
+        }
     }
 
-    if (decay_suspended_) {
-        last_decay_ms_ = now;
-        last_save_ms_  = now;
-        return;
+    // Outside the lock: a level-up hands an animation to the main task.
+    if (xp > 0) {
+        LevelSystem::AddXP(xp);
     }
 
-    uint32_t elapsed = now - last_decay_ms_;
-    if (elapsed >= DECAY_TICK_MS) {
-        uint32_t minutes = elapsed / DECAY_TICK_MS;
-        last_decay_ms_ += minutes * DECAY_TICK_MS;
-        ApplyDecay(minutes);
-    }
-
-    if (last_save_ms_ != 0 && (now - last_save_ms_) >= SAVE_INTERVAL_MS) {
-        SaveSnapshot();
-        last_save_ms_ = now;
+    std::lock_guard<std::mutex> lock(s_mutex);
+    SyncStageLocked(LevelSystem::GetLevel());
+    if (s_save_now || NowMs() - s_last_save_ms >= kSaveIntervalMs) {
+        SaveLocked();
     }
 }
 
-void SetDecaySuspended(bool s) {
-    if (decay_suspended_ == s) return;
-    decay_suspended_ = s;
-    uint32_t now = Millis();
-    last_decay_ms_ = now;
-    last_save_ms_  = now;
+void OnInteraction() {
+    const care::Clock clk = NowClock();
+    std::lock_guard<std::mutex> lock(s_mutex);
+    s_model.Touch(clk);
 }
 
-// --- Modifiers ---
+// Only falling asleep is reported. The screen also wakes for a status or a
+// notification with nobody there, so Bubu wakes on the child's touch
+// (OnInteraction) or a chat, never on the screen alone.
+void FellAsleep() {
+    const care::Clock clk = NowClock();
+    std::lock_guard<std::mutex> lock(s_mutex);
+    s_model.SetAsleep(true, clk);
+    s_save_now = true;
+}
 
-void AddHunger(int v) {
-    int old = hunger;
-    hunger = Clamp(hunger + v);
-    if (v > 0 && old < STAT_MAX) {
-        int xp = (hunger - old) / 10;
-        if (xp > 0) LevelSystem::AddXP(xp);
+void SetPlaying(bool playing) {
+    std::lock_guard<std::mutex> lock(s_mutex);
+    s_model.SetPlaying(playing);
+    if (playing) {
+        s_model.Interaction();
     }
+}
+
+bool BeginFeed() {
+    std::lock_guard<std::mutex> lock(s_mutex);
+    s_model.Interaction();
+    return s_model.BeginFeed();
+}
+
+void OnFeedBite() {
+    std::lock_guard<std::mutex> lock(s_mutex);
+    s_model.FeedBite(NowClock());
+}
+
+void OnBath() {
+    std::lock_guard<std::mutex> lock(s_mutex);
+    s_model.Interaction();
+    s_model.Bath(NowClock());
+}
+
+bool PutToBed() {
+    std::lock_guard<std::mutex> lock(s_mutex);
+    s_model.Interaction();
+    const bool night = s_model.PutToBed(NowClock());
+    s_save_now = true;
+    return night;
+}
+
+int OnChat() {
+    const care::Clock clk = NowClock();
+    std::lock_guard<std::mutex> lock(s_mutex);
+    return s_model.Chat(clk);
+}
+
+int RewardGame(int base) {
+    std::lock_guard<std::mutex> lock(s_mutex);
+    return s_model.RewardGame(base);
+}
+
+int PreviewGameReward(int base) {
+    std::lock_guard<std::mutex> lock(s_mutex);
+    return s_model.PreviewGameReward(base);
+}
+
+int RewardStudy(int base) {
+    std::lock_guard<std::mutex> lock(s_mutex);
+    s_model.Interaction();
+    return s_model.RewardStudy(base);
 }
 
 void AddMood(int v) {
-    int old = mood;
-    mood = Clamp(mood + v);
-    if (v > 0 && old < STAT_MAX) {
-        int xp = (mood - old) / 10;
-        if (xp > 0) LevelSystem::AddXP(xp);
-    }
+    std::lock_guard<std::mutex> lock(s_mutex);
+    s_model.GainMood(static_cast<float>(v));
 }
 
-void AddEnergy(int v) {
-    int old = energy;
-    energy = Clamp(energy + v);
-    if (v > 0 && old < STAT_MAX) {
-        int xp = (energy - old) / 10;
-        if (xp > 0) LevelSystem::AddXP(xp);
-    }
+int GetHunger() {
+    std::lock_guard<std::mutex> lock(s_mutex);
+    return static_cast<int>(std::lround(s_model.stats().full));
 }
 
-void AddCleanliness(int v) {
-    int old = cleanliness;
-    cleanliness = Clamp(cleanliness + v);
-    if (v > 0 && old < STAT_MAX) {
-        int xp = (cleanliness - old) / 10;
-        if (xp > 0) LevelSystem::AddXP(xp);
-    }
+int GetMood() {
+    std::lock_guard<std::mutex> lock(s_mutex);
+    return static_cast<int>(std::lround(s_model.stats().mood));
 }
 
-// --- Getters ---
+int GetEnergy() {
+    std::lock_guard<std::mutex> lock(s_mutex);
+    return static_cast<int>(std::lround(s_model.stats().energy));
+}
 
-int GetHunger()      { return hunger; }
-int GetMood()        { return mood; }
-int GetEnergy()      { return energy; }
-int GetCleanliness() { return cleanliness; }
+int GetCleanliness() {
+    std::lock_guard<std::mutex> lock(s_mutex);
+    return static_cast<int>(std::lround(s_model.stats().clean));
+}
 
-// --- Status ---
+int GetMoodCeiling() {
+    std::lock_guard<std::mutex> lock(s_mutex);
+    return s_model.Ceiling();
+}
+
+bool Showing(care::Need need) {
+    std::lock_guard<std::mutex> lock(s_mutex);
+    return s_model.Showing(need);
+}
 
 bool NeedsAttention() {
-    auto in_band = [](int v) { return v >= ATTENTION_MIN && v <= ATTENTION_MAX; };
-    return in_band(hunger) || in_band(mood) || in_band(energy) || in_band(cleanliness);
+    std::lock_guard<std::mutex> lock(s_mutex);
+    return s_model.Showing(care::Need::Hungry) || s_model.Showing(care::Need::Dirty) ||
+           s_model.Showing(care::Need::Tired) || s_model.Showing(care::Need::Lonely);
 }
 
 bool IsCritical() {
-    return hunger == 0 || mood == 0 || energy == 0 || cleanliness == 0;
+    std::lock_guard<std::mutex> lock(s_mutex);
+    const care::Stats& s = s_model.stats();
+    const care::Rules& r = s_model.rules();
+    return s.full <= r.floor_full || s.clean <= r.floor_clean || s.mood <= r.floor_mood ||
+           s.energy <= 0.0f;
 }
 
-} // namespace CareSystem
+bool IsTired() {
+    std::lock_guard<std::mutex> lock(s_mutex);
+    return s_model.Showing(care::Need::Tired);
+}
+
+bool IsExhausted() {
+    std::lock_guard<std::mutex> lock(s_mutex);
+    return s_model.Exhausted();
+}
+
+bool IsBedtime() {
+    const care::Clock clk = NowClock();
+    std::lock_guard<std::mutex> lock(s_mutex);
+    const care::Rules& r = s_model.rules();
+    return clk.valid && (clk.minute >= r.sleepy_from || clk.minute < r.wake);
+}
+
+bool IsAsleep() {
+    std::lock_guard<std::mutex> lock(s_mutex);
+    return s_model.mode() != care::Mode::Awake;
+}
+
+care::Need BubbleNeed() {
+    const care::Clock clk = NowClock();
+    std::lock_guard<std::mutex> lock(s_mutex);
+    return s_model.Bubble(clk);
+}
+
+care::Need PollVoiceAsk(bool can_play) {
+    const care::Clock clk = NowClock();
+    std::lock_guard<std::mutex> lock(s_mutex);
+    return s_model.PollAsk(clk, can_play);
+}
+
+care::Need AskBeforeGame(bool can_play) {
+    std::lock_guard<std::mutex> lock(s_mutex);
+    return s_model.AskBeforeGame(can_play);
+}
+
+int GetStage() {
+    std::lock_guard<std::mutex> lock(s_mutex);
+    return s_stage < 0 ? 0 : s_stage;
+}
+
+care::Trait GetTrait() {
+    std::lock_guard<std::mutex> lock(s_mutex);
+    return s_model.trait();
+}
+
+bool HasPendingBadge() {
+    std::lock_guard<std::mutex> lock(s_mutex);
+    return s_badges.HasPending();
+}
+
+bool PeekPendingBadge(care::Badge* out) {
+    std::lock_guard<std::mutex> lock(s_mutex);
+    return s_badges.PeekPending(out);
+}
+
+bool PopPendingBadge(care::Badge* out) {
+    std::lock_guard<std::mutex> lock(s_mutex);
+    const bool popped = s_badges.PopPending(out);
+    if (popped) {
+        s_badges_dirty = true;
+        s_save_now = true;
+    }
+    return popped;
+}
+
+uint16_t BadgeCount(care::Badge badge) {
+    std::lock_guard<std::mutex> lock(s_mutex);
+    return s_badges.Count(badge);
+}
+
+void BadgeProgress(care::Badge badge, int* have, int* need) {
+    const care::Clock clk = NowClock();
+    const int level = LevelSystem::GetLevel();
+    std::lock_guard<std::mutex> lock(s_mutex);
+    int h = 0;
+    int n = 0;
+    s_badges.Progress(badge, &h, &n);
+    const care::Rules& r = s_model.rules();
+    switch (badge) {
+    case care::Badge::WeekBronze:
+    case care::Badge::WeekSilver:
+    case care::Badge::WeekGold:
+    case care::Badge::WeekPerfect:
+        // Points are banked when a day ends; a new week starts at 0 even
+        // before its first day has been banked.
+        if (clk.valid && care::WeekOf(clk.day) != s_badges.state().week) {
+            h = 0;
+        }
+        break;
+    case care::Badge::Chef: {
+        const uint8_t fed = s_model.day().fed;
+        h = (fed & 1) + ((fed >> 1) & 1) + ((fed >> 2) & 1);
+        n = 3;
+        break;
+    }
+    case care::Badge::FirstFeed:
+        n = 1;
+        break;
+    case care::Badge::StageNew:
+    case care::Badge::StageKnows:
+    case care::Badge::StagePersonality:
+    case care::Badge::StageBestFriend: {
+        const int i = static_cast<int>(badge) - static_cast<int>(care::Badge::StageNew);
+        n = i == 0 ? 1 : r.stage_levels[i - 1];
+        h = std::min(level, n);
+        break;
+    }
+    default:
+        break;
+    }
+    if (have != nullptr) *have = h;
+    if (need != nullptr) *need = n;
+}
+
+}  // namespace CareSystem

@@ -21,7 +21,8 @@ enum MenuState {
     MENU_NOTE_DETAIL_OPEN,
     MENU_SETTINGS_OPEN,
     MENU_VOLUME_OPEN,
-    MENU_POMODORO_OPEN
+    MENU_POMODORO_OPEN,
+    MENU_BADGES_OPEN
 };
 
 enum MenuItem {
@@ -114,8 +115,12 @@ bool HandlePomodoroTap(uint16_t x, uint16_t y);
 void StartPomodoroFromVoice(int focus_minutes);
 void StopPomodoro();
 
-// Level
+// Level (TÌNH BẠN)
 void CloseLevelToMenu();
+
+// HUY HIỆU. OpenBadgeAward() shows the oldest badge waiting to be received,
+// from the eyes' medal bubble (menu closed); a tap receives it.
+void OpenBadgeAward();
 
 // Settings
 void CloseSettingsToMenu();

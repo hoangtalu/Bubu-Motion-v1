@@ -1,5 +1,4 @@
 #include "eye_animation.h"
-#include "care_system.h"
 
 #include <cmath>
 #include <cstring>
@@ -2344,21 +2343,149 @@ void EyeAnimation::DrawFeedSparkles(lv_layer_t* layer, uint32_t now_ms) const {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Care thought bubble
+//
+// What it shows is decided by EyeDisplay::UpdateCareExpression; this only
+// draws it, over everything else, in the same art as the feeding and bath
+// scenes so a child recognises what tapping it will do.
+// ---------------------------------------------------------------------------
+namespace {
+constexpr uint32_t kCareBubbleFill = 0x16202C;
+constexpr uint32_t kCareBubbleEdge = 0xCFD8E3;
+}  // namespace
+
+void EyeAnimation::SetCareBubble(CareBubble bubble) {
+    if (bubble == care_bubble_) {
+        return;
+    }
+    care_bubble_ = bubble;
+    care_bubble_since_ms_ = lv_tick_get();
+}
+
+bool EyeAnimation::CareBubbleVisible() const {
+    return care_bubble_ != CareBubble::None && !sleep_mode_ && !feed_.active &&
+           !bath_.active && !hatch_.active && !connecting_active_ &&
+           !listening_active_ && !speaking_active_ &&
+           legacy_emotion_mode_ == LegacyEmotionMode::None;
+}
+
+bool EyeAnimation::IsTouchOnCareBubble(int x, int y) const {
+    if (!care_bubble_drawn_ || !CareBubbleVisible()) {
+        return false;
+    }
+    const int dx = x - kCareBubbleX;
+    const int dy = y - kCareBubbleY;
+    return dx * dx + dy * dy <= kCareBubbleHitR * kCareBubbleHitR;
+}
+
+void EyeAnimation::DrawCareBubble(lv_layer_t* layer, uint32_t now_ms) const {
+    if (layer == nullptr) {
+        return;
+    }
+    const float grow = ClampFloat(static_cast<float>(now_ms - care_bubble_since_ms_) /
+                                  static_cast<float>(kCareBubblePopMs), 0.0f, 1.0f);
+    const float pop = EaseOutCubic(grow);
+    const float phase = static_cast<float>(now_ms % kCareBubbleBobMs) /
+                        static_cast<float>(kCareBubbleBobMs);
+    const int bob = RoundToInt(std::sin(phase * 2.0f * 3.14159265f) *
+                               static_cast<float>(kCareBubbleBobPx));
+    const int bx = kCareBubbleX;
+    const int by = kCareBubbleY + bob;
+    const lv_color_t fill = lv_color_hex(kCareBubbleFill);
+    const lv_color_t edge = lv_color_hex(kCareBubbleEdge);
+
+    // Trail from the eye's top-right corner up to the bubble.
+    DrawFilledCircle(layer, 202, 77 + bob / 2, RoundToInt(3.0f * pop), edge);
+    DrawFilledCircle(layer, 193, 70 + bob / 2, RoundToInt(5.0f * pop), edge);
+    const int r = RoundToInt(static_cast<float>(kCareBubbleR) * pop);
+    DrawFilledCircle(layer, bx, by, r, edge);
+    DrawFilledCircle(layer, bx, by, r - 2, fill);
+    if (grow < 1.0f) {
+        return;  // the icon appears once the bubble is full size
+    }
+
+    lv_draw_rect_dsc_t rect;
+    lv_draw_rect_dsc_init(&rect);
+    rect.bg_opa = LV_OPA_COVER;
+    rect.border_opa = LV_OPA_TRANSP;
+
+    switch (care_bubble_) {
+    case CareBubble::Food: {
+        // The feeding scene's kibble and dish, in miniature.
+        const lv_color_t kibble = lv_color_make(kFeedKibbleR, kFeedKibbleG, kFeedKibbleB);
+        DrawFilledCircle(layer, bx - 5, by - 2, 4, kibble);
+        DrawFilledCircle(layer, bx + 5, by - 2, 4, kibble);
+        DrawFilledCircle(layer, bx, by - 6, 4, kibble);
+        rect.bg_color = lv_color_make(kFeedDishR, kFeedDishG, kFeedDishB);
+        rect.radius = 4;
+        const lv_area_t dish = {bx - 12, by + 1, bx + 12, by + 8};
+        lv_draw_rect(layer, &rect, &dish);
+        break;
+    }
+    case CareBubble::Bath: {
+        // The bath scene's foam.
+        const lv_color_t rim = lv_color_make(kFoamRimR, kFoamRimG, kFoamRimB);
+        const lv_color_t core = lv_color_make(kFoamCoreR, kFoamCoreG, kFoamCoreB);
+        struct Blob { int dx, dy, r; };
+        constexpr Blob kFoam[3] = {{-6, 4, 7}, {6, 2, 6}, {-1, -7, 5}};
+        for (const Blob& f : kFoam) {
+            DrawFilledCircle(layer, bx + f.dx, by + f.dy, f.r, rim);
+            DrawFilledCircle(layer, bx + f.dx, by + f.dy, f.r - 2, core);
+        }
+        break;
+    }
+    case CareBubble::Moon:
+        // A crescent: the bubble's own fill bites the moon.
+        DrawFilledCircle(layer, bx - 1, by + 1, 11, lv_color_hex(0xFFE08A));
+        DrawFilledCircle(layer, bx + 5, by - 4, 10, fill);
+        break;
+    case CareBubble::Heart: {
+        const lv_color_t pink = lv_color_hex(0xFF6FA8);
+        DrawFilledCircle(layer, bx - 5, by - 3, 6, pink);
+        DrawFilledCircle(layer, bx + 5, by - 3, 6, pink);
+        lv_draw_triangle_dsc_t tri;
+        lv_draw_triangle_dsc_init(&tri);
+        tri.color = pink;
+        tri.opa = LV_OPA_COVER;
+        tri.p[0].x = bx - 11;
+        tri.p[0].y = by - 1;
+        tri.p[1].x = bx + 11;
+        tri.p[1].y = by - 1;
+        tri.p[2].x = bx;
+        tri.p[2].y = by + 11;
+        lv_draw_triangle(layer, &tri);
+        break;
+    }
+    case CareBubble::Medal: {
+        // Ribbon, then the gold disc.
+        rect.radius = 1;
+        rect.bg_color = lv_color_hex(0x4F8CFF);
+        const lv_area_t left = {bx - 8, by - 14, bx - 2, by - 2};
+        lv_draw_rect(layer, &rect, &left);
+        rect.bg_color = lv_color_hex(0xFF5A5A);
+        const lv_area_t right = {bx + 2, by - 14, bx + 8, by - 2};
+        lv_draw_rect(layer, &rect, &right);
+        DrawFilledCircle(layer, bx, by + 4, 9, lv_color_hex(0xF5C542));
+        DrawFilledCircle(layer, bx, by + 4, 5, lv_color_hex(0xFFE38A));
+        break;
+    }
+    case CareBubble::None:
+        break;
+    }
+}
+
 // ---- Mood color targets ----
 void EyeAnimation::UpdateMoodColor() {
     if (!mood_color_auto_enabled_) {
         return;
     }
 
-    const int hunger = CareSystem::GetHunger();
-    const int mood = CareSystem::GetMood();
-    const int energy = CareSystem::GetEnergy();
-    const int cleanliness = CareSystem::GetCleanliness();
-    const int min_stat = std::min(std::min(hunger, mood), std::min(energy, cleanliness));
-
-    if (min_stat < 30) {
+    // The tint comes from EyeDisplay::UpdateCareExpression once a second, so
+    // this per-frame path never waits on the care system's lock.
+    if (care_tint_ == CareTint::Critical) {
         SetEyeColor(255, 120, 120);
-    } else if (min_stat < 60) {
+    } else if (care_tint_ == CareTint::Needs) {
         SetEyeColor(170, 210, 255);
     } else if (angry_) {
         SetEyeColor(255, 120, 120);
@@ -2463,6 +2590,12 @@ Vox::Mood EyeAnimation::PickMischiefMood() const {
         }
     }
     return Vox::Mood::Mumble;
+}
+
+void EyeAnimation::SetMoodWeights(const int (&weights)[8]) {
+    for (int i = 0; i < 8; ++i) {
+        lab_mood_weights_[i] = std::max(0, weights[i]);
+    }
 }
 
 void EyeAnimation::LabSetMoodWeight(int mood, int weight) {
@@ -3308,6 +3441,7 @@ void EyeAnimation::UpdateMischief(uint32_t now_ms) {
 // ---------------------------------------------------------------------------
 void EyeAnimation::RenderFrame() {
     if (!canvas_ || !canvas_buf_) return;
+    care_bubble_drawn_ = false;
 
     if (hatch_.active) {
         RenderHatchingFrame(lv_tick_get());
@@ -3621,6 +3755,25 @@ void EyeAnimation::RenderFrame() {
         DrawBathWater(&layer);
         DrawBathShower(&layer);
         DrawBathFoam(&layer);
+    }
+
+    // ---- Care thought bubble, over everything ----
+    // A small overlap with a taller pose is fine; an eye that reaches well up
+    // into the bubble (gaze up, bounce) hides it for those frames instead.
+    if (CareBubbleVisible()) {
+        bool clear = true;
+        for (const EyeBounds* eye : {&left_eye_box_, &right_eye_box_}) {
+            if (eye == &right_eye_box_ && cyclops_) continue;
+            const bool overlaps_x = eye->x < kCareBubbleX + kCareBubbleR &&
+                                    eye->x + eye->w > kCareBubbleX - kCareBubbleR;
+            if (eye->w > 0 && overlaps_x && eye->y < kCareBubbleY + kCareBubbleR - 10) {
+                clear = false;
+            }
+        }
+        if (clear) {
+            DrawCareBubble(&layer, lv_tick_get());
+            care_bubble_drawn_ = true;
+        }
     }
 
     lv_canvas_finish_layer(canvas_, &layer);

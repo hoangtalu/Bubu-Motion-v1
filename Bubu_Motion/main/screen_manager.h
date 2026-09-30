@@ -52,6 +52,7 @@ enum class ScreenId : uint8_t {
     TrafficRunnerGame,
     Pomodoro,
     Celebration,
+    Badges,
     Count,
 };
 

@@ -48,6 +48,7 @@ set(SOURCES "heap_debug.cc"  # TEMPORARY instrumentation, see heap_debug.h
             "ota.cc"
             "time_sync.cc"
             "settings.cc"
+            "care_model.cc"
             "care_system.cc"
             "level_system.cc"
             "notes_system.cc"

@@ -1277,8 +1277,10 @@ void Application::PlayEmotionalVoice(const std::string& emotion) {
 }
 
 void Application::RewardMoodForAiChatUse() {
-    CareSystem::AddMood(10);
-    ESP_LOGI(TAG, "AI chat used, mood +10");
+    // +10 per conversation (user decision 2026-09-30), but a hungry, dirty or
+    // tired Bubu cannot be fully happy, so it stops at the needs' ceiling.
+    const int gained = CareSystem::OnChat();
+    ESP_LOGI(TAG, "AI chat used, mood +%d", gained);
 }
 
 void Application::ToggleChatState() {

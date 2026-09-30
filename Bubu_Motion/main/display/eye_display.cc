@@ -13,6 +13,7 @@
 #include "message_board.h"
 #include "settings.h"
 #include "assets/lang_config.h"
+#include "audio/vox.h"
 #include <algorithm>
 #include <cmath>
 #include <array>
@@ -385,23 +386,25 @@ bool EyeDisplay::IsClockScreensaverActive() const {
   return clock_screensaver_active_;
 }
 
+bool EyeDisplay::CanStartSleep() const {
+  return eye_animation_ && !IsHatchingActive() &&
+         IsDisplaySleepAllowedState(Application::GetInstance().GetDeviceState());
+}
+
 bool EyeDisplay::StartSleepMode() {
-  if (!eye_animation_) {
-    return false;
-  }
-  if (IsHatchingActive()) {
-    return false;
-  }
   if (sleep_mode_active_) {
     return true;
   }
-  if (!IsDisplaySleepAllowedState(Application::GetInstance().GetDeviceState())) {
+  if (!CanStartSleep()) {
     return false;
   }
 
   HideClockScreensaver();
   sleep_mode_active_ = true;
-  sleep_last_energy_tick_ms_ = GetNowMs();
+  // A nap, or the night (CareSystem decides from the clock and NGỦ). Only
+  // falling asleep is reported: Bubu wakes on the child's touch or a chat,
+  // not whenever the screen lights up (see CareSystem::FellAsleep).
+  CareSystem::FellAsleep();
   sleep_resume_emotion_ = current_eye_emotion_;
   eye_animation_->SetSleepMode(true);
 
@@ -426,7 +429,6 @@ void EyeDisplay::StopSleepMode() {
   // Leaving rest must dismiss it as well as restore the eyes and brightness.
   HideClockScreensaver();
   sleep_mode_active_ = false;
-  sleep_last_energy_tick_ms_ = 0;
   if (eye_animation_) {
     eye_animation_->SetSleepMode(false);
   }
@@ -438,6 +440,16 @@ void EyeDisplay::StopSleepMode() {
   ApplyEmotionInternal(current_eye_emotion_.c_str(), false);
   last_user_interaction_ms_ = GetNowMs();
   UpdateMischiefEngineState();
+}
+
+bool EyeDisplay::PutToBed() {
+  if (!CanStartSleep()) {
+    return false;
+  }
+  // Tell CareSystem first, so the sleep that follows is the night.
+  const bool night = CareSystem::PutToBed();
+  ESP_LOGI(TAG, "NGỦ: %s", night ? "for the night" : "a nap");
+  return StartSleepMode();
 }
 
 namespace {
@@ -671,6 +683,7 @@ void EyeDisplay::UpdateStatusBar(bool update_all) {
   UpdateClockScreensaver(now_ms);
   DrainFeedBites();
   UpdateBathState();
+  UpdateCareExpression(now_ms);
   UpdateCareEmotionScheduler(now_ms);
   UpdateMischiefEngineState();
   HandlePendingInteractionVoices();
@@ -1215,8 +1228,12 @@ void EyeDisplay::StartFeeding() {
     return;
   }
   NotifyUserInteraction();
+  // Opens the meal for the anchors and the care bonus; a full Bubu refuses,
+  // here and in the animation alike (both at 85).
+  CareSystem::BeginFeed();
+  const int hunger = CareSystem::GetHunger();
   DisplayLockGuard lock(this);
-  eye_animation_->StartFeeding(lv_tick_get(), CareSystem::GetHunger());
+  eye_animation_->StartFeeding(lv_tick_get(), hunger);
 }
 
 bool EyeDisplay::IsFeedingActive() const {
@@ -1239,7 +1256,7 @@ void EyeDisplay::DrainFeedBites() {
   }
   const int bites = eye_animation_->ConsumeFeedBites();
   for (int i = 0; i < bites; ++i) {
-    CareSystem::AddHunger(CareSystem::kFeedBiteBoost);
+    CareSystem::OnFeedBite();
   }
 }
 
@@ -1288,10 +1305,243 @@ void EyeDisplay::UpdateBathState() {
   // Credit first, then recompute grime -- the other order would recompute from
   // the pre-bath cleanliness and flash the smudges back for a tick.
   if (eye_animation_->ConsumeBathCompleted()) {
-    CareSystem::AddCleanliness(CareSystem::kBathBoost);
+    CareSystem::OnBath();
     ESP_LOGI(TAG, "Bath completed; cleanliness +%d", CareSystem::kBathBoost);
   }
   eye_animation_->SetDirtyLevel(CareSystem::GetCleanliness());
+}
+
+// ---------------------------------------------------------------------------
+// Care expression (docs/care-system-plan.md §3.6)
+//
+// Bubu shows what it needs without a menu: the thought bubble, the eye tint,
+// the idle mood odds, the sleepy look at bedtime and, a few times a day, a
+// short sound. CareSystem decides; this maps the decisions onto the eyes.
+// Runs on the 1 Hz clock tick (main task).
+// ---------------------------------------------------------------------------
+namespace {
+
+// Idle mischief mood odds (Vox::Mood order) from the needs, and from CÓ CÁ
+// TÍNH on, the personality. The multipliers are the plan's; the trait ones
+// were not specified there and are a first guess to tune on the bench.
+void CareMoodWeights(bool hungry, bool dirty, bool tired, int mood, int stage,
+                     care::Trait trait, int (&out)[8]) {
+  float w[8];
+  for (int i = 0; i < 8; ++i) {
+    w[i] = static_cast<float>(EyeAnimation::kDefaultMoodWeights[i]);
+  }
+  auto at = [&w](Vox::Mood m) -> float & { return w[static_cast<int>(m)]; };
+  if (tired) {
+    at(Vox::Mood::Sleepy) *= 4.0f;
+    at(Vox::Mood::Happy) *= 0.5f;
+    at(Vox::Mood::Laugh) *= 0.5f;
+  }
+  if (dirty) {
+    at(Vox::Mood::Annoyed) *= 2.0f;
+  }
+  if (hungry) {
+    at(Vox::Mood::Think) *= 2.0f;
+  }
+  if (!hungry && !dirty && !tired && mood >= 80) {
+    at(Vox::Mood::Hum) *= 2.0f;
+    at(Vox::Mood::Laugh) *= 2.0f;
+    at(Vox::Mood::Happy) *= 1.5f;
+  }
+  if (mood < 40) {
+    at(Vox::Mood::Happy) /= 3.0f;
+    at(Vox::Mood::Laugh) /= 3.0f;
+    at(Vox::Mood::Hum) /= 3.0f;
+  }
+  if (stage >= 2) {
+    switch (trait) {
+    case care::Trait::Playful:
+      at(Vox::Mood::Laugh) *= 2.0f;
+      at(Vox::Mood::Happy) *= 1.5f;
+      break;
+    case care::Trait::Curious:
+      at(Vox::Mood::Think) *= 1.5f;
+      at(Vox::Mood::Surprise) *= 1.5f;
+      break;
+    case care::Trait::Chatty:
+      at(Vox::Mood::Mumble) *= 1.5f;
+      at(Vox::Mood::Hum) *= 1.5f;
+      break;
+    case care::Trait::None:
+      break;
+    }
+  }
+  for (int i = 0; i < 8; ++i) {
+    out[i] = std::max(1, static_cast<int>(std::lround(w[i])));
+  }
+}
+
+EyeAnimation::CareBubble BubbleFor(care::Need need) {
+  switch (need) {
+  case care::Need::Hungry:
+    return EyeAnimation::CareBubble::Food;
+  case care::Need::Dirty:
+    return EyeAnimation::CareBubble::Bath;
+  case care::Need::Tired:
+  case care::Need::Sleepy:
+    return EyeAnimation::CareBubble::Moon;
+  case care::Need::Lonely:
+    return EyeAnimation::CareBubble::Heart;
+  case care::Need::None:
+    break;
+  }
+  return EyeAnimation::CareBubble::None;
+}
+
+}  // namespace
+
+void EyeDisplay::UpdateCareExpression(uint64_t now_ms) {
+  if (!eye_animation_ || IsHatchingActive()) {
+    return;
+  }
+  auto &app = Application::GetInstance();
+  const bool idle = app.GetDeviceState() == kDeviceStateIdle;
+  const bool on_main =
+      ScreenManager::Current() == ScreenManager::ScreenId::Main;
+  // The bubble is for the pet screen only: never over a conversation, a menu,
+  // a game or a care scene, and not in study time.
+  const bool show = idle && on_main && !app.IsStudyTime();
+
+  // Read CareSystem first: its lock is never taken under the display lock.
+  const int stage = CareSystem::GetStage();
+  const care::Trait trait = CareSystem::GetTrait();
+  const bool badge = CareSystem::HasPendingBadge();
+  const care::Need need = CareSystem::BubbleNeed();
+  const bool hungry = CareSystem::Showing(care::Need::Hungry);
+  const bool dirty = CareSystem::Showing(care::Need::Dirty);
+  const bool tired = CareSystem::Showing(care::Need::Tired);
+  const bool critical = CareSystem::IsCritical();
+  const bool needs = CareSystem::NeedsAttention();
+  const bool bedtime = CareSystem::IsBedtime();
+  const int mood = CareSystem::GetMood();
+
+  // A badge waiting to be received comes first: it is quick, and it is the
+  // reward for the care that came before.
+  EyeAnimation::CareBubble bubble = EyeAnimation::CareBubble::None;
+  if (show) {
+    bubble = badge ? EyeAnimation::CareBubble::Medal : BubbleFor(need);
+  }
+  int weights[8];
+  CareMoodWeights(hungry, dirty, tired, mood, stage, trait, weights);
+  const bool weights_changed =
+      !std::equal(std::begin(weights), std::end(weights), std::begin(care_weights_));
+  const bool stage_up = care_stage_seen_ >= 0 && stage > care_stage_seen_;
+  care_stage_seen_ = stage;
+
+  {
+    DisplayLockGuard lock(this);
+    eye_animation_->SetCareBubble(bubble);
+    eye_animation_->SetCareTint(critical ? EyeAnimation::CareTint::Critical
+                                : needs  ? EyeAnimation::CareTint::Needs
+                                         : EyeAnimation::CareTint::Normal);
+    if (weights_changed) {
+      eye_animation_->SetMoodWeights(weights);
+      std::copy(std::begin(weights), std::end(weights), std::begin(care_weights_));
+      ESP_LOGI(TAG, "Care mood odds: %d %d %d %d %d %d %d %d", weights[0], weights[1],
+               weights[2], weights[3], weights[4], weights[5], weights[6], weights[7]);
+    }
+    // TÌNH BẠN: the idle nods and head shakes arrive with HIỂU BẠN.
+    if (care_gesture_chance_ < 0) {
+      care_gesture_chance_ = eye_animation_->GetIdleGestureChance();
+    }
+    eye_animation_->SetIdleGestureChance(
+        stage >= 1 ? static_cast<uint8_t>(care_gesture_chance_) : 0);
+    if (stage_up && show) {
+      eye_animation_->StartNod(4);
+    }
+  }
+
+  // From 21:00 Bubu looks sleepy (the Eye Lab doze), whenever nothing else is
+  // on its face. It keeps talking: stopping chat at bedtime is the parents'
+  // switch (Phase 3).
+  if (bedtime && show && !sleep_mode_active_ && current_eye_emotion_ == "neutral") {
+    ApplyEmotionInternal("sleepy", false);
+    care_sleepy_look_ = true;
+  } else if (!bedtime && care_sleepy_look_) {
+    care_sleepy_look_ = false;
+    if (current_eye_emotion_ == "sleepy") {
+      ApplyEmotionInternal("neutral", false);
+    }
+  }
+
+  // Voice asks: CareSystem allows at most 4 a day, 45 minutes apart, only in
+  // the need's window and only with someone around. Asked only when the clip
+  // would really be heard, so a muted one never uses up the day's budget.
+  if (now_ms - care_last_ask_poll_ms_ >= kCareAskPollMs) {
+    care_last_ask_poll_ms_ = now_ms;
+    const bool can_play = show && !sleep_mode_active_ && app.CanPlayIdleSound();
+    const care::Need ask = CareSystem::PollVoiceAsk(can_play);
+    if (ask != care::Need::None) {
+      PlayCareAsk(ask);
+    }
+  }
+}
+
+void EyeDisplay::PlayCareAsk(care::Need need) {
+  std::string_view sound;
+  switch (need) {
+  case care::Need::Hungry:
+    // Placeholder until the hungry clip is recorded (plan §3.6, open item).
+    sound = Vox::Pick(Lang::Sounds::OGG_VOX_THINK_1_A, Lang::Sounds::OGG_VOX_THINK_1_B);
+    break;
+  case care::Need::Dirty:
+    sound = Vox::Pick(Lang::Sounds::OGG_VOX_ANNOYED_1_A, Lang::Sounds::OGG_VOX_ANNOYED_1_B);
+    break;
+  case care::Need::Tired:
+    sound = Vox::Pick(Lang::Sounds::OGG_VOX_YAWN_1_A, Lang::Sounds::OGG_VOX_YAWN_1_B);
+    break;
+  case care::Need::Sleepy:
+    sound = Vox::Pick(Lang::Sounds::OGG_BED_REMINDER_A, Lang::Sounds::OGG_BED_REMINDER_B);
+    break;
+  default:
+    return;
+  }
+  ESP_LOGI(TAG, "Care ask: need %d", static_cast<int>(need));
+  Application::GetInstance().PlayOverlaySound(sound);
+}
+
+bool EyeDisplay::IsTouchOnCareBubble(int x, int y) const {
+  return eye_animation_ && !sleep_mode_active_ &&
+         eye_animation_->IsTouchOnCareBubble(x, y);
+}
+
+EyeDisplay::CareBubbleTap EyeDisplay::HandleCareBubbleTap() {
+  if (!eye_animation_) {
+    return CareBubbleTap::None;
+  }
+  EyeAnimation::CareBubble bubble;
+  {
+    DisplayLockGuard lock(this);
+    bubble = eye_animation_->GetCareBubble();
+    // Gone at once; the next tick shows whatever is still needed.
+    eye_animation_->SetCareBubble(EyeAnimation::CareBubble::None);
+  }
+  ESP_LOGI(TAG, "Care bubble tapped: %d", static_cast<int>(bubble));
+  switch (bubble) {
+  case EyeAnimation::CareBubble::Food:
+    StartFeeding();
+    return CareBubbleTap::Handled;
+  case EyeAnimation::CareBubble::Bath:
+    StartBathing();
+    return CareBubbleTap::Handled;
+  case EyeAnimation::CareBubble::Moon:
+    if (!PutToBed()) {
+      ESP_LOGW(TAG, "Moon bubble: Bubu cannot sleep right now");
+    }
+    return CareBubbleTap::Handled;
+  case EyeAnimation::CareBubble::Heart:
+    return CareBubbleTap::StartChat;
+  case EyeAnimation::CareBubble::Medal:
+    MenuSystem::OpenBadgeAward();
+    return CareBubbleTap::Handled;
+  case EyeAnimation::CareBubble::None:
+    break;
+  }
+  return CareBubbleTap::None;
 }
 
 void EyeDisplay::EyeAnimLaugh() {
@@ -1421,16 +1671,10 @@ void EyeDisplay::UpdateSleepMode(uint64_t now_ms) {
     return;
   }
   if (sleep_mode_active_) {
+    // NĂNG LƯỢNG comes back at CareSystem's nap and night rates.
     if (!IsDisplaySleepAllowedState(Application::GetInstance().GetDeviceState()) ||
         MenuSystem::IsAnyOpen()) {
       StopSleepMode();
-      return;
-    }
-
-    while (sleep_last_energy_tick_ms_ != 0 &&
-           now_ms - sleep_last_energy_tick_ms_ >= kSleepEnergyTickMs) {
-      CareSystem::AddEnergy(kSleepEnergyBoostPerTick);
-      sleep_last_energy_tick_ms_ += kSleepEnergyTickMs;
     }
     return;
   }

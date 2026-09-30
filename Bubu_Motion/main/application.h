@@ -135,6 +135,12 @@ public:
     AecMode GetAecMode() const { return aec_mode_; }
     void PlaySound(const std::string_view& sound);
     void PlayOverlaySound(const std::string_view& sound);
+    // Portal study window in force: the overlay lane is muted.
+    bool IsStudyTime() const { return study_sfx_muted_.load(); }
+    // An overlay clip would actually be heard now (idle, speaker quiet, not
+    // study time). Lets a caller skip work, e.g. not spend one of Bubu's
+    // voice asks on a clip that would be dropped.
+    bool CanPlayIdleSound() { return CanPlayIdleOnlySfx() && !study_sfx_muted_.load(); }
     void PlayEmotionalVoice(const std::string& emotion);
     void InterruptAudioPlaybackForUserInput();
     AudioService& GetAudioService() { return audio_service_; }

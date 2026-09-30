@@ -6,6 +6,7 @@
 #include "bubu_interaction_voice.h"
 #include "screen_manager.h"
 #include "chat_subtitle.h"
+#include "care_model.h"
 #include <memory>
 #include <string>
 
@@ -66,6 +67,17 @@ public:
     bool StartSleepMode();
     void StopSleepMode();
     bool IsSleepModeActive() const { return sleep_mode_active_; }
+
+    // NGỦ, from the care menu or the moon bubble: in the bed window this is
+    // the night (the bed anchor), any other time a nap. False if Bubu cannot
+    // sleep right now (a conversation, hatching).
+    bool PutToBed();
+
+    // The care thought bubble (docs/care-system-plan.md §3.6). Checked before
+    // "tap outside the eyes opens the menu".
+    bool IsTouchOnCareBubble(int x, int y) const;
+    enum class CareBubbleTap : uint8_t { None, Handled, StartChat };
+    CareBubbleTap HandleCareBubbleTap();
 
     // Feed IMU accelerometer data (in g) to drive real-time eye movement
     void SetImuAccel(float ax, float ay);
@@ -163,7 +175,12 @@ private:
     uint64_t care_next_emotion_change_ms_ = 0;
     uint64_t care_overlay_until_ms_ = 0;
     uint64_t last_external_emotion_ms_ = 0;
-    uint64_t sleep_last_energy_tick_ms_ = 0;
+    // ---- Care expression (UpdateCareExpression) ----
+    uint64_t care_last_ask_poll_ms_ = 0;
+    int care_stage_seen_ = -1;
+    int care_gesture_chance_ = -1;     // EyeAnimation's own idle-gesture odds
+    int care_weights_[8] = {};         // last mood odds handed to EyeAnimation
+    bool care_sleepy_look_ = false;    // the bedtime doze look is ours to undo
     std::string care_base_emotion_ = "neutral";
     std::string care_overlay_emotion_;
     std::string current_eye_emotion_ = "neutral";
@@ -214,6 +231,9 @@ private:
     void UpdateHatchingPersistence();
   void DrainFeedBites();
   void UpdateBathState();
+    bool CanStartSleep() const;
+    void UpdateCareExpression(uint64_t now_ms);
+    void PlayCareAsk(care::Need need);
     void SetupStatusChrome();
     void RenderStatusText();
     void UpdateStatusArcColor();
@@ -232,8 +252,9 @@ private:
     BubuInteractionVoice interaction_voice_;
 
     static constexpr uint32_t kSleepIdleTimeoutMs = 5 * 60 * 1000;
-    static constexpr uint32_t kSleepEnergyTickMs = 60 * 1000;
-    static constexpr int kSleepEnergyBoostPerTick = 10;
+    // How often a voice ask is considered; CareSystem rations them (4 a day,
+    // 45 minutes apart, only with someone around).
+    static constexpr uint32_t kCareAskPollMs = 10 * 1000;
     static constexpr uint8_t kSleepBrightnessPct = 50;
     static constexpr uint32_t kStatusChromeTickMs = 250;
     static constexpr int kStatusArcSize = 210;   // radius ~103, clears the bezel

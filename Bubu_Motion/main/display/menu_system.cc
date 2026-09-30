@@ -51,12 +51,15 @@
 #define TAG "MenuSystem"
 
 namespace {
-// Every finished game makes Bubu happier. Care stats commit to NVS (a level-up
-// saves immediately), so the write goes to the main task, as the games' other
-// end-of-round saves do.
+// Every finished game makes Bubu happier, within the soft play budget: a tired
+// Bubu gets half, an exhausted one nothing, and CẢM XÚC stops at the needs'
+// ceiling (CareSystem). Handed to the main task, as the games' other
+// end-of-round work is.
 void RewardGameMood(const char* game, int amount) {
-    ESP_LOGI(TAG, "Game reward: %s +%d mood", game, amount);
-    Application::GetInstance().Schedule([amount]() { CareSystem::AddMood(amount); });
+    Application::GetInstance().Schedule([game, amount]() {
+        const int gained = CareSystem::RewardGame(amount);
+        ESP_LOGI(TAG, "Game reward: %s +%d mood (base %d)", game, gained, amount);
+    });
 }
 }  // namespace
 
@@ -73,7 +76,8 @@ enum CareItem {
     CARE_CLEAN,
     CARE_SLEEP,
     CARE_STATS,
-    CARE_LEVEL,
+    CARE_LEVEL,     // TÌNH BẠN
+    CARE_BADGES,    // HUY HIỆU
     CARE_ITEM_COUNT
 };
 
@@ -230,7 +234,10 @@ lv_obj_t* gamesStatus = nullptr;    // stat line under the name
 lv_obj_t* gamesEmblemMarks[GAME_SELECTION_COUNT] = {nullptr};
 lv_obj_t* levelPanel = nullptr;
 lv_obj_t* levelArc = nullptr;
-lv_obj_t* levelTitle = nullptr;
+lv_obj_t* levelHeader = nullptr;   // "TÌNH BẠN"
+lv_obj_t* levelTitle = nullptr;    // the friendship stage
+lv_obj_t* levelSub = nullptr;      // "CẤP n"
+lv_obj_t* levelTrait = nullptr;    // the personality, from CÓ CÁ TÍNH on
 lv_obj_t* transientOverlay = nullptr;
 lv_obj_t* transientImage = nullptr;
 std::unique_ptr<LvglGif> transientGifController = nullptr;
@@ -402,6 +409,8 @@ bool greenEyeNewRecord = false;
 bool greenEyeRewardPaid = true;
 int greenEyeMoodBefore = 0;
 int greenEyeMoodAfter = 0;
+// Why a round that earned CẢM XÚC paid none of it (the score screen says so).
+const char* greenEyeNoGainText = "CẢM XÚC ĐẦY";
 uint16_t greenEyeSeenDecisions = 0;
 int greenEyeDrawnScore = -1;
 int greenEyeDrawnCountdown = -1;
@@ -845,7 +854,8 @@ const char* careItemLabelTexts[CARE_ITEM_COUNT] = {
     "TẮM RỬA",
     "NGỦ",
     "TRẠNG THÁI",
-    "CẤP ĐỘ",
+    "TÌNH BẠN",
+    "HUY HIỆU",
 };
 
 // Packed into assets.bin via DEFAULT_ASSETS_EXTRA_FILES (see main/CMakeLists.txt)
@@ -857,7 +867,13 @@ const char* careItemIconFiles[CARE_ITEM_COUNT] = {
     "sub_care_clean.png",
     "sub_care_sleep.png",
     "sub_care_stats.png",
-    "sub_care_level.png",
+    // Not in assets.bin yet (docs/care-system-plan.md §4.3): until they ship,
+    // UpdateCareItemStyles falls back to the "TÌNH BẠN" / "HUY HIỆU" captions,
+    // as "HỌC TẬP" does. sub_care_level.png says "CẤP ĐỘ" in its art, so it
+    // is no longer used. Drop the files into main/assets/menu_icons/ and
+    // regenerate the bundle to light them up; no code change needed.
+    "sub_care_friend.png",
+    "sub_care_badges.png",
 };
 
 const char* connectItemLabelTexts[CONNECT_ITEM_COUNT] = {
@@ -1083,6 +1099,17 @@ void SetGamesMenuStatusForSelection() {
             gamesActionColor = COLOR_MINT;
             break;
     }
+
+    // The soft play budget outranks the record: a tired Bubu pays half, an
+    // exhausted one nothing (CareSystem). "BUỒN NGỦ" is 116px at vn_20, inside
+    // the ~128px this row affords.
+    if (CareSystem::IsExhausted()) {
+        std::snprintf(gameStatusMsg, sizeof(gameStatusMsg), "%s", "BUỒN NGỦ");
+        gamesStatusColor = 0x9C8CFF;
+    } else if (CareSystem::IsTired()) {
+        std::snprintf(gameStatusMsg, sizeof(gameStatusMsg), "%s", "HƠI MỆT");
+        gamesStatusColor = 0xFFB366;
+    }
 }
 
 EyeDisplay* GetEyeDisplay() {
@@ -1101,6 +1128,8 @@ void SetMenuState(MenuState state) {
     currentState = state;
     if (was_game_active != will_be_game_active) {
         Application::GetInstance().SetInteractiveGameActive(will_be_game_active);
+        // Playing spends NĂNG LƯỢNG and gets Bubu grubby, per minute of play.
+        CareSystem::SetPlaying(will_be_game_active);
     }
     // EyeDisplay owns the derivation so precedence stays in one place: hatching
     // and sleep outrank any panel, and a closed menu hands the screen back to
@@ -1120,7 +1149,8 @@ void TryEnterSleepMode() {
     }
 
     MenuSystem::Close();
-    if (!eye_display->StartSleepMode()) {
+    // NGỦ in the bed window is the night (the bed anchor); otherwise a nap.
+    if (!eye_display->PutToBed()) {
         eye_display->ShowNotification("Can't sleep right now");
     }
 }
@@ -1711,8 +1741,11 @@ uint32_t PickLevelArcColor(int level) {
     return kLevelArcStrongColors[seed % kLevelArcStrongColors.size()];
 }
 
+// TÌNH BẠN: the friendship stage, the level under it, and from CÓ CÁ TÍNH
+// on, the personality Bubu has formed. The arc is progress to the next level.
 void UpdateLevelUI() {
-    if (levelPanel == nullptr || levelArc == nullptr || levelTitle == nullptr) {
+    if (levelPanel == nullptr || levelArc == nullptr || levelTitle == nullptr ||
+        levelSub == nullptr || levelTrait == nullptr) {
         return;
     }
 
@@ -1720,10 +1753,17 @@ void UpdateLevelUI() {
     const int xp = std::max(0, LevelSystem::GetXP());
     const int xp_for_next = std::max(1, LevelSystem::GetXPForNextLevel());
     const int progress = std::clamp((xp * 100) / xp_for_next, 0, 100);
+    const int stage = CareSystem::GetStage();
+    const care::Trait trait = CareSystem::GetTrait();
 
-    char title[24];
-    std::snprintf(title, sizeof(title), "LEVEL %d", level);
-    lv_label_set_text(levelTitle, title);
+    lv_label_set_text(levelTitle, care::StageName(stage));
+    lv_label_set_text_fmt(levelSub, "CẤP %d", level);
+    if (stage >= 2 && trait != care::Trait::None) {
+        lv_label_set_text(levelTrait, care::TraitName(trait));
+        lv_obj_remove_flag(levelTrait, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(levelTrait, LV_OBJ_FLAG_HIDDEN);
+    }
 
     lv_arc_set_value(levelArc, progress);
     lv_obj_set_style_arc_color(levelArc, lv_color_hex(PickLevelArcColor(level)), LV_PART_INDICATOR);
@@ -3593,8 +3633,8 @@ void FinishQuickTapRound() {
         // Scales with the real score but capped, so Quick Tap does not become
         // a mood farm next to the other games' flat kGamesBoost.
         const int mood = std::min(5 + score / 8, 25);
-        ESP_LOGI(TAG, "Game reward: quick_tap +%d mood", mood);
-        CareSystem::AddMood(mood);
+        const int gained = CareSystem::RewardGame(mood);
+        ESP_LOGI(TAG, "Game reward: quick_tap +%d mood (base %d)", gained, mood);
     });
 }
 
@@ -4119,8 +4159,8 @@ void FinishSnakeRound() {
         // Scaled but capped, matching Quick Tap, so a long snake does not turn
         // into a mood farm next to the other games' flat kGamesBoost.
         const int mood = std::min(5 + score / 3, 25);
-        ESP_LOGI(TAG, "Game reward: snake +%d mood", mood);
-        CareSystem::AddMood(mood);
+        const int gained = CareSystem::RewardGame(mood);
+        ESP_LOGI(TAG, "Game reward: snake +%d mood (base %d)", gained, mood);
     });
 }
 
@@ -5564,8 +5604,18 @@ void PayGreenEyeReward() {
         greenEyeBest = score;
     }
     const int reward = GreenEyeGame::MoodReward(score);
+    // What RewardGameMood will really add: the play budget and the needs'
+    // ceiling both apply, and the bar and label below must agree with it.
     greenEyeMoodBefore = CareSystem::GetMood();
-    greenEyeMoodAfter = std::min(100, greenEyeMoodBefore + reward);
+    greenEyeMoodAfter = std::min(100, greenEyeMoodBefore + CareSystem::PreviewGameReward(reward));
+    if (CareSystem::IsExhausted()) {
+        greenEyeNoGainText = "BUBU MỆT RỒI";
+    } else if (greenEyeMoodBefore >= CareSystem::GetMoodCeiling() &&
+               CareSystem::GetMoodCeiling() < 100) {
+        greenEyeNoGainText = "CẦN CHĂM SÓC";   // hungry, dirty or tired
+    } else {
+        greenEyeNoGainText = "CẢM XÚC ĐẦY";
+    }
     if (greenEyeNewRecord) {
         // NVS on the main task, not in the frame drawing the scoreboard.
         const uint16_t best = greenEyeBest;
@@ -5603,12 +5653,14 @@ void UpdateGreenEyeScoreUI() {
     }
     if (greenEyeRewardLabel != nullptr) {
         // What CẢM XÚC actually gained, which is less than the reward when the
-        // stat is already near the top -- the bar below must agree with it.
+        // stat is near the top, Bubu is tired or a need is showing -- the bar
+        // below must agree with it. "CẦN CHĂM SÓC" (widest, 162px) makes the
+        // row 188px at -10, still well clear.
         const int gained = greenEyeMoodAfter - greenEyeMoodBefore;
         if (gained > 0) {
             lv_label_set_text_fmt(greenEyeRewardLabel, "+%d CẢM XÚC", gained);
         } else if (GreenEyeGame::MoodReward(score) > 0) {
-            lv_label_set_text(greenEyeRewardLabel, "CẢM XÚC ĐẦY");
+            lv_label_set_text(greenEyeRewardLabel, greenEyeNoGainText);
         } else {
             lv_label_set_text(greenEyeRewardLabel, "+0 CẢM XÚC");
         }
@@ -6140,7 +6192,8 @@ void BankPomodoroFocusBlock() {
     // lock held, so the flash writes are handed to the main task.
     Application::GetInstance().Schedule([]() {
         PomodoroTimer::CommitCompletedFocus();
-        CareSystem::AddMood(CareSystem::kGamesBoost);
+        // Study is time together, not play: no play budget, still the ceiling.
+        CareSystem::RewardStudy(CareSystem::kGamesBoost);
         LevelSystem::AddXP(10);
     });
 }
@@ -6846,11 +6899,33 @@ void CreateLevelPanel() {
     lv_obj_clear_flag(levelPanel, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(levelPanel, LV_OBJ_FLAG_HIDDEN);
 
+    // Stacked inside the arc (inner edge r=104). Checked with the fonts' ink
+    // extents (tools/lvwidth.py): every stage and trait name clears the arc
+    // by 24px or more.
+    levelHeader = lv_label_create(levelPanel);
+    lv_obj_set_style_text_color(levelHeader, lv_color_hex(COLOR_MINT), 0);
+    lv_obj_set_style_text_font(levelHeader, &lv_font_montserrat_vn_20, 0);
+    lv_label_set_text(levelHeader, "TÌNH BẠN");
+    lv_obj_align(levelHeader, LV_ALIGN_CENTER, 0, -44);
+
     levelTitle = lv_label_create(levelPanel);
     lv_obj_set_style_text_color(levelTitle, lv_color_hex(COLOR_TEXT), 0);
     lv_obj_set_style_text_font(levelTitle, &lv_font_montserrat_vn_22, 0);
-    lv_label_set_text(levelTitle, "LEVEL 1");
-    lv_obj_align(levelTitle, LV_ALIGN_CENTER, 0, 0);
+    lv_label_set_text(levelTitle, care::StageName(0));
+    lv_obj_align(levelTitle, LV_ALIGN_CENTER, 0, -8);
+
+    levelSub = lv_label_create(levelPanel);
+    lv_obj_set_style_text_color(levelSub, lv_color_hex(0x9AA3AF), 0);
+    lv_obj_set_style_text_font(levelSub, &lv_font_montserrat_vn_20, 0);
+    lv_label_set_text(levelSub, "CẤP 1");
+    lv_obj_align(levelSub, LV_ALIGN_CENTER, 0, 22);
+
+    levelTrait = lv_label_create(levelPanel);
+    lv_obj_set_style_text_color(levelTrait, lv_color_hex(0xFFD23F), 0);
+    lv_obj_set_style_text_font(levelTrait, &lv_font_montserrat_vn_20, 0);
+    lv_label_set_text(levelTrait, "");
+    lv_obj_align(levelTrait, LV_ALIGN_CENTER, 0, 50);
+    lv_obj_add_flag(levelTrait, LV_OBJ_FLAG_HIDDEN);
 
     levelArc = lv_arc_create(levelPanel);
     lv_obj_set_size(levelArc, 240, 240);
@@ -6867,10 +6942,243 @@ void CreateLevelPanel() {
     UpdateLevelUI();
 }
 
+// ---------------------------------------------------------------------------
+// HUY HIỆU (docs/care-system-plan.md §4.3)
+//
+// One badge per screen, like the CHĂM SÓC carousel: earned badges in their
+// colour with their count, the others greyed with their progress. Built when
+// it opens and deleted when it closes, like the game screens, so it holds no
+// LVGL memory while closed. Primitives and firmware fonts only, until the
+// badge art ships in the assets bundle.
+//
+// Browse (from CHĂM SÓC): up/down step through the 17; a tap goes back.
+// Award (the eyes' medal bubble): the oldest badge waiting pops in with
+// success.ogg; a tap receives it and shows the next one, or returns to Bubu.
+// A badge leaves the queue only when received, so an award cut short (the
+// menu timeout) is simply offered again.
+//
+// Layout, absolute y on the 240px circle (panel border 6, inner edge r=114):
+//   browse: up cap 0..41, medal 64px at y76, name from y114 (a second line
+//           for "N NGÀY / BÊN NHAU"), status under it, down cap 199..240.
+//   award:  title at y55, medal 76px at y112, name from y158, count under it.
+// Checked with the fonts' ink extents (tools/lvwidth.py, as tools/fit.py
+// does) for every name and status: the tightest, "ĐÃ NHẬN x999" under a
+// two-line name, clears the down arrow by 4px; "TUẦN HOÀN HẢO" (180px) clears
+// the border by 6px.
+// ---------------------------------------------------------------------------
+lv_obj_t* badgesPanel = nullptr;
+lv_obj_t* badgesMedal = nullptr;
+lv_obj_t* badgesFace = nullptr;
+lv_obj_t* badgesName = nullptr;
+lv_obj_t* badgesStatus = nullptr;
+lv_obj_t* badgesUpButton = nullptr;
+lv_obj_t* badgesDownButton = nullptr;
+int badgesIndex = 0;          // browse position, kept between visits
+bool badgesAward = false;
+
+constexpr int kBadgePanelBorder = 6;
+constexpr int kBadgeMedalBrowse = 64;
+constexpr int kBadgeMedalAward = 76;
+constexpr uint32_t kBadgeLockedFill = 0x2A2F3A;
+constexpr uint32_t kBadgeLockedEdge = 0x3A4150;
+constexpr uint32_t kBadgeLockedText = 0x6B7280;
+constexpr uint32_t kBadgeFaceText = 0x1A1A1A;
+constexpr uint32_t kBadgeMutedText = 0x9AA3AF;
+constexpr uint32_t kBadgeTitleColor = 0xF5C542;
+
+void DeleteBadgesPanelLocked() {
+    if (badgesPanel == nullptr) {
+        return;
+    }
+    // Deleting the panel also ends the medal's pop-in animation.
+    lv_obj_delete(badgesPanel);
+    badgesPanel = nullptr;
+    badgesMedal = nullptr;
+    badgesFace = nullptr;
+    badgesName = nullptr;
+    badgesStatus = nullptr;
+    badgesUpButton = nullptr;
+    badgesDownButton = nullptr;
+}
+
+// "365 NGÀY BÊN NHAU" is 214px at vn_20, wider than the circle there: the four
+// "BÊN NHAU" badges take two lines.
+std::string BadgeScreenName(care::Badge badge) {
+    std::string name = care::Info(badge).name;
+    const size_t at = name.find(" BÊN NHAU");
+    if (at != std::string::npos) {
+        name[at] = '\n';
+    }
+    return name;
+}
+
+void BadgeMedalSizeCb(void* obj, int32_t v) {
+    lv_obj_set_size(static_cast<lv_obj_t*>(obj), v, v);
+}
+
+void BuildBadgesPanelLocked(bool award) {
+    DeleteBadgesPanelLocked();
+    badgesAward = award;
+
+    badgesPanel = lv_obj_create(lv_screen_active());
+    lv_obj_set_size(badgesPanel, 240, 240);
+    lv_obj_center(badgesPanel);
+    lv_obj_set_style_radius(badgesPanel, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(badgesPanel, lv_color_hex(COLOR_BACKGROUND), 0);
+    lv_obj_set_style_bg_opa(badgesPanel, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(badgesPanel, kBadgePanelBorder, 0);
+    lv_obj_set_style_border_opa(badgesPanel, LV_OPA_COVER, 0);
+    lv_obj_set_style_pad_all(badgesPanel, 0, 0);
+    lv_obj_clear_flag(badgesPanel, LV_OBJ_FLAG_SCROLLABLE);
+
+    if (award) {
+        // 153px at vn_20: clears the border by 5.8px here.
+        lv_obj_t* title = lv_label_create(badgesPanel);
+        lv_obj_set_style_text_font(title, &lv_font_montserrat_vn_20, 0);
+        lv_obj_set_style_text_color(title, lv_color_hex(kBadgeTitleColor), 0);
+        lv_label_set_text(title, "HUY HIỆU MỚI!");
+        lv_obj_align(title, LV_ALIGN_CENTER, 0, 55 - 120);
+    }
+
+    badgesMedal = lv_obj_create(badgesPanel);
+    lv_obj_remove_style_all(badgesMedal);
+    lv_obj_set_style_radius(badgesMedal, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_opa(badgesMedal, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(badgesMedal, 3, 0);
+    lv_obj_clear_flag(badgesMedal, LV_OBJ_FLAG_SCROLLABLE);
+    const int medal = award ? kBadgeMedalAward : kBadgeMedalBrowse;
+    lv_obj_set_size(badgesMedal, medal, medal);
+    // Centre-aligned, so the pop-in grows it around its middle.
+    lv_obj_align(badgesMedal, LV_ALIGN_CENTER, 0, (award ? 112 : 76) - 120);
+
+    badgesFace = lv_label_create(badgesMedal);
+    lv_obj_set_style_text_font(badgesFace, &lv_font_montserrat_vn_28, 0);
+    lv_obj_center(badgesFace);
+
+    // Name, then status, stacked so a two-line name pushes the status down.
+    lv_obj_t* info = lv_obj_create(badgesPanel);
+    lv_obj_remove_style_all(info);
+    lv_obj_set_size(info, 200, LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(info, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(info, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_row(info, 2, 0);
+    lv_obj_clear_flag(info, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_align(info, LV_ALIGN_TOP_MID, 0, (award ? 158 : 114) - kBadgePanelBorder);
+
+    badgesName = lv_label_create(info);
+    lv_obj_set_style_text_font(badgesName, &lv_font_montserrat_vn_20, 0);
+    lv_obj_set_style_text_align(badgesName, LV_TEXT_ALIGN_CENTER, 0);
+
+    badgesStatus = lv_label_create(info);
+    lv_obj_set_style_text_font(badgesStatus, &lv_font_montserrat_vn_20, 0);
+    lv_obj_set_style_text_align(badgesStatus, LV_TEXT_ALIGN_CENTER, 0);
+
+    if (!award) {
+        // Same arrows as CHĂM SÓC; taps reach them through IsTapOn*Button.
+        badgesUpButton = CreateNavButton(badgesPanel, LV_ALIGN_TOP_MID, 0, -65, LV_SYMBOL_UP,
+                                         LV_ALIGN_CENTER, 0, 30, nullptr);
+        badgesDownButton = CreateNavButton(badgesPanel, LV_ALIGN_BOTTOM_MID, 0, 65,
+                                           LV_SYMBOL_DOWN, LV_ALIGN_CENTER, 0, -30, nullptr);
+    }
+}
+
+void ShowBadgeLocked(care::Badge badge) {
+    if (badgesPanel == nullptr) {
+        return;
+    }
+    const care::BadgeInfo& info = care::Info(badge);
+    const uint16_t count = CareSystem::BadgeCount(badge);
+    const bool earned = badgesAward || count > 0;
+    const lv_color_t color = lv_color_hex(info.color);
+
+    lv_obj_set_style_border_color(badgesPanel, earned ? color : lv_color_hex(kBadgeLockedEdge), 0);
+    lv_obj_set_style_bg_color(badgesMedal, earned ? color : lv_color_hex(kBadgeLockedFill), 0);
+    lv_obj_set_style_border_color(badgesMedal,
+                                  earned ? lv_color_white() : lv_color_hex(kBadgeLockedEdge), 0);
+    lv_obj_set_style_border_opa(badgesMedal, earned ? LV_OPA_50 : LV_OPA_COVER, 0);
+    lv_obj_set_style_text_color(badgesFace,
+                                lv_color_hex(earned ? kBadgeFaceText : kBadgeLockedText), 0);
+    lv_label_set_text(badgesFace, info.face);
+
+    const std::string name = BadgeScreenName(badge);
+    lv_label_set_text(badgesName, name.c_str());
+    lv_obj_set_style_text_color(badgesName, lv_color_hex(earned ? COLOR_TEXT : kBadgeMutedText), 0);
+
+    char status[32] = "";
+    if (badgesAward) {
+        if (info.repeats && count > 1) {
+            std::snprintf(status, sizeof(status), "x%u", static_cast<unsigned>(count));
+        }
+    } else if (count > 0) {
+        if (info.repeats) {
+            std::snprintf(status, sizeof(status), "ĐÃ NHẬN x%u", static_cast<unsigned>(count));
+        } else {
+            std::snprintf(status, sizeof(status), "%s", "ĐÃ NHẬN");
+        }
+    } else {
+        int have = 0;
+        int need = 0;
+        CareSystem::BadgeProgress(badge, &have, &need);
+        switch (badge) {
+        case care::Badge::WeekBronze:
+        case care::Badge::WeekSilver:
+        case care::Badge::WeekGold:
+        case care::Badge::WeekPerfect:
+            std::snprintf(status, sizeof(status), "%d/%d ĐIỂM", have, need);
+            break;
+        case care::Badge::Chef:
+            std::snprintf(status, sizeof(status), "%d/%d BỮA", have, need);
+            break;
+        case care::Badge::FirstFeed:
+            std::snprintf(status, sizeof(status), "%s", "CHO BUBU ĂN");
+            break;
+        case care::Badge::StageNew:
+        case care::Badge::StageKnows:
+        case care::Badge::StagePersonality:
+        case care::Badge::StageBestFriend:
+            std::snprintf(status, sizeof(status), "CẤP %d/%d", have, need);
+            break;
+        default:
+            std::snprintf(status, sizeof(status), "%d/%d NGÀY", have, need);
+            break;
+        }
+    }
+    lv_label_set_text(badgesStatus, status);
+    lv_obj_set_style_text_color(badgesStatus, earned ? color : lv_color_hex(kBadgeMutedText), 0);
+    if (status[0] == '\0') {
+        lv_obj_add_flag(badgesStatus, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_remove_flag(badgesStatus, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+// The oldest badge waiting, popping in. False when none is waiting.
+bool ShowNextAwardLocked() {
+    care::Badge badge;
+    if (badgesPanel == nullptr || !CareSystem::PeekPendingBadge(&badge)) {
+        return false;
+    }
+    ShowBadgeLocked(badge);
+    lv_anim_t anim;
+    lv_anim_init(&anim);
+    lv_anim_set_var(&anim, badgesMedal);
+    lv_anim_set_exec_cb(&anim, BadgeMedalSizeCb);
+    lv_anim_set_values(&anim, 16, kBadgeMedalAward);
+    lv_anim_set_duration(&anim, 450);
+    lv_anim_set_path_cb(&anim, lv_anim_path_overshoot);
+    lv_anim_start(&anim);
+    ESP_LOGI(TAG, "HUY HIỆU award: #%d %s", static_cast<int>(badge), care::Info(badge).name);
+    return true;
+}
+
 }  // namespace
 
 namespace MenuSystem {
 
+void OpenBadgesBrowse();
+void BadgesStep(int delta);
+void ActivateBadges();
 void StartChecker3x3();
 void StartQuickTap();
 void StartSnake();
@@ -7246,6 +7554,13 @@ void BeginGameLoad(ActiveGameType game) {
         return;
     }
     MarkMenuActivity();
+    // An exhausted Bubu yawns once to offer a nap (from the day's ask budget);
+    // the child can still play, the game just pays nothing.
+    auto& app = Application::GetInstance();
+    if (CareSystem::AskBeforeGame(app.CanPlayIdleSound()) == care::Need::Tired) {
+        app.PlayOverlaySound(Vox::Pick(Lang::Sounds::OGG_VOX_YAWN_1_A,
+                                       Lang::Sounds::OGG_VOX_YAWN_1_B));
+    }
     gameLoadPending = game;
     DisplayLockGuard lock(displayHandle);
     ShowGameLoadingLocked();
@@ -7346,6 +7661,7 @@ void Open() {
 
     DisplayLockGuard lock(displayHandle);
     HideAllPanels();
+    DeleteBadgesPanelLocked();
     ShowPanel(menuPanel);
     SetMenuState(MENU_OPEN);
     selectedItem = MENU_CARE;
@@ -7450,6 +7766,7 @@ void Close() {
         pomodoroBannerIsVoid = false;
     }
     HideAllPanels();
+    DeleteBadgesPanelLocked();   // built on demand, never just hidden
     SetMenuState(MENU_CLOSED);
     statsOpenedFromCare = false;
     levelOpenedFromCare = false;
@@ -7490,6 +7807,7 @@ ScreenManager::ScreenId ActiveScreen() {
         case MENU_SETTINGS_OPEN:         return ScreenId::Settings;
         case MENU_VOLUME_OPEN:           return ScreenId::Volume;
         case MENU_POMODORO_OPEN:         return ScreenId::Pomodoro;
+        case MENU_BADGES_OPEN:           return ScreenId::Badges;
         case MENU_GAME_ACTIVE:
             if (activeGame == ACTIVE_GAME_GREEN_EYE) {
                 return ScreenId::GreenEyeGame;
@@ -7683,6 +8001,9 @@ void NavigateNext() {
         case MENU_NOTE_DETAIL_OPEN:
             NotesDetailNext();
             break;
+        case MENU_BADGES_OPEN:
+            BadgesStep(1);
+            break;
         default:
             break;
     }
@@ -7759,6 +8080,9 @@ void NavigatePrev() {
         case MENU_NOTE_DETAIL_OPEN:
             NotesDetailPrev();
             break;
+        case MENU_BADGES_OPEN:
+            BadgesStep(-1);
+            break;
         default:
             break;
     }
@@ -7815,6 +8139,9 @@ void ActivateCurrent() {
             break;
         case MENU_LEVEL_OPEN:
             CloseLevelToMenu();
+            break;
+        case MENU_BADGES_OPEN:
+            ActivateBadges();
             break;
         case MENU_SETTINGS_OPEN:
             switch (selectedSettingsItem) {
@@ -7904,6 +8231,9 @@ void ActivateCareSelected() {
                 SetMenuState(MENU_LEVEL_OPEN);
                 UpdateLevelUI();
             }
+            return;
+        case CARE_BADGES:
+            OpenBadgesBrowse();
             return;
         case CARE_ITEM_COUNT:
             break;
@@ -8524,17 +8854,25 @@ void HandleGameFinished() {
         const CheckerGame::Result result = CheckerGame::GetResult();
         auto* eye_display = GetEyeDisplay();
         switch (result) {
-            case CheckerGame::Result::kPlayerWin:
-                ESP_LOGI(TAG, "Game reward: checker +%d mood", CareSystem::kGamesBoost);
-                CareSystem::AddMood(CareSystem::kGamesBoost);
+            case CheckerGame::Result::kPlayerWin: {
+                // What the win will really pay, within the play budget. The
+                // chip row leaves ~128px inside the ring: "Thắng! +10" is
+                // 107px, where the old "Bạn thắng! +10 Tâm trạng" (259px) was
+                // cut off by the glass.
+                const int gain = CareSystem::PreviewGameReward(CareSystem::kGamesBoost);
+                RewardGameMood("checker", CareSystem::kGamesBoost);
                 gamesStatusColor = COLOR_MINT;
                 gamesActionColor = 0xA7D8FF;
-                std::snprintf(gameStatusMsg, sizeof(gameStatusMsg), "Bạn thắng! +%d Tâm trạng",
-                              CareSystem::kGamesBoost);
+                if (gain > 0) {
+                    std::snprintf(gameStatusMsg, sizeof(gameStatusMsg), "Thắng! +%d", gain);
+                } else {
+                    std::snprintf(gameStatusMsg, sizeof(gameStatusMsg), "%s", "Bạn thắng!");
+                }
                 if (eye_display != nullptr) {
                     eye_display->SetEmotion("sad");
                 }
                 break;
+            }
             case CheckerGame::Result::kBubuWin:
                 // Playing with Bubu is fun whoever wins; a finished game still pays.
                 RewardGameMood("checker", CareSystem::kGamesBoost / 2);
@@ -9049,6 +9387,81 @@ void CloseLevelToMenu() {
     levelOpenedFromCare = false;
 }
 
+void OpenBadgesBrowse() {
+    if (currentState != MENU_CARE_OPEN || displayHandle == nullptr) {
+        return;
+    }
+    DisplayLockGuard lock(displayHandle);
+    HidePanel(carePanel);
+    BuildBadgesPanelLocked(false);
+    ShowBadgeLocked(static_cast<care::Badge>(badgesIndex));
+    SetMenuState(MENU_BADGES_OPEN);
+}
+
+void BadgesStep(int delta) {
+    if (currentState != MENU_BADGES_OPEN || badgesAward) {
+        return;
+    }
+    const int next = std::clamp(badgesIndex + delta, 0, care::kBadgeCount - 1);
+    if (next == badgesIndex) {
+        return;
+    }
+    badgesIndex = next;
+    DisplayLockGuard lock(displayHandle);
+    ShowBadgeLocked(static_cast<care::Badge>(badgesIndex));
+}
+
+// A tap or the power button: receive the award (then the next one, or back
+// to Bubu), or leave the browser for CHĂM SÓC.
+void ActivateBadges() {
+    if (currentState != MENU_BADGES_OPEN) {
+        return;
+    }
+    if (badgesAward) {
+        care::Badge received;
+        if (CareSystem::PopPendingBadge(&received)) {
+            ESP_LOGI(TAG, "HUY HIỆU received: #%d", static_cast<int>(received));
+        }
+        bool more = false;
+        {
+            DisplayLockGuard lock(displayHandle);
+            more = ShowNextAwardLocked();
+        }
+        if (more) {
+            Application::GetInstance().PlayOverlaySound(Lang::Sounds::OGG_SUCCESS);
+        } else {
+            Close();
+        }
+        return;
+    }
+    DisplayLockGuard lock(displayHandle);
+    DeleteBadgesPanelLocked();
+    ShowPanel(carePanel);
+    SetMenuState(MENU_CARE_OPEN);
+    selectedCareItem = CARE_BADGES;
+    ScrollCareToIndex(static_cast<uint8_t>(selectedCareItem), LV_ANIM_OFF);
+}
+
+void OpenBadgeAward() {
+    // From the pet screen only; the award waits for an idle moment there.
+    if (currentState != MENU_CLOSED || displayHandle == nullptr ||
+        !CareSystem::HasPendingBadge()) {
+        return;
+    }
+    MarkMenuActivity();   // before the state change, or the idle close could see a stale time
+    {
+        DisplayLockGuard lock(displayHandle);
+        HideAllPanels();
+        BuildBadgesPanelLocked(true);
+        if (!ShowNextAwardLocked()) {
+            DeleteBadgesPanelLocked();
+            return;
+        }
+        SetMenuState(MENU_BADGES_OPEN);
+    }
+    Application::GetInstance().PlayOverlaySound(Lang::Sounds::OGG_SUCCESS);
+}
+
 void CloseSettingsToMenu() {
     if (currentState != MENU_SETTINGS_OPEN) {
         return;
@@ -9397,6 +9810,8 @@ bool IsTapOnPrevButton(uint16_t x, uint16_t y) {
             return IsPointInside(statsLeftBtn, x, y);
         case MENU_GAMES_OPEN:
             return IsPointInside(gamesPrevBtn, x, y);
+        case MENU_BADGES_OPEN:
+            return IsPointInside(badgesUpButton, x, y);
         case MENU_FORTUNE_OPEN:
             return false;
         default:
@@ -9420,6 +9835,8 @@ bool IsTapOnNextButton(uint16_t x, uint16_t y) {
             return IsPointInside(statsRightBtn, x, y);
         case MENU_GAMES_OPEN:
             return IsPointInside(gamesNextBtn, x, y);
+        case MENU_BADGES_OPEN:
+            return IsPointInside(badgesDownButton, x, y);
         case MENU_FORTUNE_OPEN:
             return false;
         default:
@@ -9533,6 +9950,7 @@ bool HandleTap(uint16_t x, uint16_t y) {
         case MENU_NOTE_DETAIL_OPEN:
         case MENU_GAMES_OPEN:
         case MENU_LEVEL_OPEN:
+        case MENU_BADGES_OPEN:
             // Any tap acts as confirm/back on these panels.
             ActivateCurrent();
             return true;
@@ -9682,6 +10100,7 @@ bool HandleActivate() {
         case MENU_FORTUNE_OPEN:
         case MENU_LEVEL_OPEN:
         case MENU_POMODORO_OPEN:
+        case MENU_BADGES_OPEN:
             ActivateCurrent();
             return true;
         default:

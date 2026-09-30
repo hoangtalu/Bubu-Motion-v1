@@ -56,6 +56,7 @@ constexpr ScreenPolicy kScreenPolicies[] = {
     kImuPanel,    // TrafficRunnerGame -- panel renderer plus accelerometer input
     kPanel,       // Pomodoro
     kPanel,       // Celebration    -- level-up GIF owns the screen
+    kPanel,       // Badges         -- HUY HIỆU, built on demand
 };
 
 static_assert(sizeof(kScreenPolicies) / sizeof(kScreenPolicies[0]) ==
@@ -69,7 +70,7 @@ const char* const kScreenNames[] = {
     "reminder_detail", "volume",  "stats", "games_list",
     "level",    "fortune",        "green_eye_game", "checker_game",
     "quick_tap_game", "snake_game", "tilt_maze_game", "traffic_runner_game",
-    "pomodoro", "celebration",
+    "pomodoro", "celebration", "badges",
 };
 
 static_assert(sizeof(kScreenNames) / sizeof(kScreenNames[0]) ==

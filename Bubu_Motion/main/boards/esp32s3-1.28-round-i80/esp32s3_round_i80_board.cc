@@ -6,6 +6,7 @@
 #include "screen_manager.h"
 #include "message_board.h"
 #include "application.h"
+#include "care_system.h"
 #include "config.h"
 #include "i2c_device.h"
 #include "qmi8658.h"
@@ -547,6 +548,9 @@ private:
     void DispatchTap(int x, int y) {
         auto display = GetDisplay();
         auto eye_display = dynamic_cast<EyeDisplay*>(display);
+        // The child is here: CareSystem counts the day together and wakes a
+        // sleeping Bubu (the screen alone lighting up does not).
+        CareSystem::OnInteraction();
 
         int32_t dismiss_reminder_id = 0;
         if (MessageBoard::HandleTap(static_cast<uint16_t>(x), static_cast<uint16_t>(y),
@@ -613,9 +617,27 @@ private:
             screen == ScreenId::GreenEyeGame || screen == ScreenId::CheckerGame ||
             screen == ScreenId::SnakeGame || screen == ScreenId::TiltMazeGame ||
             screen == ScreenId::TrafficRunnerGame;
-        if (!game_active && eye_display) {
+        // The care thought bubble sits above the right eye, partly inside the
+        // eye's touch box, so it is checked before the eyes and the menu.
+        const bool on_bubble = screen == ScreenId::Main && eye_display &&
+                               eye_display->IsTouchOnCareBubble(x, y);
+        if (!game_active && !on_bubble && eye_display) {
             eye_display->PlayTapVoice();
+        }
+        if (!game_active && eye_display) {
             eye_display->NotifyUserInteraction();
+        }
+
+        if (on_bubble) {
+            if (eye_display->HandleCareBubbleTap() == EyeDisplay::CareBubbleTap::StartChat) {
+                // Lonely: the heart means "talk to me".
+                const bool stop_requested = HandleConversationTrigger();
+                SetPowerSaveLevel(stop_requested ? PowerSaveLevel::PERFORMANCE
+                                                 : PowerSaveLevel::BALANCED);
+                ResetWifiPowerTimer();
+            }
+            ESP_LOGI(TAG, "Tap on the care bubble");
+            return;
         }
 
         switch (screen) {
@@ -650,6 +672,7 @@ private:
 
     // Dispatched on LONG_PRESS (held ≥ 400ms, drift ≤ 35px)
     void DispatchLongPress(int x, int y) {
+        CareSystem::OnInteraction();
         Application::GetInstance().InterruptAudioPlaybackForUserInput();
 
         using ScreenId = ScreenManager::ScreenId;
@@ -1055,6 +1078,7 @@ private:
             [](void* handle, void* usr) {
                 auto self = static_cast<Esp32S3RoundI80Board*>(usr);
                 Application::GetInstance().Schedule([self]() {
+                    CareSystem::OnInteraction();
                     if (self->eye_display_) {
                         self->eye_display_->NotifyUserInteraction();
                     }
@@ -1109,6 +1133,7 @@ private:
             [](void* handle, void* usr) {
                 auto self = static_cast<Esp32S3RoundI80Board*>(usr);
                 Application::GetInstance().Schedule([self]() {
+                    CareSystem::OnInteraction();
                     if (self->eye_display_) {
                         self->eye_display_->NotifyUserInteraction();
                     }
@@ -1163,6 +1188,7 @@ private:
             [](void* handle, void* usr) {
                 auto self = static_cast<Esp32S3RoundI80Board*>(usr);
                 Application::GetInstance().Schedule([self]() {
+                    CareSystem::OnInteraction();
                     if (self->eye_display_) {
                         self->eye_display_->NotifyUserInteraction();
                     }

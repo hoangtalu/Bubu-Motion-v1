@@ -346,6 +346,38 @@ Phase 1 runs.
   - never more than 4 asks a day;
   - internal SRAM unchanged with HUY HIỆU closed.
 
+**Phase 1 as built (2026-09-30, source only, not flashed).** Where the code settles
+something this plan left open, or differs from it:
+
+- **Files.** The rules are `main/care_model.{h,cc}` (no ESP-IDF, host tests in
+  `tools/care_model_test.cc`); the badges live there too, not in a `badge_system.*`.
+  `main/care_system.*` feeds them the clock and device events, pays the daily XP into
+  `LevelSystem` and persists to NVS (`care_stats/snap` + `t`, `badges/st`).
+  `level_system.cc` is unchanged.
+- **Waking.** Only the child's touch or a button wakes Bubu. The screen also lights up for a
+  status or a notification; that is not a wake, so it neither ends the night nor cancels the bed
+  anchor. Talking ends a nap but not the night: whether Bubu talks at bedtime is the parents'
+  switch (decision 3), so saying good night by voice keeps the anchor.
+- **Voice asks.** Order hungry → dirty → sleepy, as in the simulator, so a bath is asked before
+  bed. Tired is asked only when a game is about to start and Bubu is exhausted (§3.4), never on
+  its own. Sleepy also covers the hours after midnight until 06:30.
+- **Personality in the mood odds** (not specified above; a first guess to tune on the bench):
+  HAM CHƠI Laugh ×2, Happy ×1.5; HAM HỌC Think ×1.5, Surprise ×1.5; HAY NÓI Mumble ×1.5,
+  Hum ×1.5.
+- **Nods and head shakes** now wait for HIỂU BẠN (§5.2). A fielded Bubu below level 3 loses the
+  idle nods it has today until it gets there.
+- **Placeholders until the assets exist:** the hungry ask plays `vox_think_1`; TÌNH BẠN and
+  HUY HIỆU show as text in CHĂM SÓC (icon files `sub_care_friend.png`, `sub_care_badges.png`,
+  picked up with no code change); badges are drawn with LVGL primitives, the face showing the
+  badge's number.
+- **Awards** leave the queue only when the child taps to receive them, so an award cut short by
+  the menu timeout is offered again.
+- **XP timing.** A day is scored at midnight, but its XP is held (NVS `care_stats/xp`) and paid
+  the next time the child is with Bubu between 06:30 and 21:00, so a level-up and its
+  celebration happen in front of them rather than on a sleeping screen.
+- **The AI is untouched:** `self.get_care_stats` returns what it did. What the AI is told is
+  Phase 2.
+
 **Phase 2 — AI.** The hello `care` block plus the gateway line (§6), checked on bench
 transcripts before the fleet gets it.
 
